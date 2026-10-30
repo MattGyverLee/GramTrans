@@ -80,46 +80,22 @@ _BUNDLE = categories.for_category(GrammarCategory.STEM_NAMES)
 
 
 # ============================================================================
-# Monkeypatch: stem_names_plan_action calls IPartOfSpeech(concrete) —
-# in unit tests without LCM we need to patch _guid_str_from and skip the
-# LCM cast path inside plan_action.
+# Real-host guard (issue #58) -- no SIL stub, no cast monkeypatch.
 # ============================================================================
 
-import gramtrans.Lib.categories as _cat_mod
+from _sil_guard import force_sil_loaded
 
 
 @pytest.fixture(autouse=True)
-def _patch_lcm_cast(monkeypatch):
-    """Replace IPartOfSpeech import with an identity pass-through so fakes work."""
-    # stem_names_plan_action / enumerate_source import IPartOfSpeech lazily
-    # from SIL.LCModel; patch the module-level _guid_str_from to use obj.guid.
-    monkeypatch.setattr(_cat_mod, "_guid_str_from", lambda obj: str(getattr(obj, "guid", "")).lower())
-
-    # Also patch the IPartOfSpeech cast in plan_action and enumerate_source.
-    # These are local imports (inside functions), so we patch via sys.modules.
-    import sys
-    import types
-
-    class _FakeIPartOfSpeech:
-        """Identity cast — returns the object as-is."""
-        def __new__(cls, obj):
-            return obj
-
-    class _FakeICmObject:
-        def __new__(cls, obj):
-            return obj
-
-    fake_lcm = types.ModuleType("SIL.LCModel")
-    fake_lcm.IPartOfSpeech = _FakeIPartOfSpeech
-    fake_lcm.ICmObject = _FakeICmObject
-    sys.modules.setdefault("SIL", types.ModuleType("SIL"))
-    original = sys.modules.get("SIL.LCModel")
-    sys.modules["SIL.LCModel"] = fake_lcm
+def _real_sil_loaded():
+    """Issue #58: no `sys.modules` stub. FORCE-LOAD the real SIL assemblies
+    (when this machine has them) so every test below drives the duck-typed
+    fakes through production code with a live `SIL.LCModel` in-process --
+    the condition under which a cast-inside-try with no duck fallback used to
+    silently drop the fake. Host-free, the same assertions must hold.
+    (Guard shape: tests/unit/test_reversal_walk.py, 201d9cd.)"""
+    force_sil_loaded()
     yield
-    if original is None:
-        sys.modules.pop("SIL.LCModel", None)
-    else:
-        sys.modules["SIL.LCModel"] = original
 
 
 # ============================================================================

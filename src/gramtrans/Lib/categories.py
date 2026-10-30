@@ -3030,9 +3030,11 @@ def pos_inflectable_feats_enumerate_source(context: RunContext, selection: Selec
     for pos in _iter_pos(source):
         concrete = pos.concrete if hasattr(pos, "concrete") else pos
         pos_guid = _guid_str_from(concrete)
+        # Issue #58: cast OUTSIDE the read's try, with a duck fallback
+        # (`_as_pos`). A cast inside the try silently dropped every fake POS
+        # whenever the real SIL assemblies happened to be loaded.
+        pos_obj = _as_pos(concrete)
         try:
-            from SIL.LCModel import IPartOfSpeech
-            pos_obj = IPartOfSpeech(concrete)
             for feat in pos_obj.InflectableFeatsRC:
                 results.append((pos_guid, feat))
         except Exception:
@@ -3083,9 +3085,8 @@ def pos_inflectable_feats_plan_action(piece, context: RunContext, ws_mapping: WS
         concrete = pos.concrete if hasattr(pos, "concrete") else pos
         if _guid_str_from(concrete) != pos_guid:
             continue
+        pos_obj_tgt = _as_pos(concrete)  # #58: duck fallback, cast outside try
         try:
-            from SIL.LCModel import IPartOfSpeech
-            pos_obj_tgt = IPartOfSpeech(concrete)
             for existing_feat in pos_obj_tgt.InflectableFeatsRC:
                 if _guid_str_from(existing_feat) == feat_guid:
                     return Skip(
@@ -3122,8 +3123,6 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
     collection entry has no Description of its own).
     """
     import logging as _logging
-
-    from SIL.LCModel import IPartOfSpeech
 
     log = _logging.getLogger("gramtrans.Lib.categories")
 
@@ -3166,7 +3165,10 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
         )
         return ActionOutcome.skipped("source feature definition %s has no matching target definition by GUID (run inflection_features first)" % feat_guid)
 
-    target_pos_obj = IPartOfSpeech(target_pos)
+    # #58: `_as_pos`, not a bare `IPartOfSpeech(...)` -- the bare cast raised
+    # TypeError on a duck-typed POS whenever SIL was loaded (and ImportError
+    # host-free). A real POS is cast exactly as before.
+    target_pos_obj = _as_pos(target_pos)
     target_pos_obj.InflectableFeatsRC.Add(target_feat)
     return target_feat
 
@@ -3185,10 +3187,8 @@ def stem_names_enumerate_source(context: RunContext, selection: Selection):
         return ()
     results = []
     for pos in source.POS.GetAll(recursive=True):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        pos_obj = _as_pos(pos)  # #58: duck fallback, cast outside the try
         try:
-            from SIL.LCModel import IPartOfSpeech
-            pos_obj = IPartOfSpeech(concrete)
             for sn in pos_obj.StemNamesOC:
                 results.append(sn)
         except Exception:
@@ -3224,10 +3224,8 @@ def stem_names_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
     target = context.target_handle
     if hasattr(target, "POS"):
         for pos in target.POS.GetAll(recursive=True):
-            concrete = pos.concrete if hasattr(pos, "concrete") else pos
+            pos_obj = _as_pos(pos)  # #58: duck fallback, cast outside try
             try:
-                from SIL.LCModel import IPartOfSpeech
-                pos_obj = IPartOfSpeech(concrete)
                 for sn in pos_obj.StemNamesOC:
                     if _guid_str_from(sn) == src_guid:
                         return Skip(
@@ -3256,7 +3254,7 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
     IMoStemNameFactory.Create(Guid) + owner_pos.StemNamesOC.Add().
     Carrier B residue.
     """
-    from SIL.LCModel import IMoStemNameFactory, IMoStemName, IPartOfSpeech, ICmObject
+    from SIL.LCModel import IMoStemNameFactory, IMoStemName, ICmObject
     from System import Guid as DotNetGuid
 
     if __package__:
@@ -3274,8 +3272,8 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
     src_owner_pos_guid = None
     for pos in source.POS.GetAll(recursive=True):
         concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        pos_obj = _as_pos(concrete)  # #58: duck fallback, cast outside try
         try:
-            pos_obj = IPartOfSpeech(concrete)
             for sn in pos_obj.StemNamesOC:
                 if _guid_str_from(sn) == src_guid:
                     src_obj = sn
@@ -3357,9 +3355,8 @@ def exception_features_enumerate_source(context: RunContext, selection: Selectio
     results = []
     for pos in source.POS.GetAll(recursive=True):
         concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        pos_obj = _as_pos(concrete)  # #58: duck fallback, cast outside try
         try:
-            from SIL.LCModel import IPartOfSpeech
-            pos_obj = IPartOfSpeech(concrete)
             for val in pos_obj.ExceptionFeaturesOC:
                 results.append((_guid_str_from(concrete), val))
         except Exception:
@@ -3450,8 +3447,6 @@ def exception_features_execute_action(action: PlannedAction, context: RunContext
     on IFsSymFeatVal reference wiring — the value itself was tagged when
     created as part of its parent feature).
     """
-    from SIL.LCModel import IPartOfSpeech, IFsSymFeatVal
-
     target = context.target_handle
     src_compound = action.source_guid
     if "::" not in src_compound:
@@ -3474,12 +3469,22 @@ def exception_features_execute_action(action: PlannedAction, context: RunContext
         try:
             for v in feat.ValuesOC:
                 if _guid_str_from(v) == val_guid:
-                    target_val = IFsSymFeatVal(v)
+                    target_val = v
                     break
         except Exception:
             pass
         if target_val is not None:
             break
+    if target_val is not None:
+        # #58: cast the MATCH, outside the compare's try, with a duck
+        # fallback. The cast used to sit inside the try, so on a duck-typed
+        # value with SIL loaded it raised, was swallowed, and the value was
+        # reported absent.
+        try:
+            from SIL.LCModel import IFsSymFeatVal
+            target_val = IFsSymFeatVal(target_val)
+        except Exception:
+            pass
     if target_val is None:
         return ActionOutcome.skipped("feature value %s not present in the destination (inflection_features must run first)" % val_guid)
 
