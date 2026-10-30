@@ -2408,12 +2408,29 @@ def test_ejagham_is_byte_stable() -> None:
 # FIELDS`, above) and add a test that fails when a committed artifact stops
 # being reproducible -- which is the pin below.
 
+#
+# ISSUE #86, RE-MEASURED 2026-10-30: ALL FOUR SOURCES NOW READ `drifted`, and
+# it is one event, not four. Every link was taken from `Mbugwe LizzieHC
+# practice` at `fb6aadab...226c3161`; that project changed on disk OUTSIDE
+# GramTrans on 2026-09-06 (T128; ruled in `contracts/
+# t078-comparand-retirement.md`, T129) and now hashes `3fb29a29...7cd5436d`.
+# Until this edit only the first link failed, and because the assertion loop
+# stops at the first mismatch it MASKED the other three. The source half is
+# pinned below as that exact transition (`_MBUGWE_SOURCE_MOVE`), so a second
+# move -- or a restore -- is still loud. The destination column is unchanged.
+
 _CENSUS_CHAIN = {
-    "census-038-mbugwe-phase6.json": ("match", "drifted"),
-    "census-038-t067-registered.json": ("match", "match"),
-    "census-038-t068-registered.json": ("match", "drifted"),
-    "census-038-t069-registered.json": ("match", "drifted"),
+    "census-038-mbugwe-phase6.json": ("drifted", "drifted"),
+    "census-038-t067-registered.json": ("drifted", "match"),
+    "census-038-t068-registered.json": ("drifted", "drifted"),
+    "census-038-t069-registered.json": ("drifted", "drifted"),
 }
+
+#: `(pinned by every chain link, on disk now)` for the chain's one source.
+_MBUGWE_SOURCE_MOVE = (
+    "fb6aadabb28a3606192852a99d64bc58d835d591538520126f1b7982226c3161",
+    "3fb29a294434f85301e2f2f75d704489cdf4495325252cfb0f8797137cd5436d",
+)
 
 
 def test_the_chain_compares_object_counts_and_nothing_else() -> None:
@@ -2452,6 +2469,13 @@ def test_every_link_in_the_chain_declares_whether_it_is_reproducible() -> None:
             pytest.skip("missing census artifact " + str(path))
         doc = json.loads(path.read_text(encoding="utf-8"))
         assert _reproducibility(doc) == expected, name
+        # The `drifted` source is the declared move and nothing else.
+        source = doc["projects"]["source"]
+        assert source["name"] == "Mbugwe LizzieHC practice", name
+        assert source["fwdata_sha256_after"] == _MBUGWE_SOURCE_MOVE[0], name
+        on_disk = pathlib.Path(source["path"]) / (source["name"] + ".fwdata")
+        assert hashlib.sha256(on_disk.read_bytes()).hexdigest() \
+            == _MBUGWE_SOURCE_MOVE[1], name
 
 
 def test_the_two_links_that_share_a_destination_are_named_as_such() -> None:
