@@ -105,42 +105,59 @@ def test_apply_carrier_b_preserves_existing_description_prose() -> None:
 # ===========================================================================
 # T025: apply_carrier_a -- five observable LiftResidue shapes (FR-106 fix)
 # ===========================================================================
-# TsStringUtils.MakeString is monkeypatched on the residue module so tests
-# run without pythonnet / LCM on the path.
+# Issue #56 / #58: these tests used to run under a `patch_ts` fixture that
+# replaced `sys.modules["SIL.LCModel.Core.Text"]` with an identity stub. That
+# fixture is what HID the bug: `apply_carrier_a` keyed its ITsString write on
+# the process (could `TsStringUtils` be imported?) rather than on the object,
+# so with flexicon loaded a duck-typed multistring was silently handed a real
+# .NET ITsString. The stub made the import "succeed" with an identity
+# MakeString, so the test certified the broken shape.
+#
+# The guard shape now (mirrors tests/unit/test_reversal_walk.py): FORCE-LOAD
+# the real SIL assemblies when they are available -- exactly the condition
+# under which the old code poisoned fakes -- and assert the fake receives a
+# plain `str`. That is order-independent: it no longer matters whether some
+# earlier test module (test_013_fill_gaps) loaded flexicon as a side effect.
+# Host-free, `_force_sil_loaded` returns False and the same assertions still
+# hold (the duck path never imports SIL).
 # ===========================================================================
 
 from gramtrans.Lib.residue import apply_carrier_a
-import gramtrans.Lib.residue as _residue_mod
+import gramtrans.Lib.texts as _texts_mod
 
 
-@pytest.fixture()
-def patch_ts(monkeypatch):
-    """Inject fake SIL.LCM.Core.Text.TsStringUtils so tests run without pythonnet."""
+def _force_sil_loaded() -> bool:
+    """True once pythonnet + the SIL assemblies are importable in-process."""
+    try:
+        import flexicon.code.BaseOperations  # noqa: F401
+        from SIL.LCModel.Core.Text import TsStringUtils  # noqa: F401
+    except Exception:  # noqa: BLE001 -- host-free is a legal state
+        return False
+    return True
 
-    class _FakeTsStringUtils:
-        @staticmethod
-        def MakeString(text, ws):
-            return text  # identity -- val_arg == TAG.serialize() in assertions
 
-    import sys, types
-    fake_pkg    = types.ModuleType("SIL")
-    fake_lcmodel = types.ModuleType("SIL.LCModel")
-    fake_core   = types.ModuleType("SIL.LCModel.Core")
-    fake_text   = types.ModuleType("SIL.LCModel.Core.Text")
-    fake_text.TsStringUtils = _FakeTsStringUtils
-    fake_core.Text    = fake_text
-    fake_lcmodel.Core = fake_core
-    fake_pkg.LCModel  = fake_lcmodel
-    monkeypatch.setitem(sys.modules, "SIL",                    fake_pkg)
-    monkeypatch.setitem(sys.modules, "SIL.LCModel",            fake_lcmodel)
-    monkeypatch.setitem(sys.modules, "SIL.LCModel.Core",       fake_core)
-    monkeypatch.setitem(sys.modules, "SIL.LCModel.Core.Text",  fake_text)
-    yield _FakeTsStringUtils
+class _FakeMultiStringLift:
+    """Duck-typed LiftResidue exposing the LCM-style `set_String` -- the
+    dominant fake shape in this suite, and the one the old code fell
+    through to the live ITsString path for."""
+
+    def __init__(self):
+        self.calls = []
+
+    def set_String(self, ws, value):  # noqa: N802 -- mirrors LCM
+        self.calls.append((ws, value))
+
+
+class _MultiLift:
+    def __init__(self):
+        self.LiftResidue = _FakeMultiStringLift()
 
 
 # Shape 1: attribute absent -> False, no write
-def test_carrier_a_absent_attribute_returns_false(patch_ts):
+def test_carrier_a_absent_attribute_returns_false():
     """LiftResidue absent: returns False without touching the object."""
+    _force_sil_loaded()
+
     class _NoLift:
         pass
     obj = _NoLift()
@@ -150,21 +167,26 @@ def test_carrier_a_absent_attribute_returns_false(patch_ts):
 
 
 # Shape 2: attribute is None -> setattr path (Unicode unset on LCM 9.x), returns True
-def test_carrier_a_none_attribute_setattr_writes(patch_ts):
-    """LiftResidue=None: on LCM 9.x ILexEntry/IMoAffixAllomorph/IMoInflAffMsa
-    LiftResidue is a Unicode single-string returning None when unset.  We
-    setattr the serialized tag onto it."""
+def test_carrier_a_none_attribute_setattr_writes():
+    """LiftResidue=None: on LCM 9.x every Carrier-A class exposes LiftResidue
+    as a Unicode single-string returning None when unset.  We setattr the
+    serialized tag onto it."""
+    _force_sil_loaded()
+
     class _NullLift:
         LiftResidue = None
     obj = _NullLift()
     result = apply_carrier_a(obj, WS, TAG)
     assert result is True
     assert obj.LiftResidue == TAG.serialize()
+    assert type(obj.LiftResidue) is str
 
 
 # Shape 3: attribute is empty str -> setattr path, returns True
-def test_carrier_a_empty_str_uses_setattr(patch_ts):
+def test_carrier_a_empty_str_uses_setattr():
     """LiftResidue='' (plain Unicode): setattr path writes serialized tag."""
+    _force_sil_loaded()
+
     class _StrLift:
         LiftResidue = ""
     obj = _StrLift()
@@ -174,8 +196,10 @@ def test_carrier_a_empty_str_uses_setattr(patch_ts):
 
 
 # Shape 4: attribute is populated str -> setattr overwrites, returns True
-def test_carrier_a_populated_str_overwrites(patch_ts):
+def test_carrier_a_populated_str_overwrites():
     """LiftResidue already has a value (plain Unicode): overwritten, returns True."""
+    _force_sil_loaded()
+
     class _StrLift:
         LiftResidue = "GT|GT-20200101-000000|old-proj|2020-01-01T00:00:00"
     obj = _StrLift()
@@ -184,25 +208,45 @@ def test_carrier_a_populated_str_overwrites(patch_ts):
     assert obj.LiftResidue == TAG.serialize()
 
 
-# Shape 5: attribute is ITsMultiString (has set_String) -> set_String path, returns True
-def test_carrier_a_multistring_calls_set_string(patch_ts):
-    """LiftResidue is ITsMultiString: set_String is called with MakeString output."""
-    class _FakeMultiStringLift:
-        def __init__(self):
-            self.calls = []
+# Shape 5a: duck-typed multistring -> set_String with PLAIN text
+@pytest.mark.parametrize("ws", [WS, 1], ids=["str-ws", "int-handle"])
+def test_carrier_a_multistring_calls_set_string(ws):
+    """A duck-typed multistring LiftResidue receives the serialized tag as a
+    plain `str`, keyed by the caller's ws -- never a .NET ITsString, even with
+    the SIL assemblies loaded in this process (issue #56).
 
-        def set_String(self, ws, value):
-            self.calls.append((ws, value))
-
-    class _MultiLift:
-        def __init__(self):
-            self.LiftResidue = _FakeMultiStringLift()
-
+    The int-handle case is the SILENT one: with the assemblies loaded the old
+    code's `TsStringUtils.MakeString(text, 1)` succeeds and the fake is quietly
+    handed an ITsString (a str ws at least made MakeString raise)."""
+    _force_sil_loaded()
     obj = _MultiLift()
-    result = apply_carrier_a(obj, WS, TAG)
+    result = apply_carrier_a(obj, ws, TAG)
     assert result is True
     assert len(obj.LiftResidue.calls) == 1
     ws_arg, val_arg = obj.LiftResidue.calls[0]
-    assert ws_arg == WS
-    # patch_ts.MakeString is identity, so val_arg == TAG.serialize()
+    assert ws_arg == ws
     assert val_arg == TAG.serialize()
+    assert type(val_arg) is str, (
+        f"duck-typed LiftResidue was handed {type(val_arg)!r}, not str -- "
+        "the write branched on the process, not the object")
+
+
+# Shape 5b: genuine .NET multistring -> set_String with a real ITsString
+def test_carrier_a_dotnet_multistring_gets_itsstring(monkeypatch):
+    """Live contract unchanged: when `LiftResidue` IS a .NET object the write
+    is a real ITsString built by TsStringUtils.MakeString. The discriminator
+    is pinned to True for this fake so the live branch is exercised without a
+    project; MakeString itself is the REAL one (no sys.modules stub)."""
+    if not _force_sil_loaded():
+        pytest.skip("SIL assemblies not loadable (host-free)")
+    obj = _MultiLift()
+    lift = obj.LiftResidue
+    monkeypatch.setattr(_texts_mod, "_is_dotnet_object", lambda o: o is lift)
+    ws_handle = 1  # any int handle; MakeString needs no cache for this
+    result = apply_carrier_a(obj, ws_handle, TAG)
+    assert result is True
+    assert len(lift.calls) == 1
+    ws_arg, val_arg = lift.calls[0]
+    assert ws_arg == ws_handle
+    assert not isinstance(val_arg, str)
+    assert val_arg.Text == TAG.serialize()
