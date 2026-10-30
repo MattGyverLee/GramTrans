@@ -1514,7 +1514,13 @@ def inflection_features_plan_action(piece, context: RunContext, ws_mapping: WSMa
     """GOLD-aware: Skip GOLD features; edit-copy merge for present custom; Add for absent.
 
     Uses the shared _plan_gold_reserved_edit helper (spec 017 FR-E10).
+
+    Issue #37: a complex feature's `TypeRA` edge is recorded FIRST, before the
+    GOLD-aware helper can return a Skip or an overwrite -- the already-present
+    case is exactly the one whose null `TypeRA` the Move tail must repair.
     """
+    _stash_complex_feature_type_ref(piece, context)
+
     def _target_iter(target):
         if hasattr(target, "InflectionFeatures"):
             return target.InflectionFeatures.FeatureGetAll()
@@ -1674,8 +1680,9 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
       Name/Abbreviation/Description via the WS-mapped Operations surface
       (falling back to `_copy_multistrings_ws_mapped`). Wires TypeRA by
       GUID lookup in `MsFeatureSystemOA.TypesOC` if the target struct-type
-      already exists; otherwise leaves TypeRA unset (FEATURE_STRUCT_TYPES
-      is a LATER coverage sub-part -- graceful degradation, no crash).
+      already exists; otherwise leaves TypeRA for the post-loop tail
+      (`_run_complex_feature_type_ra_pass`, issue #37), because
+      FEATURE_STRUCT_TYPES dispatches AFTER this category.
       No ValuesOC loop -- complex features have no symbolic values.
     - "FsOpenFeature": documented clean skip (Skip(NEEDS_MANUAL)) -- open
       features have no closed value set to sync; no crash, no orphan.
@@ -1799,9 +1806,11 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                     source=source, target=target, ws_map=ws_map)
 
             # Wire TypeRA by GUID if the target struct-type already exists.
-            # FEATURE_STRUCT_TYPES is a LATER coverage sub-part, so on a bare
-            # main checkout MsFeatureSystemOA.TypesOC is commonly empty --
-            # degrade gracefully (leave TypeRA unset) rather than crash.
+            # FEATURE_STRUCT_TYPES dispatches AFTER this category, so in a
+            # single run the type is usually not there yet: leave TypeRA for
+            # the post-loop tail (issue #37), which wires it once every owner
+            # object exists and also repairs a feature left null by an earlier
+            # run.
             src_type_ra = getattr(src_feat_typed, "TypeRA", None)
             if src_type_ra is not None:
                 src_type_guid = _guid_str_from(src_type_ra)
@@ -1816,9 +1825,9 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                     _logging.getLogger("gramtrans.Lib.categories").info(
                         "inflection_features_execute_action: complex feature "
                         "%s references struct-type %s not (yet) present in "
-                        "target MsFeatureSystemOA.TypesOC -- TypeRA left "
-                        "unset (FEATURE_STRUCT_TYPES coverage sub-part "
-                        "pending)", src_guid, src_type_guid,
+                        "target MsFeatureSystemOA.TypesOC -- TypeRA deferred "
+                        "to the post-loop TypeRA tail pass", src_guid,
+                        src_type_guid,
                     )
 
             # NO ValuesOC loop -- complex features have no symbolic values.
@@ -1957,6 +1966,171 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
         _run_tail_once(context, target, tag, "_did_infl_feature_link_pass",
                        GrammarCategory.INFLECTION_FEATURES,
                        _run_infl_feature_link_pass)
+
+
+# ----- complex-feature TypeRA tail wiring (issue #37) ----------------------
+#
+# `IFsComplexFeature.TypeRA` references an `IFsFeatStrucType` in the SAME
+# feature system's `TypesOC`. INFLECTION_FEATURES dispatches BEFORE
+# FEATURE_STRUCT_TYPES (the type's `FeaturesRS` resolves defns the feature
+# category lands, so the order cannot simply be flipped -- that only moves the
+# break to the other side). The create path above therefore usually finds no
+# type to point at, and before #37 left `TypeRA` null FOREVER: a re-run plans
+# the feature `ALREADY_PRESENT_BY_GUID` and never revisits it.
+#
+# Shell-create-then-tail-wire, the same shape as the `InflectableFeatsRC` /
+# `SlotsRC` passes: Preview records every in-scope source `TypeRA` edge in
+# `RunPlan.complex_feature_type_refs` (whether the feature is planned as an
+# add, a merge or a skip), and Move wires each one AFTER the leaf-dispatch
+# loop (`transfer._ensure_complex_feature_type_ra`). It is anchored post-loop,
+# NOT on `_run_tail_once`'s "last action of category X": the core repair case
+# -- feature and type both already present -- plans ZERO actions in either
+# category, so an action-anchored tail would never fire for it.
+#
+# ONE classifier, TWO consumers (Principle III): Preview's
+# `render_complex_feature_type_refs` and the Move pass both call
+# `_classify_complex_type_ra`, so each "Wire" row Preview shows is exactly one
+# `TypeRA` write Move makes. A non-null `TypeRA` naming a DIFFERENT type is
+# reported, never overwritten -- the target owns that decision.
+
+#: `_classify_complex_type_ra` outcomes.
+TYPE_RA_WIRE = "wire"
+TYPE_RA_ALREADY_WIRED = "already_wired"
+TYPE_RA_CONFLICT = "conflict"
+TYPE_RA_TYPE_MISSING = "type_missing"
+TYPE_RA_FEATURE_MISSING = "feature_missing"
+
+
+def _stash_complex_feature_type_ref(piece, context):
+    """Record `{complex_feature_guid: struct_type_guid}` for a source
+    `FsComplexFeature` whose `TypeRA` is set (issue #37).
+
+    No-op for any other feature class, for a null source `TypeRA` (nothing to
+    wire), when no accumulator is attached (a plan_action called outside
+    `build_run_plan`), and for a feature outside an INFLECTION_FEATURES
+    leaf-pick subset. Mirrors `_stash_feature_category_links`."""
+    ref_map = _binding_map(context, "complex_feature_type_refs")
+    if ref_map is None:
+        return
+    raw = _unwrap_lcm(piece)
+    if getattr(raw, "ClassName", None) != "FsComplexFeature":
+        return
+    feat_guid = _guid_str_from(piece)
+    if not feat_guid:
+        return
+    selection = getattr(context, "_selection", None)
+    if selection is not None:
+        try:
+            picks = selection.leaf_picks_for(GrammarCategory.INFLECTION_FEATURES)
+        except (AttributeError, TypeError):
+            picks = None
+        if picks is not None and feat_guid not in picks:
+            return
+    # CAST DISCIPLINE: `FeatureGetAll()` yields base `IFsFeatDefn` proxies, on
+    # which the complex-only `TypeRA` is invisible until cast.
+    src_type = getattr(_cast_lcm(raw, "IFsComplexFeature"), "TypeRA", None)
+    if src_type is None:
+        return
+    type_guid = _guid_str_from(src_type)
+    if type_guid:
+        ref_map[feat_guid] = type_guid
+
+
+def _target_ms_feature_system(target):
+    """The target's `MsFeatureSystemOA`, or None when it cannot be reached
+    (no target bound, or a fake without a cache)."""
+    try:
+        return target.Cache.LangProject.MsFeatureSystemOA
+    except Exception:  # noqa: BLE001 -- unbound/duck-typed target
+        return None
+
+
+def _classify_complex_type_ra(target, feat_guid, type_guid, *,
+                              planned_feat_guids=(), planned_type_guids=()):
+    """Decide what the `TypeRA` tail does for one `(feature, type)` edge.
+
+    Returns `(outcome, target_feature, target_type, detail)`; outcome is one of
+    the `TYPE_RA_*` constants. Read-only. Both endpoints are looked up by GUID
+    in the target's `MsFeatureSystemOA` (`FeaturesOC` / `TypesOC`) -- never
+    the phonological system, whose types a `TypeRA` here must not name.
+
+    `planned_feat_guids` / `planned_type_guids` are the GUIDs this run will
+    CREATE; Preview passes them (the objects do not exist yet), Move passes
+    nothing (by the time the tail runs they either exist or failed)."""
+    fs = _target_ms_feature_system(target)
+    features = list(getattr(fs, "FeaturesOC", None) or ()) if fs is not None else []
+    types = list(getattr(fs, "TypesOC", None) or ()) if fs is not None else []
+    tgt_feat = _find_target_obj_by_guid(features, feat_guid)
+    tgt_type = _find_target_obj_by_guid(types, type_guid)
+
+    if tgt_feat is None:
+        if feat_guid not in planned_feat_guids:
+            return (TYPE_RA_FEATURE_MISSING, None, tgt_type,
+                    f"complex feature {feat_guid} is not in the target "
+                    "MsFeatureSystemOA.FeaturesOC; TypeRA not wired")
+    else:
+        cls = getattr(tgt_feat, "ClassName", None)
+        if cls is not None and cls != "FsComplexFeature":
+            return (TYPE_RA_CONFLICT, tgt_feat, tgt_type,
+                    f"target object {feat_guid} is {cls}, not FsComplexFeature;"
+                    " TypeRA not written")
+        current = getattr(_cast_lcm(tgt_feat, "IFsComplexFeature"), "TypeRA", None)
+        if current is not None:
+            current_guid = _guid_str_from(current)
+            if current_guid == type_guid:
+                return (TYPE_RA_ALREADY_WIRED, tgt_feat, tgt_type, "")
+            return (TYPE_RA_CONFLICT, tgt_feat, tgt_type,
+                    f"target complex feature {feat_guid} already has TypeRA "
+                    f"{current_guid}, source has {type_guid}; not overwritten")
+
+    if tgt_type is None and type_guid not in planned_type_guids:
+        return (TYPE_RA_TYPE_MISSING, tgt_feat, None,
+                f"struct-type {type_guid} referenced by complex feature "
+                f"{feat_guid} is not in the target MsFeatureSystemOA.TypesOC "
+                "(select FEATURE_STRUCT_TYPES); TypeRA left unset")
+    return (TYPE_RA_WIRE, tgt_feat, tgt_type, "")
+
+
+def _run_complex_feature_type_ra_pass(context, target, tag=None):
+    """Wire `IFsComplexFeature.TypeRA` from `plan.complex_feature_type_refs`
+    once every feature and struct-type of the run exists (issue #37).
+
+    Writes ONLY a null `TypeRA` (a fresh shell or one an earlier run left
+    null); an already-correct one is a no-op, a different non-null one is a
+    `Skip(NEEDS_MANUAL)`, a missing endpoint a `Skip(DEPENDENCY_UNRESOLVED)`.
+    So a second run writes nothing. The number of writes is left on the
+    context as `_complex_type_ra_writes` (evidence for the live gate)."""
+    import logging as _logging
+    log = _logging.getLogger("gramtrans.Lib.categories")
+    refs = _binding_map(context, "complex_feature_type_refs") or {}
+    skips = []
+    writes = 0
+    for feat_guid in sorted(refs):
+        type_guid = refs[feat_guid]
+        outcome, tgt_feat, tgt_type, detail = _classify_complex_type_ra(
+            target, feat_guid, type_guid)
+        if outcome == TYPE_RA_ALREADY_WIRED:
+            continue
+        if outcome == TYPE_RA_WIRE:
+            _cast_lcm(tgt_feat, "IFsComplexFeature").TypeRA = _cast_lcm(
+                tgt_type, "IFsFeatStrucType")
+            writes += 1
+            log.info("complex feature %s: TypeRA wired -> %s",
+                     feat_guid, type_guid)
+            continue
+        log.warning("complex feature %s: %s", feat_guid, detail)
+        skips.append(Skip(
+            category=GrammarCategory.INFLECTION_FEATURES,
+            source_guid=feat_guid,
+            reason=(SkipReason.NEEDS_MANUAL if outcome == TYPE_RA_CONFLICT
+                    else SkipReason.DEPENDENCY_UNRESOLVED),
+            detail=detail,
+        ))
+    try:
+        object.__setattr__(context, "_complex_type_ra_writes", writes)
+    except (AttributeError, TypeError):
+        pass
+    return skips
 
 
 # ----- custom_fields (Phase 3b US2: detect-and-report, no creation) --------
