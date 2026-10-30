@@ -6138,11 +6138,25 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
         # three artifacts stay valid historical evidence rather than being
         # overwritten, and all three were verified to still hash to their
         # recorded `.fwdata` digests after T124's three live transfers.
-        assert len(by_artifact) == 17, (
+        #
+        # 17 -> 37 (issue #86, read 2026-10-30). Twenty artifacts arrived
+        # after T124 and the count was never moved with them:
+        # `census-038-t126-{ejagham,ngoreme,mbugwe}` (efa57b5, 2026-08-28),
+        # `-t123b-ngoreme` (db41744, 2026-08-28), `-t123c-{mbugwe,ngoreme}`
+        # (3ef3c5b), `-t123d-{mbugwe,ngoreme}` and `-t123e-ngoreme`
+        # (b7c9296), `-t131-{ejagham,mbugwe,ngoreme}` and `-t132-mbugwe`
+        # (c81262c), `-t133-mbugwe` (bafe5dc), `-t134-{ejagham,mbugwe,
+        # ngoreme}` (83af70d) and `-t135-{ejagham,mbugwe,ngoreme}` (bbd4c3b),
+        # the last nine all 2026-09-18. FIRED FIRST,
+        # EDITED SECOND: clause 1 passed untouched for all twenty -- each nulls
+        # exactly `MoForm` and `MoMorphSynAnalysis` -- and the `advisory`
+        # assertion above held for all forty new nulls. Only the
+        # deliberate-edit count moved.
+        assert len(by_artifact) == 37, (
             "a census artifact arrived or left; the corpus that nulls the two "
             "excluded_not_measurable rows is now "
             + repr(sorted(by_artifact)))
-        assert advisory_nulls == 2 * len(by_artifact) == 34
+        assert advisory_nulls == 2 * len(by_artifact) == 74
 
 
 class TestT100TheVocabularyStaysClosedForThisCase:
@@ -6432,20 +6446,68 @@ def _t078_rows(name: str) -> dict:
             if r["class"] != "FsFeatStrucType"}
 
 
+#: The SOURCE projects that moved on disk after the artifacts below measured
+#: them, as exact transitions `name -> (pinned_digest, digest_on_disk_now)`.
+#:
+#: Issue #86. These are the "known-drifted set" the reproducibility tables in
+#: this file declare, and they are declared as TRANSITIONS rather than as a
+#: bare "drifted" so the declaration stays a tripwire: a source that moves
+#: AGAIN reads `drifted` (not `known-move`), and one restored to its old pin
+#: reads `match`, and either turns the tables red.
+#:
+#: Neither move is GramTrans's. Every census opens its source
+#: `writeEnabled=False` and records equal before/after digests, both sources
+#: carry zero `[GT-Tag]` stamps on disk (checked 2026-10-30), and the moves are
+#: already ruled on in `specs/038-transfer-fidelity-gaps/contracts/
+#: t078-comparand-retirement.md` (T129, 2026-09-18), which RETIRES the T078
+#: comparand for exactly these two sources:
+#:
+#: * `Ngoreme FLEx` moved between t124 (2026-08-27 08:41) and t126
+#:   (2026-08-28 15:01). Count-neutral: all 75 `source_count`s in
+#:   `census-038-t124-ngoreme.json` and `census-038-t126-ngoreme.json` are
+#:   equal, so this is a re-serialisation, not new data.
+#: * `Mbugwe LizzieHC practice` moved after t126, `.fwdata` mtime
+#:   2026-09-06 22:43 (T128). A real edit OUTSIDE GramTrans: 41 classes
+#:   change between `census-038-t126-mbugwe.json` and
+#:   `census-038-t131-mbugwe.json` (LexEntry 255 -> 320, WfiMorphBundle
+#:   1915 -> 17445, PhRegularRule 39 -> 37, ...).
+#:
+#: The current, reproducible measurement of both sources is the t135 trio
+#: (`census-038-t135-*.json`), which matches on all six sides.
+KNOWN_SOURCE_MOVES = {
+    "Ngoreme FLEx": (
+        "838b76351e1be978e096b7fa7af29df4caf20cb7bb68f0859536bed9b23b607f",
+        "d0ab2c6600a427b3e0192e88b8247b85970f54a6ff2ede78083a3e5089c149db",
+    ),
+    "Mbugwe LizzieHC practice": (
+        "fb6aadabb28a3606192852a99d64bc58d835d591538520126f1b7982226c3161",
+        "3fb29a294434f85301e2f2f75d704489cdf4495325252cfb0f8797137cd5436d",
+    ),
+}
+
+
 def _t078_fwdata_status(project_block) -> str:
-    """`absent` / `match` / `drifted`, from the artifact's own recorded
-    `fwdata_sha256_after` against the file on disk. Mirrors
+    """`absent` / `match` / `known-move` / `drifted`, from the artifact's own
+    recorded `fwdata_sha256_after` against the file on disk. Mirrors
     `test_038_closure_edge_audit._fwdata_status` deliberately rather than
     importing it: a test module is not a library, and the duplication is four
-    lines against a cross-module import of a private helper."""
+    lines against a cross-module import of a private helper.
+
+    `known-move` is `drifted` narrowed to one declared transition in
+    `KNOWN_SOURCE_MOVES`: the artifact pinned that transition's old digest AND
+    the file on disk is its new one. Anything else that differs is `drifted`."""
     import hashlib
 
     path = Path(project_block["path"]) / (project_block["name"] + ".fwdata")
     if not path.is_file():
         return "absent"
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return ("match" if digest == project_block["fwdata_sha256_after"]
-            else "drifted")
+    if digest == project_block["fwdata_sha256_after"]:
+        return "match"
+    move = KNOWN_SOURCE_MOVES.get(project_block["name"])
+    if move == (project_block["fwdata_sha256_after"], digest):
+        return "known-move"
+    return "drifted"
 
 
 class TestT078ThePost037Baseline:
@@ -6497,10 +6559,21 @@ class TestT078ThePost037Baseline:
     #:
     #: Ngoreme is untouched because T107's acceptance did not name it -- see
     #: `TestT107...::test_the_ngoreme_pair_was_not_re_measured_and_says_so`.
+    #:
+    #: **ISSUE #86 (2026-10-30): TWO SOURCES HAVE SINCE MOVED, and neither by
+    #: this feature.** `Ngoreme FLEx` (between t124 and t126) and `Mbugwe
+    #: LizzieHC practice` (2026-09-06) changed on disk; both moves are declared
+    #: as exact transitions in `KNOWN_SOURCE_MOVES`, with the evidence, and
+    #: T129's ruling already RETIRES the T078 comparand for those two sources.
+    #: Re-pinning these artifacts is not possible by a read-only census: the
+    #: destinations were transferred from the OLD sources, so a fresh census
+    #: of either pair would measure source growth as transfer fidelity. The
+    #: T078 numbers stay what they are -- a dated measurement -- and the
+    #: current reproducible measurement on the moved sources is the t135 trio.
     T078_FWDATA_STATUS_TODAY = {
         "ejagham": {"source": "match", "destination": "drifted"},
-        "mbugwe": {"source": "match", "destination": "drifted"},
-        "ngoreme": {"source": "match", "destination": "match"},
+        "mbugwe": {"source": "known-move", "destination": "drifted"},
+        "ngoreme": {"source": "known-move", "destination": "match"},
     }
 
     @pytest.mark.parametrize("pair", sorted(T078_BASELINES))
@@ -6519,6 +6592,23 @@ class TestT078ThePost037Baseline:
         for side in ("source", "destination"):
             assert _t078_fwdata_status(artifact["projects"][side]) \
                 == expected[side], pair + "." + side
+
+    @pytest.mark.parametrize("pair", ["ngoreme", "mbugwe"])
+    def test_each_known_source_move_ends_at_a_committed_measurement(
+            self, pair):
+        """Issue #86. A declared move is only acceptable while SOMETHING
+        committed measures the source as it now stands; otherwise the
+        declaration would be a way to stop measuring. The t135 artifact for
+        the pair must pin the move's `after` digest and still `match` it on
+        disk -- so the live source is never unmeasured, only measured by a
+        later artifact than T078's."""
+        current = _t078("census-038-t135-%s.json" % pair)
+        block = current["projects"]["source"]
+        _before, after = KNOWN_SOURCE_MOVES[block["name"]]
+        assert block["fwdata_sha256_after"] == after, pair
+        assert _t078_fwdata_status(block) == "match", pair
+        assert _t078(T078_BASELINES[pair])["projects"]["source"][
+            "fwdata_sha256_after"] == _before, pair
 
     def test_the_artifacts_t078_supersedes_are_named_and_measured(self):
         """WHY A RE-RUN WAS NEEDED AT ALL, given that 037 landed six days
@@ -6871,6 +6961,14 @@ T107_EJAGHAM = "census-038-t107-ejagham.json"
 T107_MBUGWE = "census-038-t107-mbugwe-phase6.json"
 T107_MBUGWE_RULES = "process-rules-038-t107-mbugwe.json"
 
+#: What each side of T107's two censuses hashes to TODAY (issue #86). Both
+#: destinations still match -- nothing has written over T107's evidence -- and
+#: the mbugwe source is the declared `KNOWN_SOURCE_MOVES` transition.
+T107_FWDATA_STATUS_TODAY = {
+    T107_EJAGHAM: {"source": "match", "destination": "match"},
+    T107_MBUGWE: {"source": "known-move", "destination": "match"},
+}
+
 #: The per-rule evidence, DERIVED read-only from the run report and COMMITTED,
 #: because `_run_reports/` is gitignored -- asserting against the raw report
 #: would make these tests pass only on the machine that produced it. Exactly
@@ -7114,11 +7212,16 @@ class TestT107TheBoundaryContextCreatePath:
         the projects as they stand -- is what makes them the current
         measurement rather than merely the newest files. Without both halves
         the drift above would be an unexplained regression instead of a
-        handover."""
+        handover.
+
+        Issue #86: the mbugwe SOURCE has since moved (`KNOWN_SOURCE_MOVES`),
+        so that side reads `known-move`. The DESTINATION half -- the half this
+        test is about, since it is the one T107's runs wrote -- still matches
+        on both pairs."""
         artifact = _t078(name)
         for side in ("source", "destination"):
             assert _t078_fwdata_status(artifact["projects"][side]) \
-                == "match", name + "." + side
+                == T107_FWDATA_STATUS_TODAY[name][side], name + "." + side
 
     @pytest.mark.parametrize("name", [T107_EJAGHAM, T107_MBUGWE])
     def test_both_censuses_opened_both_projects_read_only(self, name):
@@ -7204,11 +7307,16 @@ class TestT108TheSharedRouteAttribution:
         go red. The guard above is about a string in an artifact; this is
         about the files on disk. T107's two censuses must still reproduce
         after T108's run -- which is exactly what a re-run into the wrong
-        target would break."""
+        target would break.
+
+        Read through `T107_FWDATA_STATUS_TODAY` (issue #86): the mbugwe SOURCE
+        is a declared `known-move`, which no T108 run can cause -- T108 wrote
+        only `GT038 T108 Target`. Both destinations must still match."""
         for name in (T107_EJAGHAM, T107_MBUGWE):
             for side in ("source", "destination"):
                 assert _t078_fwdata_status(_t078(name)["projects"][side]) \
-                    == "match", name + "." + side
+                    == T107_FWDATA_STATUS_TODAY[name][side], (
+                        name + "." + side)
 
     def test_the_field_reached_every_reported_context(self):
         """SC-010 landing in the artifact rather than in the object. 104
@@ -8602,6 +8710,49 @@ def _t126_report(pair: str) -> Path:
     return _repo_root() / "_run_reports" / ("038-t126-%s-report.json" % pair)
 
 
+#: Why a T081 test can skip at all (issue #86). The three T126 run reports are
+#: `_run_reports/` output -- gitignored by design -- and were written into the
+#: `GramTrans-038-transfer-fidelity-gaps` worktree (each `census-038-t126-*`
+#: artifact names that path in `transfer_run.report_path`), which was removed
+#: at T085. They exist on no checkout now, and cannot be regenerated without
+#: re-running the T126 transfers, which WRITE. Rebuilding them by hand from the
+#: census artifact would fabricate exactly the second report surface
+#: `process_rules_by_class_from_report` exists to corroborate against, so they
+#: are not committed as reconstructed fixtures either.
+T126_REPORT_ABSENT = (
+    "T081: run report %s is absent. It is gitignored live-run output of the "
+    "T126 re-gate transfer (2026-08-28), it lived in the removed "
+    "038-transfer-fidelity-gaps worktree, and regenerating it means a live "
+    "write transfer. This pair's MoAffixProcess row is a SHORTFALL, so the "
+    "report's process-rule lines change the stamped artifact and cannot be "
+    "assumed empty (issue #86)."
+)
+
+
+def _t126_process_rules(pair: str, measured: tuple, artifact: dict) -> dict:
+    """`process_rules_by_class_from_report` for one T126 pair, tolerating an
+    absent report ONLY where the report provably cannot matter.
+
+    The report contributes lines to exactly one class, `MoAffixProcess`
+    (`process_rules_by_class_from_report` emits nothing else), and
+    `accounted_for_drops` emits nothing for a zero or positive difference. So
+    on a pair whose `MoAffixProcess` row is not a shortfall -- ngoreme and
+    mbugwe in T126 -- `{}` is the exact answer with or without the file, and
+    the roster half of T081 stays measured in a fresh checkout. On a shortfall
+    row (ejagham's `24ed706a`) the report is the evidence, and its absence is
+    a named skip rather than a guess."""
+    report = _t126_report(pair)
+    if report.is_file():
+        return census_cli.process_rules_by_class_from_report(report, measured)
+    rows = {row["class"]: row for row in artifact["classes"]}
+    difference = rows.get("MoAffixProcess", {}).get("difference")
+    if difference is None or difference >= 0:
+        assert census_cli.accounted_for_drops(
+            difference, (("UNREAD", None),)) == ()
+        return {}
+    pytest.skip(T126_REPORT_ABSENT % report.relative_to(_repo_root()))
+
+
 def _t081_stand_ins(lines):
     """The `(count, direction)` view `census.accounted_in_direction` needs.
 
@@ -8627,8 +8778,7 @@ def _t081_stamped(pair: str) -> dict:
 
     out = deepcopy(_t126(pair))
     measured = tuple(row["class"] for row in out["classes"])
-    rules = census_cli.process_rules_by_class_from_report(
-        _t126_report(pair), measured)
+    rules = _t126_process_rules(pair, measured, out)
     for row in out["classes"]:
         existing = list(row.get("accounted_for", ()))
         fresh = list(census_cli.accounted_for_drops(

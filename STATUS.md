@@ -103,8 +103,13 @@ proven byte-identical to main's copies before removal. No evidence lost.
 skipped. The 4 unit failures reproduce identically on `main` at the same flexicon rev
 `c08ede4a`; the 5 census failures match the recorded baseline, and
 `test_object_census.py` is branch-only and byte-identical (9000 lines) before and after the
-merge. Both groups filed as **issue #61**, which also corrects that baseline's wrong "635
-passed" figure — the file collects **537** (503+5+29), before and after alike.
+merge. Both groups filed as **issue #61**. *(Corrected by issue #86: "635 passed" was not
+wrong, it was scoped differently. 635/5/29 is the 4-file targeted selection the crew
+reviews used -- `test_object_census.py` plus `tests/unit/test_038_t079_report_only_residue.py`,
+`test_038_null_counts.py` and `test_038_census_report_evidence.py`. `test_object_census.py`
+alone collects **537** (503+5+29), before and after the merge alike. Re-measured 2026-10-30
+on main at `aa0d36f`: the file still collected 537 and the 4-file selection 671; issue #86
+adds two tests, so 539 and 673 after it.)*
 
 ### What 038 did NOT fix, and where it now lives
 
@@ -548,7 +553,7 @@ signature.
 (`specs/038-transfer-fidelity-gaps/contracts/census-artifact.schema.json` and
 `fidelity-census.md`) are **deliberately left dirty and uncommitted** in the worktree
 so `test_object_census.py`'s `_repo_root()` reads current contracts instead of the
-branch's stale snapshot. `git checkout --` on them turns the measured 635/5/29 into
+branch's stale snapshot. `git checkout --` on them turns the measured 635/5/29 (4-file targeted selection; the census file alone is 537) into
 artifact-drift failures. The proper fix is the `git merge main` recorded on T085 —
 which currently conflicts in `tests/integration/harness/full_run.py` and
 `debug/run_fullcopy_sweep.py` (feature-035 divergence). **Do not force it with
