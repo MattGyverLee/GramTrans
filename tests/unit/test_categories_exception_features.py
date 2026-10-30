@@ -6,7 +6,7 @@ Covers:
 - plan_action() already-wired yields ALREADY_PRESENT_BY_GUID skip
 - plan_action() new wiring yields PlannedAction with compound guid
 - enumerate_source() yields (pos_guid, val_obj) pairs
-- execute_action() is LCM-bound — integration only
+- execute_action() wires the value / skips when absent (fakes; #58)
 
 Exception features in FLEx are IFsSymFeatVal references wired into
 IPartOfSpeech.ExceptionFeaturesOC.  The piece here is a
@@ -81,37 +81,22 @@ _BUNDLE = categories.for_category(GrammarCategory.EXCEPTION_FEATURES)
 
 
 # ============================================================================
-# Monkeypatch LCM casts
+# Real-host guard (issue #58) -- no SIL stub, no cast monkeypatch.
 # ============================================================================
 
-import gramtrans.Lib.categories as _cat_mod
-import sys
-import types
+from _sil_guard import force_sil_loaded
 
 
 @pytest.fixture(autouse=True)
-def _patch_lcm_cast(monkeypatch):
-    monkeypatch.setattr(_cat_mod, "_guid_str_from", lambda obj: str(getattr(obj, "guid", "")).lower())
-
-    class _FakeIPartOfSpeech:
-        def __new__(cls, obj):
-            return obj
-
-    class _FakeICmObject:
-        def __new__(cls, obj):
-            return obj
-
-    fake_lcm = types.ModuleType("SIL.LCModel")
-    fake_lcm.IPartOfSpeech = _FakeIPartOfSpeech
-    fake_lcm.ICmObject = _FakeICmObject
-    sys.modules.setdefault("SIL", types.ModuleType("SIL"))
-    original = sys.modules.get("SIL.LCModel")
-    sys.modules["SIL.LCModel"] = fake_lcm
+def _real_sil_loaded():
+    """Issue #58: no `sys.modules` stub. FORCE-LOAD the real SIL assemblies
+    (when this machine has them) so every test below drives the duck-typed
+    fakes through production code with a live `SIL.LCModel` in-process --
+    the condition under which a cast-inside-try with no duck fallback used to
+    silently drop the fake. Host-free, the same assertions must hold.
+    (Guard shape: tests/unit/test_reversal_walk.py, 201d9cd.)"""
+    force_sil_loaded()
     yield
-    if original is None:
-        sys.modules.pop("SIL.LCModel", None)
-    else:
-        sys.modules["SIL.LCModel"] = original
 
 
 # ============================================================================
@@ -203,6 +188,61 @@ def test_enumerate_source_empty_when_no_poses() -> None:
     assert items == []
 
 
-@pytest.mark.integration
-def test_execute_action_requires_lcm() -> None:
-    pytest.skip("LCM required; run as integration test with FlexTools host.")
+# execute_action(): reference wiring only (no factory, no Guid parse), so it
+# is fake-drivable. Issue #58: the IFsSymFeatVal cast used to sit inside the
+# compare's try, so with SIL loaded a fake value was reported absent.
+
+class _FakeAddList(list):
+    def Add(self, obj) -> None:
+        self.append(obj)
+
+
+class _FakeClosedFeature:
+    def __init__(self, guid: str, values=()) -> None:
+        self.guid = guid
+        self.ValuesOC = list(values)
+
+
+class _FakeTgtProject(_FakeProject):
+    def __init__(self, poses=(), features=()) -> None:
+        super().__init__("tgt", poses=poses)
+        fs = type("FS", (), {"FeaturesOC": list(features)})()
+        lp = type("LP", (), {"MsFeatureSystemOA": fs})()
+        self.Cache = type("Cache", (), {"LangProject": lp})()
+
+
+def _exec_action(pos_guid: str, val_guid: str) -> PlannedAction:
+    compound = f"{pos_guid}::{val_guid}"
+    return PlannedAction(
+        category=GrammarCategory.EXCEPTION_FEATURES,
+        source_guid=compound, intended_target_guid=compound, summary="test",
+    )
+
+
+def test_execute_action_wires_value_into_target_pos() -> None:
+    val = _FakeVal("v-300")
+    tgt_pos = _FakePOS("p-300")
+    tgt_pos.ExceptionFeaturesOC = _FakeAddList()
+    tgt = _FakeTgtProject(poses=(tgt_pos,),
+                          features=(_FakeClosedFeature("f-1", (val,)),))
+    ctx = _ctx(_FakeProject("src"), tgt)
+
+    result = _BUNDLE["execute_action"](
+        _exec_action("p-300", "v-300"), ctx, WSMapping(), tag=None)
+
+    assert result is val
+    assert list(tgt_pos.ExceptionFeaturesOC) == [val]
+
+
+def test_execute_action_value_absent_is_skipped_no_add() -> None:
+    tgt_pos = _FakePOS("p-301")
+    tgt_pos.ExceptionFeaturesOC = _FakeAddList()
+    tgt = _FakeTgtProject(poses=(tgt_pos,),
+                          features=(_FakeClosedFeature("f-1", ()),))
+    ctx = _ctx(_FakeProject("src"), tgt)
+
+    result = _BUNDLE["execute_action"](
+        _exec_action("p-301", "v-missing"), ctx, WSMapping(), tag=None)
+
+    assert result is not None and result.status == "skipped"
+    assert list(tgt_pos.ExceptionFeaturesOC) == []
