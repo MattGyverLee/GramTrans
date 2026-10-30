@@ -220,11 +220,16 @@ def test_projection_maps_source_ws_through_ws_map():
     assert src == {"Name": {"etu": "x", "en": "y"}}
 
 
-def test_projection_drops_alts_the_target_cannot_hold():
-    src, _ = transfer._to_update_target_space(
-        GrammarCategory.PH_ENVIRONMENT,
-        {"Name": {"mgz": "x", "mgz-fonipa-x-emic": "z"}}, {}, {"mgz": "etu"}, _TGT)
+def test_projection_drops_alts_the_target_cannot_hold(caplog):
+    import logging
+    with caplog.at_level(logging.INFO, logger=transfer._log.name):
+        src, _ = transfer._to_update_target_space(
+            GrammarCategory.PH_ENVIRONMENT,
+            {"Name": {"mgz": "x", "mgz-fonipa-x-emic": "z"}}, {}, {"mgz": "etu"},
+            _TGT)
     assert src == {"Name": {"etu": "x"}}
+    # Not silent: flexicon never sees the dropped alt, so GramTrans logs it.
+    assert any("mgz-fonipa-x-emic" in r.getMessage() for r in caplog.records)
 
 
 def test_projection_matches_target_ws_case_and_separator_insensitively():

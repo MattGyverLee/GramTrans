@@ -3491,9 +3491,9 @@ def _to_update_target_space(cat, src_props, tgt_props, ws_map, target):
       compare must too. The scalar ``BasicIPASymbol`` is keyed under each
       project's own default vernacular, so it ALWAYS hits this;
     * a source alt whose WS the target lacks (``mgz-fonipa-x-emic``) is
-      dropped by flexicon's write (logged there) yet would stay "fillable"
-      forever. It is dropped from the compare too; the write path already
-      could not land it;
+      could never be written (flexicon skips it) yet would stay "fillable"
+      forever. It is dropped from compare and write, and logged here at INFO
+      since flexicon never sees it;
     * a target holding every source alt PLUS its own extras compares unequal
       as a whole dict although UPDATE has nothing to write;
     * PHONEMES ``Features``/``FeaturesGuid`` -- see
@@ -3514,6 +3514,8 @@ def _to_update_target_space(cat, src_props, tgt_props, ws_map, target):
     except Exception:  # noqa: BLE001 -- unknown target WS set: keep every alt
         target_ws_by_norm = None
 
+    dropped_ws = set()
+
     def _project(props):
         out = {}
         for key, val in props.items():
@@ -3524,6 +3526,7 @@ def _to_update_target_space(cat, src_props, tgt_props, ws_map, target):
                     if target_ws_by_norm is not None:
                         tgt_id = target_ws_by_norm.get(_norm(tgt_id))
                         if tgt_id is None:
+                            dropped_ws.add(ws_id)
                             continue
                     mapped[tgt_id] = text
                 out[key] = mapped
@@ -3532,6 +3535,12 @@ def _to_update_target_space(cat, src_props, tgt_props, ws_map, target):
         return out
 
     src = _project(src_props or {})
+    if dropped_ws:
+        # These alts never reach flexicon, so its own miss-case warning cannot
+        # fire; say it here. INFO, not WARNING: it repeats on every re-run.
+        _log.info(
+            "UPDATE [%s]: source alt(s) in WS %s have no target writing system;"
+            " not compared or written", cat.value, sorted(dropped_ws))
     tgt = dict(tgt_props or {})
     # Per-alt satisfaction: UPDATE never removes a target-only alt, so a target
     # that already carries every source alt verbatim (plus extras, e.g. a
