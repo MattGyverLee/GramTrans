@@ -14177,7 +14177,15 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
     # Branch on subtype via ClassName.
     try:
         class_name = ICmObject(src_nc).ClassName
-    except (AttributeError, TypeError):
+    except (AttributeError, TypeError) as _cast_exc:
+        # #27: the default picks the PhNCSegments factory; log it so a
+        # wrong-subtype pick is visible in the run log, not silent.
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "natural_classes_execute_action: ICmObject(...).ClassName cast "
+            "failed for guid=%s obj=%r: %r -- defaulting to PhNCSegments",
+            src_guid, src_nc, _cast_exc,
+        )
         class_name = "PhNCSegments"
     factory_iface = IPhNCFeaturesFactory if class_name == "PhNCFeatures" else IPhNCSegmentsFactory
     new_nc, _preserved = _create_with_guid(
@@ -15015,7 +15023,14 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
         return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     try:
         class_name = ICmObject(src_rule).ClassName
-    except (AttributeError, TypeError):
+    except (AttributeError, TypeError) as _cast_exc:
+        # #27 sibling: log the cast failure before defaulting the factory.
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "phonological_rules_execute_action: ICmObject(...).ClassName cast "
+            "failed for guid=%s obj=%r: %r -- defaulting to PhRegularRule",
+            src_guid, src_rule, _cast_exc,
+        )
         class_name = "PhRegularRule"
     factory_iface = {
         "PhRegularRule": IPhRegularRuleFactory,
@@ -15552,7 +15567,14 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
         cell_guid = _guid_str_from(src_cell)
         try:
             cn = ICmObject(src_cell).ClassName
-        except (AttributeError, TypeError):
+        except (AttributeError, TypeError) as _cast_exc:
+            # #27 sibling: log the cast failure before defaulting the factory.
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "_copy_context_cell: ICmObject(...).ClassName cast failed for "
+                "guid=%s obj=%r: %r -- defaulting to PhSimpleContextSeg",
+                cell_guid, src_cell, _cast_exc,
+            )
             cn = "PhSimpleContextSeg"
 
         if cn == "PhSimpleContextSeg":
@@ -15728,7 +15750,14 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
         ctx_guid = _guid_str_from(src_ctx_oa)
         try:
             cn = ICmObject(src_ctx_oa).ClassName
-        except (AttributeError, TypeError):
+        except (AttributeError, TypeError) as _cast_exc:
+            # #27 sibling: log the cast failure before defaulting the branch.
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "_copy_rhs_oa_context: ICmObject(...).ClassName cast failed "
+                "for guid=%s obj=%r: %r -- defaulting to PhSimpleContextSeg",
+                ctx_guid, src_ctx_oa, _cast_exc,
+            )
             cn = "PhSimpleContextSeg"
 
         if cn == "PhSequenceContext":

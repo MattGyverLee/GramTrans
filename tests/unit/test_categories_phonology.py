@@ -671,6 +671,48 @@ def test_nc_execute_raises_on_unresolved_phoneme():
     assert "nc-guid-b" in msg, f"Expected NC GUID in error: {msg}"
 
 
+class _FakeNCCastRaises(_FakeNCSegments):
+    """Source NC whose `ClassName` read raises TypeError (not a missing attr)."""
+    @property
+    def ClassName(self):
+        raise TypeError("transient cast failure")
+
+
+def test_nc_execute_logs_warning_on_classname_cast_failure(caplog):
+    """#27: a failed ClassName cast is logged at WARNING (guid + exception),
+    and the default/factory choice is unchanged (PhNCSegments)."""
+    import logging
+
+    p1 = _FakePhoneme("ph-guid-1")
+    src_nc = _FakeNCCastRaises("nc-guid-c", [p1])
+    source, target, tgt_nc = _build_nc_execute_context(src_nc, [p1], [p1])
+    action = MagicMock()
+    action.source_guid = "nc-guid-c"
+    ctx = _ctx(source, target)
+
+    orig_sys = _fake_sys_guid(None)
+    orig_lcm, fake_lcm = _stub_lcm_nc_imports(None)
+    try:
+        with caplog.at_level(logging.WARNING, logger="gramtrans.Lib.categories"):
+            result = categories.natural_classes_execute_action(action, ctx, WSM, "test-tag")
+    finally:
+        _restore_sys_guid(orig_sys)
+        _restore_lcm(orig_lcm)
+
+    warnings = [r for r in caplog.records
+                if r.levelno == logging.WARNING and "ClassName cast" in r.getMessage()]
+    assert len(warnings) == 1
+    msg = warnings[0].getMessage()
+    assert "nc-guid-c" in msg
+    assert "transient cast failure" in msg
+    assert "PhNCSegments" in msg
+    # Default unchanged: the PhNCSegments factory was selected, not PhNCFeatures.
+    sl = target.Cache.ServiceLocator
+    sl.GetService.assert_called_once_with(fake_lcm.IPhNCSegmentsFactory)
+    assert result is tgt_nc
+    assert p1 in tgt_nc.SegmentsRC._items
+
+
 # ============================================================================
 # _safe_add_to_owner hardening tests (P0-A..D coverage)
 # ============================================================================
