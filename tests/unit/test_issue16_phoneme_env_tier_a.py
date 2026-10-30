@@ -96,6 +96,14 @@ class _Ops:
 
     def ApplySyncableProperties(self, obj, props, ws_map=None, fill_gaps=False):
         self.applied.append((dict(props), ws_map))
+        # Land the write so #22's read-back sees it, like a real target does:
+        # a multistring merges per WS alternative, a scalar replaces.
+        for key, value in props.items():
+            current = self._props.get(key)
+            if isinstance(value, dict) and isinstance(current, dict):
+                self._props[key] = {**current, **value}
+            else:
+                self._props[key] = value
 
 
 class _Sink:
