@@ -121,6 +121,9 @@ class ImportResidueTag:
         values are coerced to repr() so the snapshot is best-effort audit
         trail rather than a reversible undo."""
         try:
+            # Baseline must be the user's data, not our own earlier tag lines
+            # (else each update nests the previous tag, snap= included).
+            props = strip_residue_props(props)
             raw = json.dumps(props, default=repr, sort_keys=True).encode("utf-8")
         except (TypeError, ValueError):
             raw = json.dumps({"_snapshot_error": "unserializable_props"}).encode("utf-8")
@@ -278,15 +281,150 @@ def apply_carrier_b(obj, ws, tag: ImportResidueTag, strict: bool = True) -> bool
             )
         return False
     existing = desc.get_String(ws).Text or ""
-    if existing and not existing.endswith("\n"):
-        existing = existing + "\n"
+    # Idempotent within a run (issue #87): one tag line per run id per object.
+    # First stamp wins -- it may carry the pre-update `snap=` undo baseline.
+    if _has_tag_line_for_run(existing, tag.run_id):
+        return True
+    # Always append exactly two newlines + tag line (never conditional on the
+    # existing tail) so strip_residue_text removes exactly that and no more.
+    # An empty Description keeps the historical single-newline lead-in.
+    sep = "\n\n" if existing else "\n"
     desc.set_String(
         ws,
-        f"{existing}\n{_GT_TAG_LINE_MARKER}{tag.serialize()}",
+        f"{existing}{sep}{_GT_TAG_LINE_MARKER}{tag.serialize()}",
     )
     return True
 
 
+# ============================================================================
+# Residue-aware comparison helpers (issue #87, cycle 3)
+# ============================================================================
+# A Carrier-B object's Description carries OUR OWN `[GT-Tag]:` line(s). Any
+# source-vs-target comparison that sees that line reports a difference the
+# user never made, so a re-run "updated" an object it neither created nor
+# changed (and the UPDATE write then replaced the line). Compare against the
+# target with residue removed.
+_LINE_SPLIT = re.compile(r"(\r\n|\n|\u2028)")
+
+
+def _split_lines(text: str):
+    parts = _LINE_SPLIT.split(text)
+    lines = parts[0::2]
+    seps = parts[1::2] + [""]
+    return list(zip(lines, seps))
+
+
+def _is_tag_line(line: str) -> bool:
+    # Line-START match only: user prose that merely mentions "[GT-Tag]: "
+    # mid-line is not residue and must be kept.
+    return line.startswith(_GT_TAG_LINE_MARKER)
+
+
+def _has_tag_line_for_run(text: str, run_id: str) -> bool:
+    if not isinstance(text, str):
+        return False  # duck-typed / mocked Text: no readable residue
+    prefix = f"{_GT_TAG_LINE_MARKER}GT|{run_id}|"
+    return any(line.startswith(prefix) for line, _ in _split_lines(text or ""))
+
+
+def residue_lines(text: Optional[str]) -> list:
+    """Return the `[GT-Tag]:` lines (line-start matched) in `text`, in order."""
+    if not text:
+        return []
+    return [line for line, _ in _split_lines(text) if _is_tag_line(line)]
+
+
+def strip_residue_text(text: Optional[str]) -> str:
+    """Remove every line-start `[GT-Tag]:` line from `text`, plus the
+    separator `apply_carrier_b` wrote before it (two newlines, or the
+    legacy single newline lead-in on an empty Description).
+
+    This is the exact inverse of `apply_carrier_b`: the source's own
+    trailing whitespace is preserved, and text with no residue line is
+    returned unchanged (byte-identical)."""
+    if not text:
+        return text or ""
+    pairs = _split_lines(text)
+    if not any(_is_tag_line(line) for line, _ in pairs):
+        return text
+    kept: list = []
+    trim_at = None  # len(kept) right after the last blank-separator pop
+    for line, sep in pairs:
+        if _is_tag_line(line):
+            if kept and kept[-1][0] == "":
+                kept.pop()  # the blank separator preceding the tag line
+                trim_at = len(kept)
+            else:
+                trim_at = None
+            continue
+        kept.append((line, sep))
+    # Tag block at the tail: also drop the one end-of-content separator that
+    # apply_carrier_b's two-newline lead-in added. Exact inverse: source
+    # trailing whitespace (Foo-newline, Foo-CRLF, ...) is preserved.
+    if trim_at is not None and len(kept) == trim_at and kept:
+        kept[-1] = (kept[-1][0], "")
+    return "".join(l + s for l, s in kept)
+
+
+def strip_residue_props(props):
+    """Return a copy of a syncable-properties dict with GramTrans residue
+    removed from `Description` (every writing-system alternative).
+
+    A ws alternative that held ONLY residue is dropped (so it compares equal to
+    a source with no such alternative). A dict without residue is returned as
+    is (same object). Non-dict input and non-Description keys pass through.
+    """
+    if not isinstance(props, dict):
+        return props
+    desc = props.get("Description")
+    if isinstance(desc, str):
+        cleaned = strip_residue_text(desc)
+        if cleaned == desc:
+            return props
+        out = dict(props)
+        out["Description"] = cleaned
+        return out
+    if not isinstance(desc, dict):
+        return props
+    new_desc = {}
+    changed = False
+    for ws_key, val in desc.items():
+        if isinstance(val, str):
+            cleaned = strip_residue_text(val)
+            if cleaned != val:
+                changed = True
+                if not cleaned:
+                    continue
+                val = cleaned
+        new_desc[ws_key] = val
+    if not changed:
+        return props
+    out = dict(props)
+    out["Description"] = new_desc
+    return out
+
+
+def restore_residue_history(obj, ws, saved_lines) -> None:
+    """After an UPDATE rewrote `obj.Description`, re-append the earlier runs'
+    tag lines (`saved_lines`, from `residue_lines` on the pre-write text) so the
+    per-object history survives. Idempotent: lines already present are not
+    duplicated. No-op for an object without a Description."""
+    if not saved_lines:
+        return
+    desc = getattr(obj, "Description", None)
+    if desc is None:
+        return
+    current = desc.get_String(ws).Text or ""
+    present = set(residue_lines(current))
+    missing = [ln for ln in saved_lines if ln not in present]
+    if not missing:
+        return
+    block = "\n\n".join(missing)
+    if current:
+        text = f"{current}\n\n{block}"  # same lead-in as apply_carrier_b
+    else:
+        text = block
+    desc.set_String(ws, text)  # same str write apply_carrier_b uses
 
 
 # ============================================================================

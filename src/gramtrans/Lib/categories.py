@@ -84,7 +84,7 @@ if __package__:
         WSKind,
         WSMapping,
     )
-    from .residue import ImportResidueTag
+    from .residue import ImportResidueTag, strip_residue_text
     from . import matcher as _matcher
     from .models import MatchBasis as _MatchBasis
 else:
@@ -117,7 +117,7 @@ else:
         WSKind,
         WSMapping,
     )
-    from residue import ImportResidueTag  # type: ignore
+    from residue import ImportResidueTag, strip_residue_text  # type: ignore
     import matcher as _matcher  # type: ignore
     from models import MatchBasis as _MatchBasis  # type: ignore
 
@@ -546,6 +546,11 @@ def _compare_multistring_per_ws(src_ms, tgt_ms, ws_list):
             tgt_text = getattr(tgt_ts, "Text", None) or None
         except Exception:
             tgt_text = None
+        # Issue #87: our own `[GT-Tag]` residue line is not user content.
+        # Compare the target without it, or a re-run plans an UPDATE for an
+        # object that is identical except for our tag.
+        if tgt_text is not None:
+            tgt_text = strip_residue_text(tgt_text) or None
 
         if src_text is None:
             continue  # source empty -> skip

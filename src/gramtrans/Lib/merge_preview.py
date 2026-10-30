@@ -43,8 +43,10 @@ from typing import Any, Callable
 # Reused from ws_fonts.py (confirmed Qt-free).
 if __package__:
     from .ws_fonts import WsFont, WsFontRegistry, WsRole  # noqa: F401
+    from .residue import strip_residue_props
 else:
     from ws_fonts import WsFont, WsFontRegistry, WsRole  # type: ignore  # noqa: F401
+    from residue import strip_residue_props  # type: ignore
 
 
 # ============================================================================
@@ -3684,6 +3686,11 @@ class MergePreviewService:
             ops_table=self._ops_table,
             meta_out=meta_buf,
         )
+        # Issue #87: the TARGET's own `[GT-Tag]` residue line is not user
+        # content; leaving it in made a re-run preview show a Description
+        # "change" on objects the run would not touch.
+        if side != "source":
+            result = strip_residue_props(result)
         # Cache dicts only; never retain LCM handles (FR-012)
         self._props_cache[cache_key] = result
         self._meta_cache[cache_key] = meta_buf if meta_buf else None
