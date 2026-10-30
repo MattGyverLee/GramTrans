@@ -15002,6 +15002,344 @@ def _create_with_guid_oa(factory_iface, guid_str, target):
     return new_obj
 
 
+# ---------------------------------------------------------------------------
+# Issue #47: REUSE-BY-GUID for the phonological-rule context family.
+#
+# THE GENERATOR. `_copy_rhs_oa_context` creates a simple OA context INTO the
+# `PhPhonData.ContextsOS` pool and only then assigns it to the RHS's
+# LeftContextOA/RightContextOA; sequence members and iteration members are
+# created into the pool and only then referenced. When the wiring in between
+# raises (a referent absent from the target, a hollow natural class), the
+# freshly created context is left behind in the pool carrying the SOURCE GUID
+# -- misfiled, or orphaned. Every later rebuild/re-run of that rule then tries
+# to `Create(Guid)` the same GUID under its correct owner and LCM refuses:
+# "Can not create more than one object with identical GUIDs". Measured on a
+# pre-fix Ngoreme Target: 29 of 29 pooled contexts collided.
+#
+# SEMANTICS CHOSEN: REUSE, do not delete-then-recreate. An object that already
+# carries the GUID IS the object (identity is the GUID), and deleting it would
+# break every incoming reference. So the existing object is looked up by GUID,
+# REPARENTED into the requested owner (adding an owned object to another
+# owning property moves it in LCM -- verified live, see the PR), and the
+# caller then repopulates its contents from source. Only pool-owned objects
+# (owner class `PhPhonData`) or objects already in the requested collection
+# are reusable; an object owned anywhere else, or of a different class, is a
+# genuine conflict and FAILS LOUDLY instead of being stolen from its owner.
+#
+# OPT-IN, NOT A CHANGE TO `_create_with_guid`. The pattern audit (PR body)
+# found every other GUID-preserving create either gated by a planner presence
+# scan over the class's owners or caught-and-reported; silently reparenting
+# there would move objects between owners nobody asked to move. The pool
+# generator above is specific to this family, so the reuse is too.
+# ---------------------------------------------------------------------------
+
+#: Owner class whose children are fair game for reuse: the project-wide
+#: phonological context pool (`PhPhonData.ContextsOS`).
+_REUSABLE_POOL_OWNER_CLASS = "PhPhonData"
+
+
+def _expected_class_for_factory(factory_iface) -> str:
+    """`IPhSimpleContextNCFactory` -> `PhSimpleContextNC`."""
+    name = getattr(factory_iface, "__name__", "") or ""
+    if name.startswith("I"):
+        name = name[1:]
+    if name.endswith("Factory"):
+        name = name[: -len("Factory")]
+    return name
+
+
+def _owner_of(obj):
+    """The LCM owner of `obj` (None for unowned), host-free on fakes."""
+    try:
+        from SIL.LCModel import ICmObject
+        return ICmObject(obj).Owner
+    except Exception:  # noqa: BLE001 -- fakes / non-castable wrappers
+        return getattr(obj, "Owner", None)
+
+
+def _find_existing_by_guid(target, guid_str):
+    """The target object carrying `guid_str`, or None.
+
+    Branches on the TARGET OBJECT, not on whether an import succeeds (issue
+    #55's liveness bug class): a live `FLExProject` exposes
+    `Cache.ServiceLocator.ObjectRepository` (an `ICmObjectRepository`); a
+    fake may expose `get_object_by_guid`. A target with neither cannot hold a
+    pre-existing object as far as this helper can tell, and the subsequent
+    `Create(Guid)` stays the loud backstop.
+    """
+    getter = getattr(target, "get_object_by_guid", None)
+    if callable(getter):
+        found = getter(guid_str)
+    else:
+        cache = getattr(target, "Cache", None)
+        locator = getattr(cache, "ServiceLocator", None)
+        repo = getattr(locator, "ObjectRepository", None)
+        if repo is None:
+            return None
+        try:
+            from System import Guid as DotNetGuid
+            key = DotNetGuid.Parse(guid_str)
+        except ImportError:
+            key = guid_str  # a duck-typed repository keyed by string
+        if not repo.IsValidObjectId(key):
+            return None
+        found = repo.GetObject(key)
+    # Accept only an object that really carries the GUID: an auto-attribute
+    # double (MagicMock) answers every lookup and must not read as a hit.
+    if found is None or _guid_str_from(found) != str(guid_str).lower():
+        return None
+    return found
+
+
+def _guid_collision_problem(existing, expected_class, guid_str,
+                            owner_collection=None, rule_guid=None):
+    """Why `existing` (same GUID as the source object) may NOT be reused, or
+    None when reuse is safe.
+
+    Reusable when it is of the expected class AND it is (a) already in
+    `owner_collection`, (b) owned by the context pool, or (c) inside the rule
+    `rule_guid` being rebuilt (whose owned tree the rebuild clears first).
+    """
+    actual = _class_name_of(existing)
+    if expected_class and actual and actual != expected_class:
+        return (f"GUID {guid_str} already exists in the target as a {actual}, "
+                f"but the source object is a {expected_class}; LCM cannot "
+                f"re-class an object, so it cannot be reused")
+    if owner_collection is not None:
+        for item in owner_collection:
+            if _guid_str_from(item) == guid_str:
+                return None
+    owner = _owner_of(existing)
+    owner_class = _class_name_of(owner) if owner is not None else None
+    if owner_class == _REUSABLE_POOL_OWNER_CLASS:
+        return None
+    if rule_guid:
+        node = owner
+        for _depth in range(16):
+            if node is None:
+                break
+            if _guid_str_from(node) == rule_guid:
+                return None
+            node = _owner_of(node)
+    return (f"GUID {guid_str} already exists in the target as a {actual} "
+            f"owned by {owner_class or 'nothing'} "
+            f"{_guid_str_from(owner) if owner is not None else ''}".rstrip()
+            + "; reusing it would strip it from that owner")
+
+
+def _cast_reused(existing, factory_iface):
+    """Cast a repository hit (statically `ICmObject` on the live target) to
+    the interface the factory would have produced, e.g. `IPhSegRuleRHS`.
+    pythonnet exposes only the static type's members, so an uncast reused
+    RHS has no visible `StrucChangeOS` -- and the callers' `except
+    (AttributeError, TypeError): pass` guards would swallow that silently
+    (measured live on the first cut of this fix). Fakes pass through."""
+    return _cast_lcm(existing, "I" + _expected_class_for_factory(factory_iface))
+
+
+def _reuse_or_create_with_guid(factory_iface, owner_collection, guid_str, target):
+    """`_create_with_guid`, except a pre-existing same-GUID object that is
+    safely reusable (see `_guid_collision_problem`) is REPARENTED into
+    `owner_collection` instead of colliding. Returns `(obj, reused)`.
+    Raises RuntimeError on an unreusable collision -- never a raw .NET one."""
+    existing = _find_existing_by_guid(target, guid_str)
+    if existing is None:
+        obj, _ = _create_with_guid(factory_iface, owner_collection, guid_str, target)
+        return obj, False
+    problem = _guid_collision_problem(
+        existing, _expected_class_for_factory(factory_iface), guid_str,
+        owner_collection=owner_collection)
+    if problem:
+        raise RuntimeError(f"GUID collision (issue #47): {problem}")
+    existing = _cast_reused(existing, factory_iface)
+    if not any(_guid_str_from(i) == guid_str for i in owner_collection):
+        try:
+            owner_collection.Add(existing)  # LCM: Add to an owning prop MOVES it
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(
+                f"GUID collision (issue #47): reparenting existing object "
+                f"{guid_str} into its source owner failed: {e!r}") from e
+    return existing, True
+
+
+def _reuse_or_create_with_guid_oa(factory_iface, guid_str, target):
+    """`_create_with_guid_oa` with the same reuse rule; the caller's OA
+    assignment performs the reparent. Returns `(obj, reused)`."""
+    existing = _find_existing_by_guid(target, guid_str)
+    if existing is None:
+        return _create_with_guid_oa(factory_iface, guid_str, target), False
+    problem = _guid_collision_problem(
+        existing, _expected_class_for_factory(factory_iface), guid_str)
+    if problem:
+        raise RuntimeError(f"GUID collision (issue #47): {problem}")
+    return _cast_reused(existing, factory_iface), True
+
+
+def _clear_reference_seq(obj, attr):
+    """Empty a reference sequence/collection on a REUSED object before it is
+    repopulated from source, so a re-run does not append duplicate refs."""
+    coll = getattr(obj, attr, None)
+    clear = getattr(coll, "Clear", None)
+    if callable(clear):
+        clear()
+
+
+def _rebuild_sequence_members(seq_new, src_members, copy_member, reused):
+    """Populate `seq_new.MembersRS` from `src_members` via `copy_member`.
+
+    A REUSED sequence is rebuilt in place by appending the new members first
+    and only then removing the old leading entries -- never by `Clear()`:
+    LCM deletes a `PhSequenceContext` whose MembersRS becomes empty (measured
+    live, issue #47), which would delete the very object being reused. If a
+    member cannot be copied, the appended ones are removed again and the old
+    members stay, so a failed rebuild leaves the sequence as it was."""
+    members = seq_new.MembersRS
+    if not reused:
+        for member in src_members:
+            cell = copy_member(member)
+            if cell is not None:
+                members.Add(cell)
+        return
+    old_count = members.Count
+    added = 0
+    try:
+        for member in src_members:
+            cell = copy_member(member)
+            if cell is not None:
+                members.Add(cell)
+                added += 1
+    except Exception:
+        # Roll back to the OLD members rather than trimming to a partial (or
+        # empty, hence self-deleting) list: the caller reports the failure,
+        # and the target keeps the content it already had.
+        for _ in range(added):
+            members.RemoveAt(members.Count - 1)
+        raise
+    for _ in range(old_count):
+        members.RemoveAt(0)
+
+
+#: Source context classes -> the class a same-GUID target object must have.
+_PHON_CONTEXT_CLASSES = frozenset({
+    "PhSimpleContextSeg", "PhSimpleContextNC", "PhSimpleContextBdry",
+    "PhSequenceContext", "PhIterationContext",
+})
+
+
+def _walk_phon_rule_tree(src_rule):
+    """Yield `(guid, class_name, pooled)` for every RHS and context object a
+    PhRegularRule rebuild will create, nested sequence/iteration members
+    included. `pooled` is True for objects that live in the
+    `PhPhonData.ContextsOS` pool (sequence members, iteration members)."""
+    try:
+        from SIL.LCModel import IPhRegularRule
+        rr = IPhRegularRule(src_rule)
+    except Exception:  # noqa: BLE001 -- fakes
+        rr = src_rule
+
+    seen = set()
+
+    def _cell(cell, pooled=False):
+        if cell is None:
+            return
+        g = _guid_str_from(cell)
+        if not g or g in seen:
+            return
+        seen.add(g)
+        cn = _class_name_of(cell)
+        yield g, cn, pooled
+        if cn == "PhSequenceContext":
+            try:
+                from SIL.LCModel import IPhSequenceContext
+                members = IPhSequenceContext(cell).MembersRS
+            except Exception:  # noqa: BLE001
+                members = getattr(cell, "MembersRS", ())
+            for m in members or ():
+                yield from _cell(m, True)
+        elif cn == "PhIterationContext":
+            try:
+                from SIL.LCModel import IPhIterationContext
+                member = IPhIterationContext(cell).MemberRA
+            except Exception:  # noqa: BLE001
+                member = getattr(cell, "MemberRA", None)
+            yield from _cell(member, True)
+
+    for cell in getattr(rr, "StrucDescOS", None) or ():
+        yield from _cell(cell)
+    for rhs in getattr(rr, "RightHandSidesOS", None) or ():
+        g = _guid_str_from(rhs)
+        if g:
+            yield g, "PhSegRuleRHS", False
+        for cell in getattr(rhs, "StrucChangeOS", None) or ():
+            yield from _cell(cell)
+        for attr in ("LeftContextOA", "RightContextOA"):
+            yield from _cell(getattr(rhs, attr, None))
+
+
+def _iter_phon_rule_owned_guids(src_rule):
+    """`(guid, class_name)` for every object `_walk_phon_rule_tree` yields."""
+    for g, cn, _pooled in _walk_phon_rule_tree(src_rule):
+        yield g, cn
+
+
+def _phon_rule_guid_preflight(src_rule, target, rule_guid):
+    """Issue #47: every GUID collision a (re)build of `src_rule` would hit
+    that REUSE cannot resolve, found BEFORE anything is written.
+
+    Returns a list of human-readable problems (empty = safe to proceed). Run
+    by both the ADD and the rebuild path before their first mutation, because
+    the write session is not transactional (`undoable=False`): a rule that
+    fails half-way is written out half-applied by CloseProject(). Detecting
+    the conflict up front leaves the rule exactly as it was instead.
+    """
+    problems = []
+    for guid, cn in _iter_phon_rule_owned_guids(src_rule):
+        try:
+            existing = _find_existing_by_guid(target, guid)
+        except Exception as exc:  # noqa: BLE001 -- surface, do not guess
+            problems.append(f"GUID {guid} could not be looked up: {exc!r}")
+            continue
+        if existing is None:
+            continue
+        if cn == "PhSegRuleRHS":
+            # An RHS is rule-owned and never pooled: reusable only when it is
+            # this rule's own RHS (which the rebuild clears first).
+            problem = _guid_collision_problem(existing, cn, guid,
+                                              rule_guid=rule_guid)
+            if problem is None and _class_name_of(_owner_of(existing)) == \
+                    _REUSABLE_POOL_OWNER_CLASS:
+                problem = (f"GUID {guid} (PhSegRuleRHS) exists in the "
+                           f"context pool, where no RHS belongs")
+        else:
+            problem = _guid_collision_problem(
+                existing, cn if cn in _PHON_CONTEXT_CLASSES else None, guid,
+                rule_guid=rule_guid)
+        if problem:
+            problems.append(problem)
+    return problems
+
+
+def _report_guid_collision_blocked(dropped, rule_guid, problems):
+    """DroppedItemRecord for a rule left untouched because the issue #47
+    preflight found an unreusable GUID collision."""
+    if dropped is None:
+        return
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind="PhRegularRule",
+        owner_guid=rule_guid or "",
+        owner_label=f"rule={_short_guid(rule_guid)}",
+        field_name="StrucDescOS/RightHandSidesOS",
+        item_name=f"rule={_short_guid(rule_guid)}",
+        item_guid=rule_guid or "",
+        reason=(
+            "rule left unchanged: its rebuild would collide with an existing "
+            "target object that cannot be reused (issue #47): "
+            + "; ".join(problems[:5])
+            + (f" (+{len(problems) - 5} more)" if len(problems) > 5 else "")
+        ),
+    ))
+
+
 def phonological_rules_execute_action(action, context, ws_mapping, tag):
     """Create a phonological rule in target (GUID-preserving) and delegate
     the property/tree copy to `_phon_rule_apply_body` (shared with the task 7
@@ -15039,6 +15377,15 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
     }.get(class_name, IPhRegularRuleFactory)
     cache = getattr(target, "Cache")
     owner = cache.LangProject.PhonologicalDataOA.PhonRulesOS
+    # Issue #47: detect an unreusable GUID collision BEFORE the rule shell is
+    # created, so a refusal leaves nothing half-built behind.
+    if class_name == "PhRegularRule":
+        problems = _phon_rule_guid_preflight(src_rule, target, src_guid)
+        if problems:
+            raise RuntimeError(
+                f"phonological rule {src_guid} not created: its owned tree "
+                f"would collide with existing target objects that cannot be "
+                f"reused (issue #47): " + "; ".join(problems[:5]))
     new_rule, _preserved = _create_with_guid(
         factory_iface, owner, src_guid, target,
     )
@@ -15199,7 +15546,9 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
       dispatches before STRATA in leaf order).
     - `_execute_phon_rule_structural_update` (task 7 UPDATE/rebuild path,
       feature 037): `new_rule` is an EXISTING target rule whose owned
-      StrucDescOS/RightHandSidesOS have just been cleared by the caller.
+      contexts the caller has just DETACHED into the context pool (issue
+      #47); every context/RHS below is found by GUID and reused (moved back)
+      via `_reuse_or_create_with_guid`, and only missing ones are created.
       This runs from transfer.py's OVERWRITE loop, which executes BEFORE
       exec_ctx is constructed (see execute()'s ordering comments) -- so
       `context` is None here. Stratum references are resolved immediately
@@ -15578,7 +15927,7 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
             cn = "PhSimpleContextSeg"
 
         if cn == "PhSimpleContextSeg":
-            new_cell, _ = _create_with_guid(
+            new_cell, reused = _reuse_or_create_with_guid(
                 IPhSimpleContextSegFactory, owner_collection, cell_guid, target
             )
             # Wire FeatureStructureRA -> target phoneme
@@ -15602,11 +15951,16 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                 pass
 
         elif cn == "PhSimpleContextNC":
-            new_cell, _ = _create_with_guid(
+            new_cell, reused = _reuse_or_create_with_guid(
                 IPhSimpleContextNCFactory, owner_collection, cell_guid, target
             )
             nc_src = IPhSimpleContextNC(src_cell)
             nc_new = IPhSimpleContextNC(new_cell)
+            if reused:
+                # Issue #47: a reused cell keeps its old constraint refs; the
+                # wiring below re-adds from source, so start from empty.
+                _clear_reference_seq(nc_new, "PlusConstrRS")
+                _clear_reference_seq(nc_new, "MinusConstrRS")
             # Wire FeatureStructureRA -> target NC
             try:
                 src_nc_ref = nc_src.FeatureStructureRA
@@ -15649,7 +16003,7 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                     pass
 
         elif cn == "PhSimpleContextBdry":
-            new_cell, _ = _create_with_guid(
+            new_cell, reused = _reuse_or_create_with_guid(
                 IPhSimpleContextBdryFactory, owner_collection, cell_guid, target
             )
             try:
@@ -15675,24 +16029,23 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
             # owner_collection here is the parent OS (StrucDescOS / StrucChangeOS);
             # we create the sequence as an OA of the parent OS item, so we
             # create it and add it to owner_collection.
-            new_cell = _create_with_guid_oa(
-                IPhSequenceContextFactory, cell_guid, target
+            new_cell, reused = _reuse_or_create_with_guid(
+                IPhSequenceContextFactory, owner_collection, cell_guid, target
             )
-            owner_collection.Add(new_cell)
             seq_src = IPhSequenceContext(src_cell)
             seq_new = IPhSequenceContext(new_cell)
             # Members are owned in PhPhonData.ContextsOS
             contexts_os = tgt_phon_data.ContextsOS
-            for member in seq_src.MembersRS:
-                member_cell = _copy_context_cell(member, contexts_os)
-                seq_new.MembersRS.Add(member_cell)
+            _rebuild_sequence_members(
+                seq_new, seq_src.MembersRS,
+                lambda m: _copy_context_cell(m, contexts_os), reused)
 
         elif cn == "PhIterationContext":
             # OS-owned here (this branch's owner_collection is StrucDescOS/
             # StrucChangeOS/a ContextsOS pool -- an .Add()-based collection,
             # unlike _copy_rhs_oa_context's OA slot, which has its own
             # mirror branch below).
-            new_cell, _ = _create_with_guid(
+            new_cell, reused = _reuse_or_create_with_guid(
                 IPhIterationContextFactory, owner_collection, cell_guid, target
             )
             _wire_iteration_context(
@@ -15762,15 +16115,15 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
 
         if cn == "PhSequenceContext":
             # Sequence is OA; create it and assign; members go into ContextsOS.
-            new_seq = _create_with_guid_oa(IPhSequenceContextFactory, ctx_guid, target)
-            setattr(new_rhs, attr_name, new_seq)
+            new_seq, reused = _reuse_or_create_with_guid_oa(
+                IPhSequenceContextFactory, ctx_guid, target)
+            setattr(new_rhs, attr_name, new_seq)  # reparents a reused object
             seq_src = IPhSequenceContext(src_ctx_oa)
             seq_new = IPhSequenceContext(new_seq)
             contexts_os = tgt_phon_data.ContextsOS
-            for member in seq_src.MembersRS:
-                member_cell = _copy_context_cell(member, contexts_os)
-                if member_cell is not None:
-                    seq_new.MembersRS.Add(member_cell)
+            _rebuild_sequence_members(
+                seq_new, seq_src.MembersRS,
+                lambda m: _copy_context_cell(m, contexts_os), reused)
         elif cn == "PhIterationContext":
             # OA slot (LeftContextOA/RightContextOA) -- the iteration
             # context itself is created via _create_with_guid_oa (mirrors
@@ -15778,8 +16131,9 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
             # MemberRA nested-context reference are wired via the same
             # _wire_iteration_context helper _copy_context_cell's OS-owned
             # branch uses (feature 037, coordinator live-run defect A).
-            new_it = _create_with_guid_oa(IPhIterationContextFactory, ctx_guid, target)
-            setattr(new_rhs, attr_name, new_it)
+            new_it, _reused = _reuse_or_create_with_guid_oa(
+                IPhIterationContextFactory, ctx_guid, target)
+            setattr(new_rhs, attr_name, new_it)  # reparents a reused object
             _wire_iteration_context(
                 IPhIterationContext(src_ctx_oa), IPhIterationContext(new_it),
             )
@@ -15816,9 +16170,14 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
     for src_rhs in rhs_list:
         try:
             rhs_guid = _guid_str_from(src_rhs)
-            new_rhs, _ = _create_with_guid(
+            new_rhs, rhs_reused = _reuse_or_create_with_guid(
                 IPhSegRuleRHSFactory, new_rr.RightHandSidesOS, rhs_guid, target
             )
+            if rhs_reused:
+                # Issue #47: an RHS kept by the rebuild still holds its old
+                # reference collections; they are re-added from source below.
+                for rc_attr in ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC"):
+                    _clear_reference_seq(new_rhs, rc_attr)
             # StrucChangeOS (RHS-owned; may be empty for deletion rules)
             try:
                 for src_cell in src_rhs.StrucChangeOS:
@@ -15954,104 +16313,133 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
     return new_rule
 
 
-def _collect_sequence_members_for_cleanup(cell, out):
-    """Recursively collect every object owned in PhPhonData.ContextsOS that a
-    PhSequenceContext (reachable from `cell`) references via MembersRS, so
-    `_clear_phon_rule_owned_tree` can remove them before removing the
-    sequence's owning slot.
+def _delete_pooled_context(pool, ctx):
+    """Delete a context that now sits in the `ContextsOS` pool.
 
-    Removing the OWNING slot (StrucDescOS/StrucChangeOS/LeftContextOA/
-    RightContextOA) only deletes the sequence CONTAINER itself -- its
-    members are owned separately in PhPhonData.ContextsOS and merely
-    REFERENCED via MembersRS (the same distinction flexicon's WireRule
-    `__CleanupSequenceContextMembers` documents for its own 'replace' mode
-    cleanup). Mirrors `_copy_context_cell`'s ClassName branching."""
-    if cell is None:
-        return
-    try:
-        from SIL.LCModel import ICmObject, IPhSequenceContext
-    except ImportError:
-        return
-    try:
-        cn = ICmObject(cell).ClassName
-    except (AttributeError, TypeError):
-        return
-    if cn == "PhSequenceContext":
+    A `PhSequenceContext` is emptied FIRST: LCM's sequence deletion cascades
+    into its members (measured live, issue #47), and those members are pool
+    objects other sequences -- including the rebuilt one -- may reference.
+    Emptying it makes LCM delete the sequence itself without the cascade."""
+    if _class_name_of(ctx) == "PhSequenceContext":
         try:
-            for member in IPhSequenceContext(cell).MembersRS:
-                out.append(member)
-                _collect_sequence_members_for_cleanup(member, out)
-        except (AttributeError, TypeError):
-            pass
+            from SIL.LCModel import IPhSequenceContext
+            members = IPhSequenceContext(ctx).MembersRS
+        except Exception:  # noqa: BLE001 -- fakes
+            members = getattr(ctx, "MembersRS", None)
+        clear = getattr(members, "Clear", None)
+        if callable(clear):
+            clear()
+        try:
+            from SIL.LCModel import ICmObject
+            valid = ICmObject(ctx).IsValidObject
+        except Exception:  # noqa: BLE001 -- fakes
+            valid = getattr(ctx, "IsValidObject", True)
+        if valid is False:
+            return  # LCM already deleted the emptied sequence
+    pool.Remove(ctx)
 
 
-def _clear_phon_rule_owned_tree(rule, target):
-    """Empty a target PhRegularRule's owned StrucDescOS/RightHandSidesOS tree
-    so `_phon_rule_apply_body` can rebuild it fresh from source (task 7's
-    structural-update path, feature 037).
+def _detach_phon_rule_owned_tree(rule, target, keep_guids):
+    """Prepare an EXISTING target PhRegularRule for `_phon_rule_apply_body` by
+    DETACHING its owned tree instead of deleting it (issue #47).
 
-    1. Walk every context cell reachable from StrucDescOS and each RHS's
-       StrucChangeOS/LeftContextOA/RightContextOA; any PhSequenceContext's
-       MembersRS members are owned in PhPhonData.ContextsOS (not by the
-       sequence's owning slot -- see `_collect_sequence_members_for_cleanup`),
-       so collect and remove them explicitly first.
-    2. RemoveAt every element of RightHandSidesOS and StrucDescOS -- LCM
-       cascade-deletes each OWNED object (and, transitively, its OA-owned
-       LeftContextOA/RightContextOA container, if a simple context rather
-       than a sequence) when it is removed from an OwningSequence.
+    WHY NOT DELETE-THEN-RECREATE (the pre-#47 `_clear_phon_rule_owned_tree`).
+    Measured live on a throwaway Ngoreme target: in a write session opened
+    `undoable=False`, an object deleted and then re-created under the SAME
+    GUID is persisted by CloseProject() with its PRE-DELETE XML. The
+    re-created `PhSequenceContext` held zero members in memory and was written
+    out with its four old member references -- three of them to contexts that
+    no longer existed (dangling `objsur`), after which the next re-run died
+    in `RemoveAt` with `KeyNotFoundException ... not found in identity map`.
+    Re-created `PhSegRuleRHS` objects were likewise written with their old
+    `RightContext` (empty), leaving the new context owned by an RHS that does
+    not list it. Identity is the GUID; a rebuild must REUSE, not re-mint.
 
-    FeatConstraintsOS entries are intentionally left untouched here --
-    they are project-level/shared, not rule-owned, and
-    `_phon_rule_apply_body`'s constraint pre-pass already tolerates (reuses)
-    a pre-existing constraint with a matching GUID.
+    What this does, all by reparenting or deleting objects whose GUIDs are
+    NOT about to be re-created:
+    1. Every context the rule owns (StrucDescOS cells; each RHS's
+       StrucChangeOS cells and LeftContextOA/RightContextOA) is moved into the
+       `PhPhonData.ContextsOS` pool (Add to an owning sequence MOVES; an OA
+       slot it leaves becomes null). `_phon_rule_apply_body` then finds each
+       one by GUID and moves it back into its source position.
+    2. A detached context whose GUID is NOT in `keep_guids` (the source rule
+       no longer has it) is deleted from the pool.
+    3. An RHS whose GUID is not in `keep_guids` is deleted; the rest stay in
+       place, now empty, and are reused.
+    Sequence MEMBERS are pool objects already and are left alone: they may be
+    shared, and the rebuilt sequences reuse them by GUID.
+
+    Returns the placements of the KEPT detached contexts,
+    `[(ctx, rhs_or_None, field, index)]`, for
+    `_restore_detached_leftovers`.
     """
     try:
         from SIL.LCModel import IPhRegularRule
-    except ImportError:
-        return
-    try:
         rr = IPhRegularRule(rule)
-    except (TypeError, AttributeError):
-        return
-    cache = getattr(target, "Cache")
-    phon_data = cache.LangProject.PhonologicalDataOA
-    contexts_os = phon_data.ContextsOS
+    except Exception:  # noqa: BLE001 -- fakes
+        rr = rule
+    pool = getattr(target, "Cache").LangProject.PhonologicalDataOA.ContextsOS
+    obsolete = []
+    placements = []
 
-    seq_members: list = []
-    try:
-        for cell in rr.StrucDescOS:
-            _collect_sequence_members_for_cleanup(cell, seq_members)
-    except (AttributeError, TypeError):
-        pass
-    try:
-        for rhs in rr.RightHandSidesOS:
-            try:
-                for cell in rhs.StrucChangeOS:
-                    _collect_sequence_members_for_cleanup(cell, seq_members)
-            except (AttributeError, TypeError):
-                pass
-            for oa_attr in ("LeftContextOA", "RightContextOA"):
-                _collect_sequence_members_for_cleanup(
-                    getattr(rhs, oa_attr, None), seq_members,
-                )
-    except (AttributeError, TypeError):
-        pass
-    for member in seq_members:
-        try:
-            contexts_os.Remove(member)
-        except Exception:
-            pass
+    def _detach(ctx, rhs, field, index):
+        if ctx is None:
+            return
+        pool.Add(ctx)  # reparent into the pool
+        if _guid_str_from(ctx) not in keep_guids:
+            obsolete.append(ctx)
+        else:
+            placements.append((ctx, rhs, field, index))
 
+    for i, cell in enumerate(list(rr.StrucDescOS)):
+        _detach(cell, None, "StrucDescOS", i)
+    rhs_list = list(rr.RightHandSidesOS)
+    for rhs in rhs_list:
+        for i, cell in enumerate(list(rhs.StrucChangeOS)):
+            _detach(cell, rhs, "StrucChangeOS", i)
+        for attr in ("LeftContextOA", "RightContextOA"):
+            _detach(getattr(rhs, attr, None), rhs, attr, 0)
+    for ctx in obsolete:
+        _delete_pooled_context(pool, ctx)
+    for rhs in rhs_list:
+        if _guid_str_from(rhs) not in keep_guids:
+            rr.RightHandSidesOS.Remove(rhs)
+    return placements
+
+
+def _restore_detached_leftovers(rule, placements, pooled_guids, keep_guids):
+    """Put back every detached context the rebuild did NOT re-place.
+
+    `_phon_rule_apply_body` reports-and-continues per cell/RHS, so when a
+    referent cannot be resolved (e.g. a phoneme matched by natural key, which
+    the UPDATE path cannot see) the contexts after the failure point are never
+    reached and would be left sitting in the pool -- moved out of a rule that
+    held them correctly. Restoring them to their previous slot keeps the
+    target at least as complete as it was before the rebuild. A context the
+    SOURCE keeps in the pool (`pooled_guids`) is left there."""
     try:
-        while rr.RightHandSidesOS.Count > 0:
-            rr.RightHandSidesOS.RemoveAt(rr.RightHandSidesOS.Count - 1)
-    except (AttributeError, TypeError):
-        pass
-    try:
-        while rr.StrucDescOS.Count > 0:
-            rr.StrucDescOS.RemoveAt(rr.StrucDescOS.Count - 1)
-    except (AttributeError, TypeError):
-        pass
+        from SIL.LCModel import IPhRegularRule
+        rr = IPhRegularRule(rule)
+    except Exception:  # noqa: BLE001 -- fakes
+        rr = rule
+    restored = 0
+    for ctx, rhs, field, index in placements:
+        g = _guid_str_from(ctx)
+        if g in pooled_guids:
+            continue
+        if _class_name_of(_owner_of(ctx)) != _REUSABLE_POOL_OWNER_CLASS:
+            continue  # the rebuild placed it
+        if rhs is not None and _guid_str_from(rhs) not in keep_guids:
+            continue
+        if field in ("LeftContextOA", "RightContextOA"):
+            if getattr(rhs, field, None) is None:
+                setattr(rhs, field, ctx)
+                restored += 1
+            continue
+        coll = rr.StrucDescOS if rhs is None else rhs.StrucChangeOS
+        coll.Insert(min(index, coll.Count), ctx)
+        restored += 1
+    return restored
 
 
 def _execute_phon_rule_structural_update(overwrite, source, target, report_sink,
@@ -16077,10 +16465,14 @@ def _execute_phon_rule_structural_update(overwrite, source, target, report_sink,
        PhMetathesisRule) between source and target, refuse -- LCM cannot
        re-class an existing object in place, and blowing it away + recreating
        under the same GUID from inside an UPDATE step is out of scope here.
-    3. Clear tgt_rule's owned StrucDescOS/RightHandSidesOS
-       (`_clear_phon_rule_owned_tree`), freeing their GUIDs so
-       `_phon_rule_apply_body` can recreate the same child GUIDs cleanly.
-    4. Re-run `_phon_rule_apply_body` against the now-empty tgt_rule with
+    3. Preflight (issue #47): refuse, untouched, if the rebuild would collide
+       with a same-GUID object that cannot be reused.
+    3b. DETACH tgt_rule's owned tree into the context pool
+       (`_detach_phon_rule_owned_tree`) -- never delete-then-recreate a GUID
+       in one session; see that function for the measured corruption.
+    4. Re-run `_phon_rule_apply_body` against the detached tgt_rule, which
+       REUSES every existing GUID (moving it back) and creates only the
+       missing ones, with
        `context=None` (see that function's docstring for the one behavior
        difference on this path: stratum wiring is immediate-only).
 
@@ -16153,12 +16545,40 @@ def _execute_phon_rule_structural_update(overwrite, source, target, report_sink,
         return []
 
     if src_class == "PhRegularRule":
-        _clear_phon_rule_owned_tree(tgt_rule, target)
+        # Issue #47: refuse BEFORE the clear if the rebuild would hit a GUID
+        # collision that reuse cannot resolve. The session is not
+        # transactional, so failing after the clear would write out a rule
+        # with its tree destroyed and only partly rebuilt.
+        problems = _phon_rule_guid_preflight(src_rule, target, tgt_guid)
+        if problems:
+            report_sink.Warning(
+                f"  [{overwrite.category.value}] structural_rebuild: rule "
+                f"guid={src_guid[:8]} left unchanged -- GUID collision with "
+                f"existing target objects that cannot be reused (issue #47): "
+                + "; ".join(problems[:5])
+            )
+            _report_guid_collision_blocked(dropped, src_guid, problems)
+            return []
+        walked = list(_walk_phon_rule_tree(src_rule))
+        keep = {g for g, _cn, _pooled in walked}
+        pooled = {g for g, _cn, p in walked if p}
+        placements = _detach_phon_rule_owned_tree(tgt_rule, target, keep)
+    else:
+        placements, keep, pooled = [], set(), set()
 
     _phon_rule_apply_body(
         src_rule, tgt_rule, src_class, source, target, ws_map, tag,
         src_guid, context=None, dropped=dropped,
     )
+    if placements:
+        restored = _restore_detached_leftovers(tgt_rule, placements, pooled, keep)
+        if restored:
+            report_sink.Warning(
+                f"  [{overwrite.category.value}] structural_rebuild: rule "
+                f"guid={src_guid[:8]} -- {restored} context(s) the rebuild "
+                f"could not re-place were restored to their previous position "
+                f"(see this rule's dropped-item records for why)"
+            )
     report_sink.Info(
         f"  [{overwrite.category.value}] structural_rebuild applied "
         f"guid={src_guid[:8]} (StrucDescOS + RightHandSidesOS rebuilt from source)"
