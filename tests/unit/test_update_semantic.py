@@ -396,12 +396,22 @@ class TestPhonemeEnvVersionGate:
         result = _phoneme_env_field_diff_enabled()
         assert isinstance(result, bool)
 
-    def test_gate_returns_false_for_current_flexicon(self):
-        """Current pyflexicon version is below _FLEXICON_ITSTRING_FIX_VERSION
-        placeholder (999.0.0), so the gate must return False (fail-closed)."""
-        from gramtrans.Lib.conflict import _phoneme_env_field_diff_enabled
-        # If pyflexicon is not installed, the function also returns False.
-        assert _phoneme_env_field_diff_enabled() is False
+    def test_gate_open_for_installed_flexicon(self):
+        """Issue #16: the fix shipped in pyflexicon 4.1.2, below the 4.8.0
+        floor, so on any supported install the gate is open (Tier A). Both
+        sides of the version boundary are pinned in
+        test_issue16_phoneme_env_tier_a.py."""
+        import importlib.metadata as _meta
+        from packaging.version import Version
+        from gramtrans.Lib.conflict import (
+            _FLEXICON_ITSTRING_FIX_VERSION, _phoneme_env_field_diff_enabled,
+        )
+        try:
+            installed = _meta.version("pyflexicon")
+        except _meta.PackageNotFoundError:
+            pytest.skip("pyflexicon not installed (gate fails closed)")
+        expected = Version(installed) >= Version(_FLEXICON_ITSTRING_FIX_VERSION)
+        assert _phoneme_env_field_diff_enabled() is expected
 
     def test_gate_false_suppresses_phoneme_execute(self, monkeypatch):
         """C6: when gate is False, PHONEMES execute_action must NOT be called.

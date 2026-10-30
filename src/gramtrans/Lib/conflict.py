@@ -884,21 +884,30 @@ def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj,
 # 022 T014: Flexicon version gate for Phoneme/Environment field-diff promotion
 # ============================================================================
 
-# When pyflexicon ships the ITsString.get_String guard fix for
-# EnvironmentOperations (~:694-698) and PhonemeOperations (~:1309-1319),
-# bump this constant to the fix release version.
-# TODO(Ruling-Y): update _FLEXICON_ITSTRING_FIX_VERSION when the
-# flexicon ITsString.get_String patch ships.
-_FLEXICON_ITSTRING_FIX_VERSION = "999.0.0"  # placeholder; no fix yet
+# First pyflexicon release whose PhonemeOperations / EnvironmentOperations
+# GetSyncableProperties no longer call ``.get_String()`` on the scalar
+# ITsString fields (``BasicIPASymbol``, ``StringRepresentation``), AND whose
+# write half round-trips them: flexicon commit 1f9f747b ("guard mono ITsString
+# vs multi-string in Phoneme/Environment GetSyncableProperties"), first tagged
+# v4.1.2 (absent from v4.1.1).  That same commit added
+# ``PhonemeOperations.__ApplyBasicIPASymbol`` (scalar-tolerant setter); the
+# Environment write rides ``BaseOperations``' ITsString ``MakeString``
+# fallback for a plain-str value, present at v4.1.2.  Issue #16 / Ruling Y.
+#
+# The pyproject floor (pyflexicon>=4.8.0) is already above this, so on any
+# supported install the gate is open; it stays as a fail-closed guard against
+# an out-of-floor or metadata-less install rather than moving the floor.
+_FLEXICON_ITSTRING_FIX_VERSION = "4.1.2"
 
 
 def _phoneme_env_field_diff_enabled() -> bool:
     """Return True if the installed pyflexicon version supports
     GetSyncableProperties on Phoneme and PH_ENVIRONMENT objects without
-    the ITsString.get_String defect (022 T014 / Ruling Y).
+    the ITsString.get_String defect (022 T014 / Ruling Y, issue #16).
 
-    Until the fix ships, Phoneme and PH_ENVIRONMENT stay SELECTOR-ONLY
-    (Tier C).  When the fix ships, update _FLEXICON_ITSTRING_FIX_VERSION.
+    At or above _FLEXICON_ITSTRING_FIX_VERSION, Phoneme and PH_ENVIRONMENT
+    get full field-diff UPDATE (Tier A).  Below it -- or when the installed
+    version cannot be read -- they stay SELECTOR-ONLY (Tier C).
     """
     try:
         import importlib.metadata as _meta
