@@ -4218,14 +4218,21 @@ def _execute_gold_reserved_merge(overwrite, source, target, report_sink,
         )
         return
 
-    try:
-        from SIL.LCModel.Core.KernelInterfaces import ITsString
-        from SIL.LCModel.Core.Text import TsStringUtils
-    except ImportError:
-        report_sink.Warning(
-            f"  [OW-MERGE] {cat.value} {src_guid[:8]}: LCM text utils unavailable"
-        )
-        return
+    if __package__:
+        from .texts import _is_dotnet_object
+    else:
+        from texts import _is_dotnet_object  # type: ignore
+
+    # Issue #55: branch on WHAT the target multistring IS, not on whether
+    # `TsStringUtils` imports. The import succeeding is a fact about the
+    # PROCESS -- once anything has loaded flexicon (pythonnet + the SIL
+    # assemblies) it succeeds for every object, and `MakeString` succeeds on
+    # a plain `str`, so a duck-typed multistring was silently handed a real
+    # .NET `ITsString`. A genuine .NET multistring gets an `ITsString`; any
+    # other `set_String` receives the plain text. `TsStringUtils` is resolved
+    # only when a .NET write actually needs it.
+    _unresolved = object()
+    tsu = _unresolved
 
     filled_count = 0
     for field_name in ("Name", "Abbreviation", "Description"):
@@ -4250,9 +4257,20 @@ def _execute_gold_reserved_merge(overwrite, source, target, report_sink,
                 # Non-empty target slot: conflict (already reported at plan time).
                 continue
             # Empty target slot -> fill it.
+            is_live = _is_dotnet_object(tgt_ms)
+            if is_live and tsu is _unresolved:
+                try:
+                    from SIL.LCModel.Core.Text import TsStringUtils as tsu
+                except ImportError:
+                    report_sink.Warning(
+                        f"  [OW-MERGE] {cat.value} {src_guid[:8]}: "
+                        f"LCM text utils unavailable"
+                    )
+                    return
             try:
-                tgt_ms.set_String(tgt_handle,
-                                  TsStringUtils.MakeString(src_text, tgt_handle))
+                value = (tsu.MakeString(src_text, tgt_handle) if is_live
+                         else src_text)
+                tgt_ms.set_String(tgt_handle, value)
                 filled_count += 1
             except Exception as exc:
                 _log.exception(
@@ -4261,7 +4279,7 @@ def _execute_gold_reserved_merge(overwrite, source, target, report_sink,
                 )
                 report_sink.Warning(
                     f"  [OW-MERGE] {cat.value} {src_guid[:8]} "
-                    f"{field_name}@ws={ws_handle}: write failed: {exc}"
+                    f"{field_name}@ws={tgt_handle}: write failed: {exc}"
                 )
 
     report_sink.Info(
