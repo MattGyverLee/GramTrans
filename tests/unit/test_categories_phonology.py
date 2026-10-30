@@ -1296,7 +1296,10 @@ def _build_phon_rule_apply_handles(target_ncs):
     phon_data.ContextsOS = _FakeCollection()
     phon_data.FeatConstraintsOS = _FakeCollection()
     phon_data.PhonemeSetsOS = []
-    phon_data.PhonRuleFeatsOA = []
+    # Issue #52: an OA -- ONE owned possibility list whose rule features are
+    # PossibilitiesOS -- never a bare list (see test_052_*).
+    phon_data.PhonRuleFeatsOA = type("PossList", (), {})()
+    phon_data.PhonRuleFeatsOA.PossibilitiesOS = _FakeCollection()
 
     cache = type("Cache", (), {})()
     cache.LangProject = type("LangProject", (), {})()
