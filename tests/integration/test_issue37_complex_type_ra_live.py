@@ -47,6 +47,31 @@ EXPECTED = {
     "df4a248b-747a-4240-9618-0e1f77059de7": "0a6c2f79-e440-4524-bd07-91bbe2b314bb",  # noun agreement
 }
 
+#: struct-type GUID -> source FeaturesRS member GUIDs, in order (the complex
+#: feature's constituent structure).
+EXPECTED_MEMBERS = {
+    "0a6c2f79-e440-4524-bd07-91bbe2b314bb": [
+        "e49c7be8-7055-4905-b993-861ef0576b4c",
+        "bd1d7f21-7cf2-44c9-a952-69d218bc1028"],
+    "2b491f35-aa10-49cb-afb2-facce7f5155f": [
+        "bd1d7f21-7cf2-44c9-a952-69d218bc1028",
+        "e49c7be8-7055-4905-b993-861ef0576b4c",
+        "55706aa1-2381-45a6-bba2-ea489bb4a636"],
+    "3293182e-dbf8-460f-a1db-947a5a7bb03b": [
+        "bd1d7f21-7cf2-44c9-a952-69d218bc1028",
+        "e49c7be8-7055-4905-b993-861ef0576b4c"],
+    "4901227e-2ff3-4593-a3e9-dad496f20edc": [
+        "bd1d7f21-7cf2-44c9-a952-69d218bc1028",
+        "e49c7be8-7055-4905-b993-861ef0576b4c",
+        "55706aa1-2381-45a6-bba2-ea489bb4a636"],
+}
+EXPECTED_NAMES = {
+    "1861cbf3-f02b-41cb-b9f5-7d5acc57323b": "object agreement",
+    "49eaca04-afbf-46ba-b55c-5399c7e96088": "subject agreement",
+    "58a4cedb-7ed8-4548-8dae-770294804ec9": "adjective agreement",
+    "df4a248b-747a-4240-9618-0e1f77059de7": "noun agreement",
+}
+
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
@@ -159,6 +184,33 @@ def _type_ra_skips(report):
             if s.source_guid in EXPECTED and "TypeRA" in (s.detail or "")]
 
 
+def _target_structure() -> tuple:
+    """({type_guid: [FeaturesRS member guids]}, {feature_guid: Name}) for
+    EXPECTED's endpoints in the sandbox, via a fresh read-only open."""
+    from gramtrans.Lib.flexinit import ensure_flex_initialized
+    ensure_flex_initialized()
+    from flexicon import FLExProject
+    from SIL.LCModel import ICmObject, IFsFeatStrucType
+    proj = FLExProject()
+    proj.OpenProject(projectName=TARGET_NAME, writeEnabled=False)
+    try:
+        fs = proj.lp.MsFeatureSystemOA
+        members = {}
+        for t in fs.TypesOC:
+            g = str(ICmObject(t).Guid).lower()
+            if g in EXPECTED_MEMBERS:
+                members[g] = [str(ICmObject(d).Guid).lower()
+                              for d in IFsFeatStrucType(t).FeaturesRS]
+        names = {}
+        for f in fs.FeaturesOC:
+            g = str(ICmObject(f).Guid).lower()
+            if g in EXPECTED_NAMES:
+                names[g] = f.Name.BestAnalysisAlternative.Text
+        return members, names
+    finally:
+        proj.CloseProject()
+
+
 def test_fresh_move_wires_type_ra_and_rerun_writes_nothing(monkeypatch):
     before, before_types = _target_type_ra()
     print("[LIVE] pre  features=%s types=%d" % (before, len(before_types)))
@@ -178,6 +230,12 @@ def test_fresh_move_wires_type_ra_and_rerun_writes_nothing(monkeypatch):
     after, _ = _target_type_ra()
     print("[LIVE] post run1 %s" % after)
     assert after == EXPECTED
+    # #29: the constituent structure (each TypeRA target's FeaturesRS, in
+    # source order) and the WS-mapped names arrive intact, GUID-preserved.
+    members, names = _target_structure()
+    print("[LIVE] post run1 members=%s names=%s" % (members, names))
+    assert members == EXPECTED_MEMBERS
+    assert names == EXPECTED_NAMES
 
     preview_rows2: list = []
     monkeypatch.undo()
