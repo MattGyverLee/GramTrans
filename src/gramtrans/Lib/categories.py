@@ -13558,13 +13558,18 @@ def phonemes_execute_action(action, context, ws_mapping, tag):
     try:
         props = source.Phonemes.GetSyncableProperties(src_phon)
         target.Phonemes.ApplySyncableProperties(new_phon, props, ws_map=ws_mapping)
-    except Exception:
-        # Broadened from (AttributeError, TypeError): flexicon's
-        # GetSyncableProperties raises ITsString.get_String for phonemes until
-        # the fix ships (Ruling Y). The phoneme is already created with its GUID
+    except Exception as exc:  # noqa: BLE001
+        # Broad on purpose: the phoneme is already created with its GUID
         # preserved (above), which is all downstream NC/allomorph wiring needs;
         # degrade to a GUID-only transfer rather than aborting the create.
-        pass
+        # Historically this caught flexicon's ITsString.get_String crash on the
+        # scalar BasicIPASymbol (Ruling Y, issue #16; fixed in pyflexicon
+        # 4.1.2, below the 4.8.0 floor) -- so it is no longer expected, and is
+        # logged rather than swallowed silently.
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "phoneme %s created GUID-only; property copy failed: %s: %s",
+            src_guid, type(exc).__name__, exc)
     try:
         apply_carrier_b(new_phon, cache.DefaultAnalWs, tag, strict=False)
     except Exception:
@@ -13879,8 +13884,9 @@ def _wire_phoneme_features(context, target, tag):
         except Exception as exc:  # noqa: BLE001
             # Mirrors the create path's Ruling Y guard -- flexicon raised
             # ITsString.get_String for phonemes until the shape-tolerant
-            # reader shipped. Degrade per phoneme; never abort the pass. Never
-            # silent: the operator sees one Skip per phoneme that did not land.
+            # reader shipped (pyflexicon 4.1.2, issue #16). Degrade per
+            # phoneme; never abort the pass. Never silent: the operator sees
+            # one Skip per phoneme that did not land.
             skips.append(Skip(
                 category=GrammarCategory.PHONEMES,
                 source_guid=src_guid,
@@ -14550,12 +14556,16 @@ def ph_environment_execute_action(action, context, ws_mapping, tag):
     try:
         props = source.Environments.GetSyncableProperties(src_env)
         target.Environments.ApplySyncableProperties(new_env, props, ws_map=ws_mapping)
-    except Exception:
-        # Broadened from (AttributeError, TypeError): GetSyncableProperties
-        # raises ITsString.get_String for environments until the flexicon fix
-        # ships (Ruling Y). The environment is already created GUID-preserved;
+    except Exception as exc:  # noqa: BLE001
+        # Broad on purpose: the environment is already created GUID-preserved;
         # degrade to a GUID-only transfer rather than aborting the create.
-        pass
+        # Historically this caught flexicon's ITsString.get_String crash on the
+        # scalar StringRepresentation (Ruling Y, issue #16; fixed in pyflexicon
+        # 4.1.2, below the 4.8.0 floor) -- now logged, not swallowed silently.
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "environment %s created GUID-only; property copy failed: %s: %s",
+            src_guid, type(exc).__name__, exc)
     try:
         apply_carrier_b(new_env, cache.DefaultAnalWs, tag, strict=False)
     except Exception:

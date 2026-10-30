@@ -661,30 +661,17 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # answer, and only one of them should have to be written down.
     object.__setattr__(exec_ctx, '_planned_destination',
                        PlannedDestination(DESTINATION_UNDETERMINED))
-    # C6: categories gated behind the flexicon ITsString.get_String fix.
-    # When _phoneme_env_field_diff_enabled() is False (current state), field-diff
-    # for PHONEMES and PH_ENVIRONMENT is skipped — they remain SELECTOR-ONLY
-    # (Tier C).  The gate is consulted once per execute() call to avoid repeated
-    # importlib.metadata lookups.
-    _FIELD_DIFF_GATED = frozenset((
-        GrammarCategory.PHONEMES,
-        GrammarCategory.PH_ENVIRONMENT,
-    ))
-    _field_diff_ok = _phoneme_env_field_diff_enabled()
-
     leaf_count = 0
     for action in plan.actions:
         if action.category not in _LEAF_DISPATCH_CATEGORIES:
             continue
-        # C6 NOTE: the Phoneme/Environment field-diff gate (_field_diff_ok /
-        # _FIELD_DIFF_GATED) applies ONLY to UPDATE field-diff semantics
-        # (_execute_update_semantic on the overwrite path). It must NOT gate a
-        # plain ADD here: a create has no field-diff, and skipping the create
-        # left phonemes/environments untransferred -> downstream NC/allomorph
-        # references to them failed loud ("no counterpart on target"). Creates
-        # proceed unconditionally; only the create+guid is needed for wiring,
-        # and any ITsString.get_String failure during property-copy is caught
-        # inside the category execute_action after the object is created.
+        # C6 NOTE: the Phoneme/Environment flexicon version gate
+        # (_phoneme_env_field_diff_enabled, issue #16) applies ONLY to UPDATE
+        # field-diff semantics (_execute_update_semantic on the overwrite path).
+        # It must NOT gate a plain ADD here: a create has no field-diff, and
+        # skipping the create left phonemes/environments untransferred ->
+        # downstream NC/allomorph references to them failed loud ("no
+        # counterpart on target"). Creates proceed unconditionally.
         try:
             bundle = _for_category(action.category)
         except KeyError:
@@ -3386,10 +3373,13 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             dropped=dropped,
         )
 
-    # C6 guard: mirrors the leaf-path gate at execute():227 (_FIELD_DIFF_GATED).
-    # Currently LATENT — PHONEMES/PH_ENVIRONMENT don't emit PlannedOverwrite today
-    # (_phonology_simple_plan emits only Skip/PlannedAction) — but guards against
-    # future planner changes that would make this path live and fail-open.
+    # C6 guard (issue #16): the ONLY place the Phoneme/Environment flexicon
+    # version gate takes effect. This path is LIVE: `_phonology_simple_plan`
+    # emits a `PlannedOverwrite(write_mode="merge")` for a phoneme/environment
+    # matched by natural key (any phase) or present by GUID (Phase 1). With a
+    # pyflexicon at/above `_FLEXICON_ITSTRING_FIX_VERSION` (4.1.2; the floor is
+    # 4.8.0) the gate is open and they get full field-diff UPDATE (Tier A);
+    # below it they stay selector-only (Tier C) and nothing is written here.
     if cat in (GrammarCategory.PHONEMES, GrammarCategory.PH_ENVIRONMENT) and not _phoneme_env_field_diff_enabled():
         report_sink.Info(
             f"  [{cat.value}] field-diff gated (flexicon version"
@@ -3457,18 +3447,28 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
         # an identical-except-tag object resolves to UPDATE on every re-run and
         # the write replaces the tag line.
         tgt_props = strip_residue_props(tgt_ops.GetSyncableProperties(tgt_obj))
-        # Issue #54: drop keys the per-field write cannot carry, so they
+        # Issue #16: the snapshot keeps the target's props as read; only the
+        # compare/write below sees the target-WS-space projection.
+        _snapshot_props = dict(tgt_props)
+        _write_ws_map = ws_map
+        # Issue #54: drop keys the per-field writer cannot carry, so they
         # neither force an UPDATE nor count as "written" on every run.
         for _key in _UPDATE_UNWRITABLE_KEYS.get(cat, ()):
             src_props.pop(_key, None)
             tgt_props.pop(_key, None)
+        if cat in _UPDATE_TARGET_SPACE_CATEGORIES:
+            src_props, tgt_props = _to_update_target_space(
+                cat, src_props, tgt_props, ws_map, target)
+            # Source keys are already target WS ids; re-mapping them in
+            # ApplySyncableProperties would double-map a swapped pair.
+            _write_ws_map = None
 
         # Compute disposition (2-way, no prior baseline).
         disposition = compute_disposition(
             src_props=src_props,
             tgt_props=tgt_props,
             intent=_ConflictMode.UPDATE,
-            ws_map=ws_map,
+            ws_map=_write_ws_map,
         )
 
         if disposition == ItemDisposition.SKIP:
@@ -3499,12 +3499,12 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             # (detected by read-back inside apply_update_semantic, BEFORE the
             # residue lines below touch Description) reach the report sink.
             written = apply_update_semantic(
-                src_props, tgt_props, tgt_ops, tgt_obj, ws_map=ws_map,
+                src_props, tgt_props, tgt_ops, tgt_obj, ws_map=_write_ws_map,
                 report_sink=report_sink,
                 label=f"[{cat.value}] guid={src_guid[:8]}",
             )
             restore_residue_history(tgt_obj, cache.DefaultAnalWs, _prior_lines)
-            apply_residue(tgt_obj, cache.DefaultAnalWs, tag.with_snapshot(tgt_props))
+            apply_residue(tgt_obj, cache.DefaultAnalWs, tag.with_snapshot(_snapshot_props))
             report_sink.Info(
                 f"  [{cat.value}] UPDATE applied ({written} field(s) written)"
                 f"  guid={src_guid[:8]}"
@@ -3543,6 +3543,107 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             if measured is not None and enrichments is not None:
                 enrichments.append(measured)
     return []
+
+
+# Issue #16: categories whose UPDATE compare/write is projected into the
+# TARGET's writing-system space first (see `_to_update_target_space`). Scoped
+# to the two categories #16 promoted to Tier A, which were measured live; the
+# same WS-space mismatch can affect other categories' vernacular multistrings
+# and is a follow-up, not silently widened here.
+_UPDATE_TARGET_SPACE_CATEGORIES = frozenset((
+    GrammarCategory.PHONEMES,
+    GrammarCategory.PH_ENVIRONMENT,
+))
+
+# Keys excluded from the PHONEMES scalar UPDATE. Feature wiring for created
+# AND natural-key-matched phonemes is owned by the T081 tail pass
+# (`categories._wire_phoneme_features`), which runs after the run's
+# PHONOLOGICAL_FEATURES have landed. The Phase-1 overwrite loop runs BEFORE the
+# leaf ADDs, so writing `Features` here raised FP_ParameterError for every
+# feature this run had yet to create (measured live, #16) and aborted the rest
+# of that phoneme's fields. `FeaturesGuid` is identity only: the owned
+# FsFeatStruc of a starter-matched phoneme legitimately has another GUID, and
+# flexicon never re-applies it.
+_PHONEME_UPDATE_DEFERRED_KEYS = ("Features", "FeaturesGuid")
+
+
+def _to_update_target_space(cat, src_props, tgt_props, ws_map, target):
+    """Project an UPDATE's (src_props, tgt_props) into the target's WS space.
+
+    Without this, every re-run of a phoneme re-UPDATEs (measured live on
+    Mbugwe -> an Ejagham-derived sandbox, #16), because:
+
+    * a source multistring is keyed by SOURCE WS ids (``{"mgz": "j"}``) and the
+      target's by TARGET ids (``{"etu": "j"}``) -- equal data that never
+      compares equal. flexicon writes the source alt through ``ws_map``, so the
+      compare must too. The scalar ``BasicIPASymbol`` is keyed under each
+      project's own default vernacular, so it ALWAYS hits this;
+    * a source alt whose WS the target lacks (``mgz-fonipa-x-emic``) is
+      could never be written (flexicon skips it) yet would stay "fillable"
+      forever. It is dropped from compare and write, and logged here at INFO
+      since flexicon never sees it;
+    * a target holding every source alt PLUS its own extras compares unequal
+      as a whole dict although UPDATE has nothing to write;
+    * PHONEMES ``Features``/``FeaturesGuid`` -- see
+      `_PHONEME_UPDATE_DEFERRED_KEYS`.
+
+    Pure apart from reading the target's WS ids; returns new dicts.
+    """
+    ws_map = ws_map or {}
+
+    def _norm(ws_id):
+        # Mirrors flexicon's `_resolve_ws_handle` fallback (case / "_" vs "-").
+        return str(ws_id).lower().replace("_", "-")
+
+    target_ws_by_norm = None
+    try:
+        target_ws_by_norm = {_norm(w.Id): w.Id
+                             for w in target.WritingSystems.GetAll()}
+    except Exception:  # noqa: BLE001 -- unknown target WS set: keep every alt
+        target_ws_by_norm = None
+
+    dropped_ws = set()
+
+    def _project(props):
+        out = {}
+        for key, val in props.items():
+            if isinstance(val, dict):
+                mapped = {}
+                for ws_id, text in val.items():
+                    tgt_id = ws_map.get(ws_id, ws_id)
+                    if target_ws_by_norm is not None:
+                        tgt_id = target_ws_by_norm.get(_norm(tgt_id))
+                        if tgt_id is None:
+                            dropped_ws.add(ws_id)
+                            continue
+                    mapped[tgt_id] = text
+                out[key] = mapped
+            else:
+                out[key] = val
+        return out
+
+    src = _project(src_props or {})
+    if dropped_ws:
+        # These alts never reach flexicon, so its own miss-case warning cannot
+        # fire; say it here. INFO, not WARNING: it repeats on every re-run.
+        _log.info(
+            "UPDATE [%s]: source alt(s) in WS %s have no target writing system;"
+            " not compared or written", cat.value, sorted(dropped_ws))
+    tgt = dict(tgt_props or {})
+    # Per-alt satisfaction: UPDATE never removes a target-only alt, so a target
+    # that already carries every source alt verbatim (plus extras, e.g. a
+    # starter phoneme's `en` Name) needs no write. Comparing whole dicts would
+    # call it "fillable" on every run.
+    for key, val in src.items():
+        tval = tgt.get(key)
+        if (isinstance(val, dict) and val and isinstance(tval, dict)
+                and all(tval.get(ws) == text for ws, text in val.items())):
+            src[key] = tval
+    if cat == GrammarCategory.PHONEMES:
+        for key in _PHONEME_UPDATE_DEFERRED_KEYS:
+            src.pop(key, None)
+            tgt.pop(key, None)
+    return src, tgt
 
 
 # Map from GrammarCategory to the project-level ops accessor name (attribute
