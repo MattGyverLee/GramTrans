@@ -198,12 +198,17 @@ def _strip_comments(text):
     return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
 
 
-def test_no_hiding_factory_is_cast_before_a_one_arg_create_anywhere():
+def test_no_hiding_factory_is_cast_straight_off_get_factory_in_lib():
     """Sweep guard. `IX(target.GetFactory(IX))` for a hiding interface binds
-    only the owner-taking overloads, so any such site calling 1-arg
-    `Create(Guid)` is this bug. The two sites that had it
-    (`references.apply_reference`, `categories.semantic_domains_execute_action`)
-    now use the uncast factory; none may come back."""
+    ONLY the owner-taking overloads, so a 1-arg `Create(Guid)` on it is this
+    bug. The two sites that had it (`references.apply_reference`,
+    `categories.semantic_domains_execute_action`) now use the uncast factory.
+
+    Deliberately stricter than the bug: it prohibits the cast-off-GetFactory
+    IDIOM for these four interfaces outright, whatever the `Create` arity, so a
+    future site that genuinely needs the owner-taking overload must cast a
+    named variable (as `apply_reference` does for 5049) and state why. Scans
+    `src/gramtrans/Lib/` (the package that holds every factory site)."""
     root = Path(categories.__file__).resolve().parent
     hits = []
     for path in sorted(root.rglob("*.py")):
