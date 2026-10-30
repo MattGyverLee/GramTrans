@@ -169,9 +169,11 @@ def test_ws_map_is_honoured_by_delta_and_disposition():
     assert compute_merge_fillable(src, {"Name": {"tgt-vern": "cat"}}, ws_map=ws_map)
 
 
-def test_nfc_nfd_spelling_is_not_a_divergence():
+def test_text_compare_is_exact_like_the_preview_planner():
+    """The planner compares per-WS text exactly; the writer must agree, so an
+    NFC/NFD pair is a divergence on both sides (no silent Preview/Move gap)."""
     nfc, nfd = "é", "é"
-    assert compute_merge_fillable({"Name": {"en": nfc}}, {"Name": {"en": nfd}}) == {}
+    assert compute_merge_fillable({"Name": {"en": nfc}}, {"Name": {"en": nfd}})
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +206,7 @@ def test_flexicon_silent_skip_detected_by_read_back():
     assert n == 1  # Name only; StratumGuid accepted but never stored
     assert "StratumGuid" not in store
     (w,) = sink.warnings()
-    assert "'StratumGuid'" in w and "silently skipped" in w
+    assert "'StratumGuid'" in w and "not present on read-back" in w
     assert w.strip().startswith("[pos] guid=abcd1234")
 
 

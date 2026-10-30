@@ -604,10 +604,10 @@ def _is_multistring(value) -> bool:
 
 
 def _text_eq(a, b) -> bool:
-    """String equality that ignores NFC/NFD representation differences."""
-    if isinstance(a, str) and isinstance(b, str):
-        import unicodedata
-        return unicodedata.normalize("NFC", a) == unicodedata.normalize("NFC", b)
+    """Exact equality, deliberately: the Preview planner's per-WS comparison
+    (`categories._compare_multistring_per_ws`) compares text exactly, and the
+    Merge writer must not disagree with what Preview promised. Unicode
+    normalisation, if adopted, belongs in both places at once."""
     return a == b
 
 
@@ -872,8 +872,9 @@ def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj,
     for key, value in attempted.items():
         problem = _unapplied_parts(key, value, readback, ws_map=ws_map)
         if problem:
-            _warn("MERGE partial apply: field %r silently skipped by "
-                  "ApplySyncableProperties (%s)" % (key, problem))
+            _warn("MERGE partial apply: field %r not applied -- requested "
+                  "value not present on read-back after ApplySyncableProperties"
+                  " (%s)" % (key, problem))
         else:
             written += 1
     return written
