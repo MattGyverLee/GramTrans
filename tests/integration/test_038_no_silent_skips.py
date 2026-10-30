@@ -146,6 +146,10 @@ CATEGORY_FIELD_ROLES = {
     # A strict subset of `skipped` too -- one per Skip(NOT_REPRODUCIBLE), which
     # `RunReport.__post_init__` already reconciles.
     "not_reproducible": ANNOTATION,
+    # Issue #85: a strict subset of `skipped` as well -- one per blocked Skip
+    # (`is_blocked_skip`), reconciled by `RunReport.__post_init__`. It labels
+    # a skip as "did not arrive"; the item is still in the SKIP bucket.
+    "blocked": ANNOTATION,
     # A MATCH BASIS, not a disposition: the object was matched by natural key
     # rather than by GUID and then went on to UPDATE or SKIP (FR-006/FR-187).
     "identity_substitution": ANNOTATION,

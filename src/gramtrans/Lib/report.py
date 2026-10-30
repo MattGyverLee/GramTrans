@@ -44,6 +44,7 @@ if __package__:
         Skip,
         SkipReason,
         dropped_identity,
+        is_blocked_skip,
         merge_dropped_records,
     )
 else:
@@ -70,6 +71,7 @@ else:
         Skip,
         SkipReason,
         dropped_identity,
+        is_blocked_skip,
         merge_dropped_records,
     )
 
@@ -159,6 +161,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                 # Feature 038 (see the counting notes further down).
                 "identity_substitution": 0, "enriched": 0,
                 "not_reproducible": 0,
+                # Issue #85: subset of skipped, see `is_blocked_skip`.
+                "blocked": 0,
             }
         return per_category[cat]
 
@@ -295,6 +299,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         # the counter against -- so the two can never disagree.
         if skip.reason == SkipReason.NOT_REPRODUCIBLE:
             b["not_reproducible"] += 1
+        if is_blocked_skip(skip):
+            b["blocked"] += 1
 
     # Phase 1 (FR-110): count overwrites per category. Tolerate plans
     # produced before Phase 1 (no `overwrites` attribute) by falling back
@@ -323,6 +329,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
             b["interactive_skipped"] += 1
         if skip.reason == SkipReason.NOT_REPRODUCIBLE:
             b["not_reproducible"] += 1
+        if is_blocked_skip(skip):
+            b["blocked"] += 1
 
     # Phase 3c Selection UI: tally EXCLUDED-LOSSY warnings from the plan
     # and any extras passed in by the executor.
@@ -386,6 +394,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
             identity_substitution=counts["identity_substitution"],
             enriched=counts["enriched"],
             not_reproducible=counts["not_reproducible"],
+            blocked=counts["blocked"],
         )
         for cat, counts in per_category.items()
     }
@@ -770,6 +779,11 @@ def disposition_totals(report) -> dict:
         "skip": skipped,
         "skip_no_delta_after_comparison": no_delta,
         "skip_other_reason": skipped - no_delta,
+        # Issue #85: the part of `skip_other_reason` that is BLOCKED -- a
+        # refinement of the SKIP bucket, never a fifth outcome.
+        "skip_blocked": sum(
+            1 for s in getattr(report, "skips", ()) if is_blocked_skip(s)
+        ),
         "dropped_with_reason": dropped,
         # T080: SC-010's claim, as a value rather than as prose. `True` means
         # every item this run KNOWS it did not reproduce also reached one of
@@ -1963,6 +1977,33 @@ def to_snapshot_json(r: RunReport) -> str:
 # Console rendering (for the FlexTools report.Info pane)
 # ============================================================================
 
+#: Issue #85: lexicon categories a FLEx user selects expecting entries to
+#: transfer, and which the default path does not dispatch (preview.py
+#: build_run_plan reports each as a "not dispatched" skip).
+_LEXICON_CATEGORIES = frozenset({
+    GrammarCategory.ENTRY, GrammarCategory.SENSE,
+    GrammarCategory.MSA, GrammarCategory.ALLOMORPH,
+})
+
+
+def not_dispatched_categories(report) -> list:
+    """Issue #85: the selected categories `build_run_plan` reported as "not
+    dispatched" (no planner ran, nothing could be written), in skip order."""
+    cats: list = []
+    for s in getattr(report, "skips", ()):
+        if (getattr(s, "reason", None) is SkipReason.UNSUPPORTED_LCM_TYPE
+                and str(getattr(s, "detail", "")).startswith("not dispatched")
+                and s.category not in cats):
+            cats.append(s.category)
+    return cats
+
+
+def _is_source_missing(skip) -> bool:
+    """Issue #85: a blocked skip whose SOURCE object was not found -- a source
+    data error, worded so by every `ActionOutcome.skipped` site that hits it."""
+    return "not found in the source project" in str(getattr(skip, "detail", ""))
+
+
 def render_text_summary(report: RunReport) -> Iterable[str]:
     """Yield human-readable summary lines for the FlexTools report pane.
 
@@ -1972,14 +2013,31 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
     yield f"[GramTrans] Run report  mode={report.mode.value}  run_id={report.context.run_id}"
     yield f"  Source: {report.context.source_project_name!r}"
     yield f"  Target: {report.context.target_project_name!r}"
+    # Issue #85: up front, so a run whose table reads all zeros or all green is
+    # not taken to mean "entries transferred" when no planner ever ran.
+    _undispatched = not_dispatched_categories(report)
+    if _undispatched:
+        yield (
+            "  [WARN] NOT DISPATCHED -- selected, but nothing was planned or "
+            "written for: " + ", ".join(c.value for c in _undispatched)
+        )
+        if any(c in _LEXICON_CATEGORIES for c in _undispatched):
+            yield (
+                "  [WARN] No lexicon entries were transferred through these "
+                "categories; entries, senses, MSAs and allomorphs transfer "
+                "only with AFFIXES and/or STEMS selected"
+            )
     total_added = 0
     total_skipped = 0
+    total_blocked = 0
     total_overwritten = 0
     total_enriched = 0
     for cat in sorted(report.per_category.keys(), key=lambda c: c.value):
         r = report.per_category[cat]
         total_added += r.added
         total_skipped += r.skipped
+        blk = getattr(r, "blocked", 0)
+        total_blocked += blk
         ow = getattr(r, "overwritten", 0)
         total_overwritten += ow
         # FR-022: `enriched` rides beside `overwritten` because an enrichment
@@ -1989,6 +2047,7 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
         total_enriched += enr
         suffix = (
             f"  added={r.added}  skipped={r.skipped}"
+            + (f"  blocked={blk}" if blk else "")
             + (f"  overwritten={ow}" if ow else "")
             + (f"  enriched={enr}" if enr else "")
             + (f"  pulled_in={r.closure_pulled_in}" if r.closure_pulled_in else "")
@@ -1996,6 +2055,7 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
         yield f"  {cat.value:18s}{suffix}"
     yield (
         f"  {'TOTAL':18s}  added={total_added}  skipped={total_skipped}"
+        + (f"  blocked={total_blocked}" if total_blocked else "")
         + (f"  overwritten={total_overwritten}" if total_overwritten else "")
         + (f"  enriched={total_enriched}" if total_enriched else "")
     )
@@ -2007,6 +2067,18 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
             "updates to objects the target ALREADY HAD; an enriched object is "
             "never counted in added)"
         )
+    # Issue #85: a blocked item was selected and did not arrive. Say so in a
+    # failure-style line rather than leaving it inside the skipped count.
+    _blocked = [s for s in report.skips if is_blocked_skip(s)]
+    if _blocked:
+        _src_missing = sum(1 for s in _blocked if _is_source_missing(s))
+        yield (
+            f"  [BLOCKED] {len(_blocked)} item(s) did NOT arrive (counted "
+            f"within skipped): {len(_blocked) - _src_missing} missing a "
+            f"dependency in the destination, {_src_missing} source object "
+            "not found (source data error) -- each is marked [BLOCKED] under "
+            "Skips"
+        )
     # Phase 3a FR-308: surface selected-but-empty categories explicitly so
     # the linguist sees the scan happened even when nothing transferred.
     for cat in getattr(report, "empty_categories", ()):
@@ -2014,7 +2086,8 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
     if report.skips:
         yield "  Skips:"
         for s in report.skips:
-            yield f"    - [{s.category.value}] {s.source_guid}  {s.reason.value}: {s.detail}"
+            _tag = "[BLOCKED] " if is_blocked_skip(s) else ""
+            yield f"    - {_tag}[{s.category.value}] {s.source_guid}  {s.reason.value}: {s.detail}"
     if getattr(report, "excluded_lossy", ()):
         yield f"  Warnings (entries with missing references) -- {len(report.excluded_lossy)} total:"
         for el in report.excluded_lossy:
@@ -2173,6 +2246,10 @@ def _render_disposition_lines(report) -> Iterable[str]:
     yield _row(
         "SKIP", "other reason (each named in Skips)", d["skip_other_reason"],
     )
+    if d["skip_blocked"]:
+        yield _row(
+            "SKIP", "of those, BLOCKED (did not arrive)", d["skip_blocked"],
+        )
     yield _row(
         "DROPPED", "reported with a reason", d["dropped_with_reason"],
     )

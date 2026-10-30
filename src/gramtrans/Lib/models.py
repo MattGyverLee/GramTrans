@@ -255,6 +255,23 @@ class SkipReason(enum.Enum):
     DEPENDENCY_DESELECTED = "dependency_deselected"
 
 
+#: Issue #85: skip reasons a user would call BLOCKED, not benignly skipped --
+#: the item was selected (or pulled in) and did not arrive because something
+#: it needs is missing. DEPENDENCY_UNRESOLVED covers every such decline today:
+#: an owner POS absent from the destination (affix templates, stem names,
+#: slots, ...), and a source object the handler could not find (a source data
+#: error; `ActionOutcome.skipped`'s default reason). The skip itself is
+#: unchanged; this only decides how the report LABELS it, and
+#: `CategoryReport.blocked` counts it as a subset of `skipped`.
+BLOCKED_SKIP_REASONS = frozenset({SkipReason.DEPENDENCY_UNRESOLVED})
+
+
+def is_blocked_skip(skip) -> bool:
+    """True when `skip` is a BLOCKED outcome (issue #85), see
+    `BLOCKED_SKIP_REASONS`."""
+    return getattr(skip, "reason", None) in BLOCKED_SKIP_REASONS
+
+
 class MatchBasis(enum.Enum):
     """Feature 038 (FR-001, FR-006) -- HOW a source object was matched to a
     destination object.
@@ -4435,6 +4452,10 @@ class CategoryReport:
     # rebuild, reported via Skip(NOT_REPRODUCIBLE) instead of being written
     # in a degraded form.
     not_reproducible: int = 0
+    # Issue #85: the subset of `skipped` that is BLOCKED (`is_blocked_skip`)
+    # -- selected, did not arrive, because a dependency or the source object
+    # is missing. Reconciled against the skips like `not_reproducible`.
+    blocked: int = 0
 
 
 #: T080 (SC-010) -- every counter `CategoryReport` carries, by name.
@@ -4465,6 +4486,7 @@ CATEGORY_REPORT_COUNTERS = (
     "identity_substitution",
     "enriched",
     "not_reproducible",
+    "blocked",
 )
 
 
@@ -4617,6 +4639,17 @@ class RunReport:
                 "sum(per_category[*].not_reproducible)="
                 f"{cat_not_reproducible_total} != number of "
                 f"Skip(NOT_REPRODUCIBLE)={skips_not_reproducible}"
+            )
+        # Issue #85: same reconciliation for the BLOCKED subset of skipped.
+        cat_blocked_total = sum(
+            getattr(r, "blocked", 0) for r in self.per_category.values()
+        )
+        skips_blocked = sum(1 for sk in self.skips if is_blocked_skip(sk))
+        if cat_blocked_total != skips_blocked:
+            raise ValueError(
+                "Issue #85 accounting violation: "
+                f"sum(per_category[*].blocked)={cat_blocked_total} != number "
+                f"of blocked skips={skips_blocked}"
             )
         # ---- T080 (SC-010 audit): the DROPPED bucket's first invariant.
         #

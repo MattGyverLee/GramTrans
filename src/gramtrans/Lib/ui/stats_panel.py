@@ -16,12 +16,12 @@ from typing import Optional, Sequence
 from PyQt6 import QtCore, QtWidgets
 
 if __package__:
-    from ..models import GrammarCategory, RunMode, RunReport
-    from ..report import render_text_summary
+    from ..models import GrammarCategory, RunMode, RunReport, is_blocked_skip
+    from ..report import not_dispatched_categories, render_text_summary
     from .theme import theme
 else:
-    from models import GrammarCategory, RunMode, RunReport  # type: ignore
-    from report import render_text_summary  # type: ignore
+    from models import GrammarCategory, RunMode, RunReport, is_blocked_skip  # type: ignore
+    from report import not_dispatched_categories, render_text_summary  # type: ignore
     from theme import theme  # type: ignore
 
 
@@ -155,8 +155,14 @@ class StatsPanel(QtWidgets.QWidget):
 
         # Render EXCLUDED-LOSSY warnings (distinct severity, entry-centric).
         el_list = getattr(report, "excluded_lossy", ())
-        if el_list:
+        # Issue #85: a selected category no planner ran for is a warning too.
+        undispatched = not_dispatched_categories(report)
+        if el_list or undispatched:
             lines = [f"[WARN] {el.message}" for el in el_list]
+            if undispatched:
+                lines.insert(0, "[WARN] NOT DISPATCHED -- selected, but nothing "
+                             "was planned or written for: "
+                             + ", ".join(c.value for c in undispatched))
             self._warn_view.setPlainText("\n".join(lines))
             self._warn_view.setVisible(True)
         else:
@@ -166,7 +172,8 @@ class StatsPanel(QtWidgets.QWidget):
         if report.skips:
             lines = []
             for s in report.skips:
-                lines.append(f"[{s.category.value}] {s.source_guid}  {s.reason.value}: {s.detail}")
+                tag = "[BLOCKED] " if is_blocked_skip(s) else ""
+                lines.append(f"{tag}[{s.category.value}] {s.source_guid}  {s.reason.value}: {s.detail}")
             self._skip_view.setPlainText("\n".join(lines))
         else:
             self._skip_view.setPlainText("(no skips)")
