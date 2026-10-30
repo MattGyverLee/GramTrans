@@ -454,7 +454,9 @@ def phase2_interactive_move(
             importable; otherwise the function falls back to Phase 1
             source-wins (FR-109).
         categories: dict[GrammarCategory, bool] for Selection.  When
-            None, all eight Phase-0 categories are enabled.
+            None, all eight Phase-0 categories are enabled; build_run_plan
+            plans their ENTRY/SENSE/MSA/ALLOMORPH as AFFIXES + STEMS
+            (issue #84).
 
     Returns:
         RunReport on success.  Returns None on UserCancelled (no writes
@@ -543,6 +545,10 @@ def phase2_interactive_move(
             f"[Phase 2] Plan: actions={len(plan.actions)} "
             f"overwrites={len(plan.overwrites)} skips={len(plan.skips)}"
         )
+        # Issue #84: the default set's ENTRY/SENSE/MSA/ALLOMORPH are planned
+        # as AFFIXES + STEMS; say so before the conflict dialog and the Move.
+        for _note in getattr(plan, "category_notes", ()):
+            report.Info(f"[Phase 2] [INFO] {_note}")
         # Issue #78: plan-time warnings (a target WS the Move cannot create, a
         # whole reversal index skipped) are shown BEFORE the conflict dialog
         # and the Move, not only in the post-run report.

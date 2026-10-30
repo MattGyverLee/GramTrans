@@ -1100,6 +1100,69 @@ def _plan_incompleteness(edges, actions, overwrites, skips, label_of=None,
     return tuple(records)
 
 
+#: Issue #84: the lexicon categories a FLEx user picks expecting entries to
+#: transfer. None has a planner of its own -- the verb-vertical closure that
+#: owned them is retired (see `_VERB_VERTICAL_ENABLED` in `build_run_plan`) --
+#: because an entry, with its senses, MSAs and allomorphs, travels whole
+#: inside AFFIXES or STEMS (partitioned by morph type, not by these names).
+LEXICON_ALIAS_CATEGORIES = (
+    GrammarCategory.ENTRY,
+    GrammarCategory.SENSE,
+    GrammarCategory.MSA,
+    GrammarCategory.ALLOMORPH,
+)
+#: Issue #84: the categories that actually carry lexicon entries.
+LEXICON_CARRIER_CATEGORIES = (GrammarCategory.AFFIXES, GrammarCategory.STEMS)
+
+
+def expand_lexicon_categories(selection: Selection):
+    """Issue #84: map ENTRY/SENSE/MSA/ALLOMORPH onto the categories that carry
+    lexicon entries, before dispatch. Returns ``(selection, notes)``.
+
+    * None of the four selected: the selection unchanged, no notes.
+    * Neither AFFIXES nor STEMS selected: both are switched on. An MSA or an
+      allomorph cannot travel without its owning entry, and each of the four
+      belongs to affix AND stem entries alike, so there is no narrower
+      reading.
+    * AFFIXES and/or STEMS already selected: they are the caller's explicit,
+      more specific lexicon choice and are kept as they are -- a carrier the
+      caller left off is NOT switched on (the full-selection harness, for
+      one, deliberately excludes STEMS).
+
+    Either way the four are switched OFF in the returned selection, so no
+    other code mistakes them for a planned category, and a note says what
+    happened. `pos_picks` does not narrow AFFIXES/STEMS (nor, already,
+    AFFIX_TEMPLATES/SLOTS); the note says so when picks are present.
+    """
+    requested = [c for c in LEXICON_ALIAS_CATEGORIES if selection.is_on(c)]
+    if not requested:
+        return selection, ()
+    names = ", ".join(c.value for c in requested)
+    carriers_on = [c for c in LEXICON_CARRIER_CATEGORIES if selection.is_on(c)]
+    categories = {c: on for c, on in selection.categories.items()
+                  if c not in LEXICON_ALIAS_CATEGORIES}
+    if carriers_on:
+        left_off = [c for c in LEXICON_CARRIER_CATEGORIES if c not in carriers_on]
+        note = (f"{names}: transferred inside the selected "
+                f"{' + '.join(c.value for c in carriers_on)} (these have no "
+                "planner of their own)")
+        if left_off:
+            note += (f"; {left_off[0].value} is not selected, so those "
+                     "entries are not transferred")
+    else:
+        for c in LEXICON_CARRIER_CATEGORIES:
+            categories[c] = True
+        note = (f"{names}: dispatched as affixes + stems -- every affix and "
+                "stem entry in the source is planned, each with its senses, "
+                "MSAs and allomorphs (these categories have no planner of "
+                "their own)")
+    if getattr(selection, "pos_picks", None):
+        note += ("; the POS picks choose which parts of speech transfer, they "
+                 "do not narrow the lexicon entries")
+    import dataclasses
+    return dataclasses.replace(selection, categories=categories), (note,)
+
+
 def build_run_plan(
     context: RunContext,
     selection: Selection,
@@ -1118,7 +1181,12 @@ def build_run_plan(
        consumes verbatim.
 
     MUST NOT mutate target. (SC-006)
+
+    Issue #84: ENTRY/SENSE/MSA/ALLOMORPH are first rewritten onto
+    AFFIXES/STEMS (`expand_lexicon_categories`); the plan carries that
+    effective selection and a note saying so (`RunPlan.category_notes`).
     """
+    selection, _category_notes = expand_lexicon_categories(selection)
     actions: List[PlannedAction] = []
     skips: List[Skip] = []
     overwrites: List[PlannedOverwrite] = []
@@ -1312,9 +1380,9 @@ def build_run_plan(
         from categories import for_category  # type: ignore
     # Issue #49 (defect 2): a category the caller switched ON that no planner
     # owns must be REPORTED, never silently dropped. ENTRY/SENSE/MSA/ALLOMORPH
-    # were owned by the legacy verb-vertical path (gated off 2026-07-06, see
-    # _VERB_VERTICAL_ENABLED above); their entries now ride inside
-    # AFFIXES/STEMS. Selecting them alone therefore plans nothing -- say so.
+    # used to land here; since issue #84 `expand_lexicon_categories` (top of
+    # this function) has already rewritten them onto AFFIXES/STEMS, so this is
+    # the safety net for any category added later without a planner.
     _NON_LEAF_HANDLED = (GrammarCategory.TEXTS, GrammarCategory.WRITING_SYSTEMS_CHECK)
     for _cat in GrammarCategory:
         if (_cat in _LEAF_DISPATCH_CATEGORIES or _cat in _NON_LEAF_HANDLED
@@ -1669,6 +1737,8 @@ def build_run_plan(
         # reproduced, each with the reason naming its specific blocker (see
         # the `_process_rules` accumulator attachment above).
         process_rules=tuple(_process_rules),
+        # Issue #84: how the selection was reinterpreted before dispatch.
+        category_notes=tuple(_category_notes),
     )
 
 
