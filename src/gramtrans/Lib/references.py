@@ -1077,7 +1077,24 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                 reason=f"unmapped item class {item_clsid} for CREATE",
             )
             raise UnmappedItemClassError(unmapped_dropped)
-        factory = factory_iface(target.GetFactory(factory_iface))
+        # Issue #42 (live-proven on a constructed fixture): the 1-arg
+        # `Create(Guid)` is NOT declared on ICmPossibilityFactory /
+        # ICmSemanticDomainFactory / ICmAnthroItemFactory / IMoMorphTypeFactory
+        # -- it is inherited from `ILcmFactory<T>`, and because those four
+        # interfaces declare their OWN (owner-taking) `Create` overloads,
+        # pythonnet's binder on the interface-cast wrapper sees only those and
+        # raises `TypeError: No method matches given arguments ...
+        # .Create: (<class 'System.Guid'>)`. Every CREATE on clsid 7/66/26/5042
+        # therefore failed (and the caller's fail-soft swallow hid it). The
+        # UNCAST factory object `GetFactory` returns is the concrete
+        # `CmPossibilityFactory` etc., whose public `Create(Guid)` binds
+        # (probed live for all six interfaces in the map). Interfaces that
+        # declare no `Create` of their own (ILexEntryTypeFactory) bind either
+        # way. The interface-cast wrapper is kept for the 5049 branch, whose
+        # owner-taking overloads are explicit interface members that the
+        # concrete type does NOT expose publicly.
+        raw_factory = target.GetFactory(factory_iface)
+        factory = factory_iface(raw_factory)
 
         parent_target_item = None  # None => Add to the list root
         created_item = None
@@ -1104,7 +1121,8 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                     )
                     new_obj = factory.Create(parsed_guid, owner)
                 else:
-                    new_obj = factory.Create(parsed_guid)
+                    # UNCAST factory -- see the issue #42 note above.
+                    new_obj = raw_factory.Create(parsed_guid)
                     if parent_target_item is None:
                         _add_to_owner(
                             new_obj, ICmPossibilityList(target_list).PossibilitiesOS,
