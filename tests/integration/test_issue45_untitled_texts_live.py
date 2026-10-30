@@ -201,3 +201,6 @@ def test_untitled_texts_transfer_without_collision_and_idempotent():
     assert (getattr(rep2.per_category.get(GC.TEXTS), "added", 0) or 0) == 0
     assert [after2[g][0] for g in picks] == names, "second run renamed target texts"
     assert [after2[g][1] for g in picks] == [after1[g][1] for g in picks]
+    # Issue #87: run 2 must not re-stamp already-present texts with its own
+    # residue tag -- the Target file is byte-identical after the re-run.
+    assert h2 == h1, "run 2 modified Target (residue re-stamp?): %s != %s" % (h2, h1)

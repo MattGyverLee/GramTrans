@@ -24,6 +24,7 @@ from typing import Optional, Protocol
 _log = logging.getLogger(__name__)
 
 if __package__:
+    from .residue import strip_residue_props
     from .models import (
         ConflictPrompt,
         MergeDecision,
@@ -31,6 +32,7 @@ if __package__:
         MergeResolution,
     )
 else:
+    from residue import strip_residue_props  # type: ignore
     from models import (
         ConflictPrompt,
         MergeDecision,
@@ -397,7 +399,10 @@ def collect_overwrite_conflicts(plan, source, target, prior_logs_by_guid=None):
             continue
         try:
             src_props = src_ops.GetSyncableProperties(src_obj)
-            tgt_pre_props = tgt_ops.GetSyncableProperties(tgt_obj)
+            # Issue #87: compare the target without our own [GT-Tag] line.
+            tgt_pre_props = strip_residue_props(
+                tgt_ops.GetSyncableProperties(tgt_obj)
+            )
         except (AttributeError, TypeError):
             continue
         prior_log = prior_logs_by_guid.get(ow.target_guid)

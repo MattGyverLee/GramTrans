@@ -813,12 +813,17 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
             _safe(lambda: text_ops.SetIsTranslated(target_text, plan.is_translated))
         # Genres (FR-005) via the shared resolver.
         _apply_genres(plan, target, target_text, resolver_cache, tag, source, ws_map, dropped)
-        # Residue-tag the container (R8).
-        _safe(lambda: apply_residue(target_text, default_vern_handle, tag, class_name="Text"))
-
-        already = _apply_paragraphs(plan, target, target_text, para_ops, seg_ops,
-                                    ctx, tag, ws_map, tgt_id2h, default_vern_handle,
-                                    _wordforms, apply_residue, resolver_cache, source, dropped)
+        already, _paras_created = _apply_paragraphs(
+            plan, target, target_text, para_ops, seg_ops,
+            ctx, tag, ws_map, tgt_id2h, default_vern_handle,
+            _wordforms, apply_residue, resolver_cache, source, dropped)
+        # Residue-tag the container (R8) -- only when THIS run created it or
+        # actually created >= 1 paragraph in it (a previously empty text). A
+        # text matched to an existing target text whose structure is left
+        # as-is (`already`) is a no-op and must not be re-stamped: that
+        # appended a fresh run-id line on every re-run (issue #87).
+        if _created or _paras_created > 0:
+            _safe(lambda: apply_residue(target_text, default_vern_handle, tag, class_name="Text"))
         if already:
             _already += 1
     if report_sink is not None and hasattr(report_sink, "Info"):
@@ -1297,11 +1302,13 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
                       apply_residue, resolver_cache, source, dropped):
     """Reproduce the text's paragraphs/segments (+ analyses + alignment).
 
-    Returns True when the text was already reproduced by a prior run and its
-    structure is left as-is (SC-005 idempotent no-op); False when paragraphs
-    were created this run."""
+    Returns `(already, created)`: `already` is True when the text was already
+    reproduced by a prior run and its structure is left as-is (SC-005
+    idempotent no-op); `created` is the number of paragraphs ACTUALLY created
+    this run (0 when ops are unavailable or every create failed) -- the caller
+    stamps a matched text only when this is positive (issue #87)."""
     if para_ops is None or seg_ops is None:
-        return False
+        return False, 0
     # Idempotency (SC-005): never re-append paragraphs/segments to a text a
     # prior run already reproduced. Segment, analysis and gloss creation all
     # cascade from this paragraph loop, so a re-Move against an already-
@@ -1314,7 +1321,8 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
         _log.info("apply_texts: %r already reproduced (%d paragraph(s)); "
                   "re-Move leaves its structure as-is (SC-005)",
                   plan.title, len(existing))
-        return True
+        return True, 0
+    _created_paras = 0
     for para_plan in plan.paragraphs:
         content = _first_mapped(para_plan.baseline, ws_map, tgt_id2h)
         if content is None:
@@ -1346,6 +1354,7 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
                 reason="paragraph has no mappable baseline text",
             ))
             continue
+        _created_paras += 1
         _safe(lambda: apply_residue(new_para, default_vern_handle, tag, class_name="StTxtPara"))
 
         # Align target segments to source segments positionally; append
@@ -1393,7 +1402,7 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
             # US5 (T035): per-segment text-markup tag references.
             _apply_segment_tags(seg_plan, target, target_text, tgt_seg,
                                 resolver_cache, tag, source, ws_map, dropped)
-    return False
+    return False, _created_paras
 
 
 def source_of(ctx):

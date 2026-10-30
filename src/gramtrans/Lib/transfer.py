@@ -40,7 +40,10 @@ if __package__:
         Skip,
         SkipReason,
     )
-    from .residue import ImportResidueTag, apply_residue, apply_carrier_b
+    from .residue import (
+        ImportResidueTag, apply_residue, apply_carrier_b,
+        strip_residue_props, residue_lines, restore_residue_history,
+    )
     from .conflict import (
         _deterministic_merge,
         _MergeNotEligible,
@@ -71,7 +74,10 @@ else:
         Skip,
         SkipReason,
     )
-    from residue import ImportResidueTag, apply_residue, apply_carrier_b
+    from residue import (  # type: ignore
+        ImportResidueTag, apply_residue, apply_carrier_b,
+        strip_residue_props, residue_lines, restore_residue_history,
+    )
     from conflict import (  # type: ignore
         _deterministic_merge,
         _MergeNotEligible,
@@ -2239,7 +2245,7 @@ def _execute_overwrite_identity_remap(
         report_sink.Warning(f"  [OW/IR] Source LexEntry {src_guid[:8]} vanished")
         return
 
-    tgt_pre_props = target.LexEntry.GetSyncableProperties(tgt_entry)
+    tgt_pre_props = strip_residue_props(target.LexEntry.GetSyncableProperties(tgt_entry))
     src_props = _dedupe_custom_fields(
         source.LexEntry.GetSyncableProperties(src_entry), tgt_pre_props
     )
@@ -3370,7 +3376,11 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             return []
 
         src_props = src_ops.GetSyncableProperties(src_obj)
-        tgt_props = tgt_ops.GetSyncableProperties(tgt_obj)
+        # Issue #87: a Carrier-B target's Description carries OUR OWN
+        # `[GT-Tag]` line. Compare (and snapshot) the target WITHOUT it, else
+        # an identical-except-tag object resolves to UPDATE on every re-run and
+        # the write replaces the tag line.
+        tgt_props = strip_residue_props(tgt_ops.GetSyncableProperties(tgt_obj))
 
         # Compute disposition (2-way, no prior baseline).
         disposition = compute_disposition(
@@ -3391,8 +3401,20 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             )
         else:
             # UPDATE: non-destructive field writes.
-            written = apply_update_semantic(src_props, tgt_props, tgt_ops, tgt_obj, ws_map=ws_map)
             cache = getattr(target, "Cache")
+            # Tag-history decision (#87): earlier runs' tag lines are KEPT.
+            # The source Description write replaces the whole alternative, so
+            # capture them first and re-append them before this run's line.
+            # conflict.load_prior_log parses with rfind (LAST line), so the
+            # newest stamp still wins.
+            _prior_desc = getattr(tgt_obj, "Description", None)
+            _prior_lines = []
+            if _prior_desc is not None:
+                _prior_lines = residue_lines(
+                    _prior_desc.get_String(cache.DefaultAnalWs).Text
+                )
+            written = apply_update_semantic(src_props, tgt_props, tgt_ops, tgt_obj, ws_map=ws_map)
+            restore_residue_history(tgt_obj, cache.DefaultAnalWs, _prior_lines)
             apply_residue(tgt_obj, cache.DefaultAnalWs, tag.with_snapshot(tgt_props))
             report_sink.Info(
                 f"  [{cat.value}] UPDATE applied ({written} field(s) written)"
@@ -3565,7 +3587,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         if src_obj is None or tgt_obj is None:
             report_sink.Warning(f"  [OW] POS {src_guid[:8]} not found in source or target")
             return
-        tgt_pre_props = target.POS.GetSyncableProperties(tgt_obj)
+        tgt_pre_props = strip_residue_props(target.POS.GetSyncableProperties(tgt_obj))
         src_props = _dedupe_custom_fields(
             source.POS.GetSyncableProperties(src_obj), tgt_pre_props
         )
@@ -3616,7 +3638,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         if tgt_tpl is None:
             report_sink.Warning(f"  [OW] Template {tgt_guid[:8]} not in target")
             return
-        tgt_pre_props = target.MorphRules.GetSyncableProperties(tgt_tpl)
+        tgt_pre_props = strip_residue_props(target.MorphRules.GetSyncableProperties(tgt_tpl))
         src_props = source.MorphRules.GetSyncableProperties(src_tpl_wrap)
         target.MorphRules.ApplySyncableProperties(tgt_tpl, src_props, ws_map=ws_map)
         cache = getattr(target, "Cache")
@@ -3701,7 +3723,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         if src_entry is None:
             report_sink.Warning(f"  [OW] Source LexEntry {src_guid[:8]} vanished")
             return
-        tgt_pre_props = target.LexEntry.GetSyncableProperties(tgt_entry)
+        tgt_pre_props = strip_residue_props(target.LexEntry.GetSyncableProperties(tgt_entry))
         src_props = _dedupe_custom_fields(
             source.LexEntry.GetSyncableProperties(src_entry), tgt_pre_props
         )
@@ -3800,7 +3822,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         if src_sense is None:
             report_sink.Warning(f"  [OW] Source LexSense {src_guid[:8]} vanished")
             return
-        tgt_pre_props = target.Senses.GetSyncableProperties(tgt_sense)
+        tgt_pre_props = strip_residue_props(target.Senses.GetSyncableProperties(tgt_sense))
         src_props = _dedupe_custom_fields(
             source.Senses.GetSyncableProperties(src_sense), tgt_pre_props
         )
@@ -4001,7 +4023,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                 if _guid_str(_unwrap(sallo)) == src_guid:
                     src_allo = _unwrap(sallo)
                     break
-        tgt_pre_props = target.Allomorphs.GetSyncableProperties(tgt_allo)
+        tgt_pre_props = strip_residue_props(target.Allomorphs.GetSyncableProperties(tgt_allo))
         ow_skips = []
         tagged = tag.with_snapshot(tgt_pre_props)
         if src_allo is not None:
@@ -4036,7 +4058,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             pass
         tgt_pre_props = {}
         try:
-            tgt_pre_props = target.Environments.GetSyncableProperties(tgt_env)
+            tgt_pre_props = strip_residue_props(target.Environments.GetSyncableProperties(tgt_env))
         except AttributeError:
             pass
         if src_env is not None:
