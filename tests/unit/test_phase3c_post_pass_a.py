@@ -38,29 +38,16 @@ from gramtrans.Lib.models import (
     SkipReason,
 )
 
+from _fakes_entryref import (  # issue #32 P2: shared 027 fixtures
+    FakeRefSeq as _FakeRefSeq,
+    ctx_create_and_wire as _ctx_create_and_wire,
+    ref_record as _ref_record,
+)
+
 
 # ============================================================================
 # Fakes (inline, lowercase .guid so _guid_str_from resolves host-free)
 # ============================================================================
-
-class _FakeRefSeq:
-    """LCM reference sequence/collection stand-in: records Add calls in order."""
-
-    def __init__(self, initial=()) -> None:
-        self._items = list(initial)
-        self.add_log = []  # ordered list of added objects
-
-    def Add(self, obj):
-        self._items.append(obj)
-        self.add_log.append(obj)
-
-    def __iter__(self):
-        return iter(self._items)
-
-    @property
-    def Count(self):
-        return len(self._items)
-
 
 class _FakeObj:
     """Anything addressed by GUID (lexeme entry, slot, MSA target)."""
@@ -785,34 +772,6 @@ def _stub_lcm_create_and_wire():
         sys.modules.pop("System", None)
     else:
         sys.modules["System"] = original_system
-
-
-def _ref_record(ref_guid, ref_type=0, components=(), primaries=()):
-    return {
-        "ref_guid": ref_guid,
-        "ref_type": ref_type,
-        "components": list(components),
-        "primaries": list(primaries),
-        "variant_entry_types": [],
-        "complex_entry_types": [],
-        "show_complex_forms_in": [],
-    }
-
-
-def _ctx_create_and_wire(entryref_create_bindings, lexentry_ref_bindings,
-                          in_plan_entries=None) -> RunContext:
-    ctx = _make_ctx()
-    plan = types.SimpleNamespace(
-        entryref_create_bindings={
-            k: list(v) for k, v in entryref_create_bindings.items()
-        },
-        lexentry_ref_bindings=dict(lexentry_ref_bindings),
-        identity_remap={},
-        in_plan_entries=dict(in_plan_entries or {}),
-    )
-    object.__setattr__(ctx, "_run_plan", plan)
-    object.__setattr__(ctx, "_dropped", [])
-    return ctx
 
 
 def _run_create_then_wire(ctx, target):

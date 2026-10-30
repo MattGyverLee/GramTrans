@@ -180,12 +180,19 @@ REFERENCE_FIELD_MAP: tuple = (
     # note): `LexDbOA.VariantEntryTypesOA` / `.ComplexEntryTypesOA` are both
     # `ICmPossibilityList`, `ItemClsid=5118` (`LexEntryType`), `Depth=127`
     # (hierarchical, same "flagged hierarchical even when flat in a given
-    # project" pattern as SenseTypes above). `.PublicationTypesOA` is
-    # `ItemClsid=7` (generic `CmPossibility`), `Depth=1` -- same list
-    # `PublishIn`/`DoNotPublishInRC`/`DoNotShowMainEntryInRC` already use
-    # above, confirming `ShowComplexFormsInRS` shares that home list despite
-    # its own field being a `RS` (sequence), not `RC` (collection) --
-    # cardinality is a per-FIELD LCM declaration, not a per-list property.
+    # project" pattern as SenseTypes above). Re-confirmed via FLExToolsMCP
+    # on Korean-GIAL (issue #32): both 5118/127; `.PublicationTypesOA` is
+    # 7/1.
+    #
+    # `ShowComplexFormsInRS` is deliberately NOT registered here (issue #32).
+    # Cycle 3 mapped it to `PublicationTypesOA`, but its LCM target type is
+    # `ICmObject` and live it holds LEXEMES -- the LexEntry/LexSense
+    # components the complex form is shown under (Korean-GIAL: every
+    # multi-component complex form). Routed through this possibility
+    # resolver, each member decided CREATE, the publication factory refused
+    # the lexeme's GUID, and the fail-soft apply swallowed it: the field was
+    # silently lost. It is a GUID-resolved lexeme reference like
+    # ComponentLexemesRS, wired by `categories._run_post_pass_a` (C2).
     ReferenceFieldSpec(
         owner_class="LexEntryRef",
         field_name="VariantEntryTypesRS",
@@ -199,13 +206,6 @@ REFERENCE_FIELD_MAP: tuple = (
         cardinality=ReferenceCardinality.SEQUENCE,
         target_list_path=lambda target: _lp(target).LexDbOA.ComplexEntryTypesOA,
         hierarchical=True,
-    ),
-    ReferenceFieldSpec(
-        owner_class="LexEntryRef",
-        field_name="ShowComplexFormsInRS",
-        cardinality=ReferenceCardinality.SEQUENCE,
-        target_list_path=lambda target: _lp(target).LexDbOA.PublicationTypesOA,
-        hierarchical=False,
     ),
 
     # ---- Allomorph reference fields ---------------------------------------
