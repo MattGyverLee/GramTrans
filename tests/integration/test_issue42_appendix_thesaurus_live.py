@@ -13,7 +13,8 @@ again at the end:
 
 * ``GT-Src-42``     -- the SOURCE (opened write-enabled only while the fixture
                        is authored; the transfer opens it read-only).
-* ``GT-Sandbox-42`` -- the TARGET.
+* ``GT-Sandbox-42`` -- the TARGET (default; override with the
+                       ``GT42_TARGET_NAME`` env var, issue #116).
 
 Never ``Target``, ``Esperanto`` or any real project.
 
@@ -549,7 +550,7 @@ def test_preview_create_link_decisions_match_move(live):
     "CREATE arm passes an empty source Description as a plain '' that "
     "ApplySyncableProperties rejects (TypeError: property is read-only, "
     "swallowed), and the next run decides UPDATE for items this run created. "
-    "See specs/_reviews/batch-107-108-110-111-114-116/impl-116.md section 6."))
+    "See PR #123 (found-defect section)."))
 def test_items_created_by_move1_link_on_the_next_run(live):
     """An item a run created from the source must be identical to the source,
     so a later run that references it again decides LINK, not UPDATE."""
