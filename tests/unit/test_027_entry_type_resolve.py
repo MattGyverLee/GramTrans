@@ -160,6 +160,15 @@ class _FakeTargetEntry:
         self.EntryRefsOS = _FakeRefSeq(entry_refs)
 
 
+class _FakePossibilityListsOps:
+    """No `.project` (so `_resolve_target_ws_by_id` -> `{}`); a no-op apply.
+    Issue #129: the CREATE arm no longer swallows a missing
+    `ApplySyncableProperties`, so the double must provide one."""
+
+    def ApplySyncableProperties(self, item, props, ws_map=None):
+        pass
+
+
 class _FakeTarget:
     """Target project handle: entry lookup + factory dispatch + a bare
     `PossibilityLists` (WS-resolver best-effort no-op -- absent `.project`
@@ -168,7 +177,7 @@ class _FakeTarget:
     def __init__(self, entries_by_guid, lexdb: _FakeLexDb) -> None:
         self._entries = dict(entries_by_guid)
         self.Cache = _FakeCache(lexdb)
-        self.PossibilityLists = object()
+        self.PossibilityLists = _FakePossibilityListsOps()
         self._ref_factory = _FakeEntryRefFactory()
         self._type_factory = _FakeTypeFactory()
         self._pub_factory = _FakePublicationTypeFactory()

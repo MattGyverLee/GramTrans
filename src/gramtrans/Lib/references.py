@@ -33,6 +33,7 @@ if __package__:
         ReferenceFieldSpec,
     )
     from . import protection
+    from .residue import strip_residue_text
 else:
     from models import (  # type: ignore
         DroppedItemRecord,
@@ -42,6 +43,7 @@ else:
         ReferenceFieldSpec,
     )
     import protection  # type: ignore
+    from residue import strip_residue_text  # type: ignore
 
 
 # ============================================================================
@@ -516,6 +518,27 @@ def _best_effort_id_keyed(src_snapshot: dict, tgt_snapshot: dict, target_ws_by_i
     return id_props
 
 
+def _fingerprint_snapshot(field_name: str, ms, handle_to_id: dict | None = None) -> dict:
+    """`_multistring_dict` with GramTrans import residue removed from
+    `Description` (issue #129).
+
+    `apply_residue` (Carrier B) appends a `[GT-Tag]:` line to the Description
+    of every item a run creates. That line is run metadata, not content: left
+    in, an item Move 1 created from a source with an empty Description
+    fingerprints differently from that source, so the next run decides UPDATE
+    instead of LINK. An alternative that held only residue is dropped, as in
+    `residue.strip_residue_props`."""
+    snapshot = _multistring_dict(ms, handle_to_id)
+    if field_name != "Description":
+        return snapshot
+    out = {}
+    for key, text in snapshot.items():
+        cleaned = strip_residue_text(text) if isinstance(text, str) else text
+        if cleaned or not isinstance(text, str):
+            out[key] = cleaned
+    return out
+
+
 def divergence_fingerprint(item, handle_to_id: dict | None = None) -> tuple:
     """T012 -- the per-item divergence fingerprint (research R7).
 
@@ -553,10 +576,10 @@ def divergence_fingerprint(item, handle_to_id: dict | None = None) -> tuple:
         if ms is None:
             continue
         if handle_to_id:
-            snapshot = _multistring_dict(ms, handle_to_id)  # {id: text}
+            snapshot = _fingerprint_snapshot(field_name, ms, handle_to_id)  # {id: text}
             parts.append((field_name, tuple(sorted(snapshot.items()))))
         else:
-            snapshot = _multistring_dict(ms)  # {handle: text}, raw
+            snapshot = _fingerprint_snapshot(field_name, ms)  # {handle: text}, raw
             ordered_texts = tuple(text for _, text in sorted(snapshot.items()))
             parts.append((field_name, ordered_texts))
     return tuple(parts)
@@ -815,6 +838,31 @@ def _best_text(ms) -> str:
         if text:
             return text
     return ""
+
+
+def _wrap_plain_text(text, ops, target_ws_by_id: dict) -> dict:
+    """Wrap a plain-string multistring value as a `{target_ws_id: text}` dict.
+
+    `ApplySyncableProperties` treats a `str` value as a plain attribute and
+    `setattr`s it, which raises `TypeError: property is read-only` for a
+    multistring (Name/Abbreviation/Description). Only the dict shape is
+    accepted. Empty text yields `{}` (nothing to write). The WS is the target's
+    default analysis WS when resolvable, else its first registered WS; with no
+    target WS table at all, `{}`."""
+    if not text or not target_ws_by_id:
+        return {}
+    chosen = None
+    try:
+        handle = ops.project.GetDefaultAnalysisWSHandle()
+        for ws_id, ws_handle in target_ws_by_id.items():
+            if ws_handle == handle:
+                chosen = ws_id
+                break
+    except Exception:
+        chosen = None
+    if chosen is None:
+        chosen = next(iter(target_ws_by_id))
+    return {chosen: text}
 
 
 def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cache: dict, tag,
@@ -1192,23 +1240,46 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                                     ))
                                 continue
                             field_props[tgt_id] = text
-                        create_props[field_name] = (
-                            field_props if field_props else _best_text(field_ms)
-                        )
+                        field_props = field_props or _wrap_plain_text(
+                            _best_text(field_ms), ops, target_ws_by_id)
+                        if field_props:
+                            create_props[field_name] = field_props
                     else:
                         src_snapshot = _multistring_dict(field_ms)
                         if not src_snapshot:
                             continue
                         id_keyed = _best_effort_id_keyed(src_snapshot, {}, target_ws_by_id)
-                        create_props[field_name] = id_keyed if id_keyed else _best_text(field_ms)
+                        id_keyed = id_keyed or _wrap_plain_text(
+                            _best_text(field_ms), ops, target_ws_by_id)
+                        if id_keyed:
+                            create_props[field_name] = id_keyed
                 try:
                     # `ws_map` was already applied above (source-resolver
                     # branch) to build target-id-keyed `create_props`
                     # directly, so it is NOT forwarded again here (would
                     # double-translate) -- same invariant as the UPDATE arm.
                     ops.ApplySyncableProperties(new_obj, create_props, ws_map=None)
-                except (AttributeError, TypeError):
-                    pass
+                except Exception as exc:
+                    # Issue #129: was `except (AttributeError, TypeError):
+                    # pass`. The item already exists and is owned, so it is
+                    # still residue-tagged, cached and linked; the failed
+                    # content copy is recorded, never swallowed.
+                    _log.warning(
+                        "apply_reference CREATE: ApplySyncableProperties failed "
+                        "for %s: %r", _guid_str(anc), exc)
+                    if dropped is not None:
+                        dropped.append(DroppedItemRecord(
+                            owner_kind=spec.owner_class,
+                            owner_guid="",
+                            owner_label="",
+                            field_name=spec.field_name,
+                            item_name=_item_label(anc),
+                            item_guid=_guid_str(anc),
+                            reason=(
+                                "created item's Name/Abbreviation/Description "
+                                f"could not be copied: {exc!r}"
+                            ),
+                        ))
                 apply_residue(new_obj, ws, tag, class_name=getattr(anc, "ClassName", None))
                 cache[anc_guid] = new_obj
                 created_item = new_obj
