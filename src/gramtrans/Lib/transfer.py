@@ -325,6 +325,52 @@ def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips):
             pass
 
 
+def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips):
+    """Issue #128: run the LexEntryRef C1 (create + value merge) and C2
+    (component/primary wiring) tail passes AFTER the leaf-dispatch loop, on
+    any run whose scope includes the lexicon -- including one that planned
+    ZERO actions.
+
+    `stems_execute_action` drives both via `_run_tail_once` on the last STEMS
+    action, so a re-run that plans nothing (every entry already present)
+    never reached the INV-1 merge arm and a source edit to an existing ref's
+    `HideMinorEntry` / `Summary` was never carried over. The bindings the
+    passes read are stashed at PLAN time for every in-scope entry, planned or
+    skipped, so they are complete here; with no lexicon in scope they are
+    empty and both passes are no-ops. The tail's own latches
+    (`_did_entryref_create_pass`, `_did_post_pass_a`) make this a no-op when
+    the tail already ran, so the passes never double-execute; both passes are
+    idempotent (a second clean run writes nothing).
+
+    Never raises: a failure must not lose the writes the run already made."""
+    plan = getattr(exec_ctx, "_run_plan", None)
+    if plan is None:
+        return
+    if __package__:
+        from .categories import _run_entryref_create_pass, _run_post_pass_a
+    else:
+        from categories import (  # type: ignore
+            _run_entryref_create_pass, _run_post_pass_a)
+    for flag, runner in (("_did_entryref_create_pass", _run_entryref_create_pass),
+                         ("_did_post_pass_a", _run_post_pass_a)):
+        if getattr(exec_ctx, flag, False):
+            continue
+        try:
+            object.__setattr__(exec_ctx, flag, True)
+        except (AttributeError, TypeError):
+            pass
+        try:
+            late_skips = runner(exec_ctx, target, tag)
+        except Exception:
+            _log.exception("execute: %s safety net FAILED (swallowed)", flag)
+            continue
+        if late_skips and exec_skips is not None:
+            try:
+                exec_skips.extend(late_skips)
+            except (AttributeError, TypeError):
+                pass
+
+
 def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips):
     """Issue #37: wire `IFsComplexFeature.TypeRA` AFTER the leaf-dispatch
     loop, via `categories._run_complex_feature_type_ra_pass`.
@@ -935,6 +981,10 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Issue #54: a starter `PhNCSegments` the plan matched by natural key gets
     # its source class's members, after every create (see the helper).
     _ensure_matched_nc_segments(exec_ctx, target, _exec_skips)
+
+    # Issue #128: LexEntryRef value merge + C2 wiring, also on a 0-action
+    # re-run (see helper). After every category so all lexemes exist.
+    _ensure_entryref_passes(exec_ctx, target, tag, _exec_skips)
 
     # Issue #37: complex-feature TypeRA, after every feature and struct-type
     # of the run exists -- and on a re-run that planned neither.
