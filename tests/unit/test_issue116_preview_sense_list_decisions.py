@@ -244,6 +244,41 @@ def test_thesaurus_link_records_identical_in_preview_and_move():
     assert [i.guid for i in new_sense.ThesaurusItemsRC] == ["e"]
 
 
+def test_new_ancestors_never_raises_when_lookup_raises(monkeypatch):
+    """QC P2: Move calls `_thesaurus_new_ancestors` before apply_reference, so
+    a raising lookup/label must yield `()` and Move must still proceed."""
+    from gramtrans.Lib import references
+
+    def boom(*a, **k):
+        raise RuntimeError("lookup exploded")
+
+    fx = _thesaurus_fixture()
+    class _BadCache(dict):
+        def get(self, key, default=None):
+            if key == "p":  # only the ancestor probe inside the helper
+                raise RuntimeError("cache exploded")
+            return default
+
+    applied = []
+
+    def fake_apply(refs, decision, *a, **k):
+        applied.append(decision)
+        return _Item("c", "child"), True
+
+    monkeypatch.setattr(categories, "_call_apply_reference", fake_apply)
+    sense = _Sense("s", thesaurus_items=[fx["C"]])
+    new_sense = _NewSense()
+    records = categories._resolve_sense_thesaurus_items(
+        sense, new_sense, fx["target"], _BadCache(), [], tag=None)
+    assert len(applied) == 1  # Move reached apply_reference
+    assert [r.item_guid for r in records] == ["c"]
+    assert records[0].new_ancestors == ()
+    assert [i.guid for i in new_sense.ThesaurusItemsRC] == ["c"]  # Move proceeded
+    monkeypatch.setattr(references, "_find_in_possibility_list", boom)
+    assert categories._thesaurus_new_ancestors(
+        types_decision(fx), _Spec(fx), fx["target"], {}) == ()
+
+
 # ============================================================================
 # The Preview sense loop keeps the decisions (the actual #116 defect)
 # ============================================================================
@@ -315,6 +350,8 @@ def test_render_itemizes_create_link_and_drop_rows():
         "    Link  ThesaurusItemsRC 'existing' {E}  (1 sense)",
         "    Not transferred  AppendixesRC 'Appendix B' {ap-a}  (1 sense) -- see "
         "dropped items for the reason",
+        "    (Later references to an item created earlier in this run show as "
+        "create; Move links them.)",
     )
     # Wired into the Preview pane's extra lines.
     assert set(lines) <= set(render_preview_extra_lines(plan))
@@ -323,3 +360,18 @@ def test_render_itemizes_create_link_and_drop_rows():
 def test_render_is_empty_without_030_decisions():
     plan = _plan(_rec("s1", "SemanticDomainsRC", ReferenceAction.CREATE, "sd", "sd-1"))
     assert render_sense_list_reference_decisions(plan) == ()
+
+
+def types_decision(fx):
+    class _D:
+        ancestors_to_create = (fx["P"], fx["C"])
+    return _D()
+
+
+class _Spec:
+    def __init__(self, fx):
+        self._l = fx["target"].possibility_lists[0] if hasattr(
+            fx["target"], "possibility_lists") else object()
+
+    def target_list_path(self, target):
+        return self._l

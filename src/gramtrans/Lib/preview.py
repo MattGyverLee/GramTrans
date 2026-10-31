@@ -1987,7 +1987,10 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
     senses that reference it; a CREATE row names any ancestors the CREATE
     also creates (`ReferenceDecisionRecord.new_ancestors`). Not-transferred
     rows point at the dropped-items list, which carries the reason. Returns
-    `()` when no action carries a decision for these fields."""
+    `()` when no action carries a decision for these fields.
+
+    Note: later references to an item created earlier in this run show as
+    create; Move links them."""
     rows: dict = {}
     for action in getattr(plan, "actions", ()) or ():
         for d in getattr(action, "reference_decisions", ()) or ():
@@ -2018,6 +2021,9 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
             if act == "report_dropped":
                 line += " -- see dropped items for the reason"
             lines.append(line)
+    if any(k[1] == "create" for k in rows):
+        lines.append("    (Later references to an item created earlier in this "
+                     "run show as create; Move links them.)")
     return tuple(lines)
 
 

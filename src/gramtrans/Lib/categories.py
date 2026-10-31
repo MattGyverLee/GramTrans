@@ -8495,23 +8495,29 @@ def _thesaurus_new_ancestors(decision, spec, target, resolver_cache) -> tuple:
         from . import references as _references
     else:
         import references as _references  # type: ignore
-    chain = tuple(getattr(decision, "ancestors_to_create", ()) or ())[:-1]
-    if not chain or spec is None:
-        return ()
     try:
-        target_list = spec.target_list_path(target)
-    except Exception:  # noqa: BLE001 -- display only; never break the resolver
+        chain = tuple(getattr(decision, "ancestors_to_create", ()) or ())[:-1]
+        if not chain or spec is None:
+            return ()
+        try:
+            target_list = spec.target_list_path(target)
+        except Exception:  # noqa: BLE001 -- display only; never break the resolver
+            return ()
+        out = []
+        for anc in chain:
+            anc_guid = _guid_str_from(anc)
+            if not anc_guid or resolver_cache.get(anc_guid) is not None:
+                continue
+            if target_list is not None and _references._find_in_possibility_list(
+                    target_list, anc_guid) is not None:
+                continue
+            out.append((_references._item_label(anc), anc_guid))
+        return tuple(out)
+    except Exception as exc:  # noqa: BLE001 -- Move calls this before apply_reference
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_thesaurus_new_ancestors failed (%s); listing no ancestors", exc)
         return ()
-    out = []
-    for anc in chain:
-        anc_guid = _guid_str_from(anc)
-        if not anc_guid or resolver_cache.get(anc_guid) is not None:
-            continue
-        if target_list is not None and _references._find_in_possibility_list(
-                target_list, anc_guid) is not None:
-            continue
-        out.append((_references._item_label(anc), anc_guid))
-    return tuple(out)
 
 
 def _resolve_sense_thesaurus_items(src_sense, new_sense, target, resolver_cache,
