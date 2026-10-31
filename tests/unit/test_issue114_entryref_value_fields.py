@@ -298,17 +298,46 @@ def test_rerun_empty_source_summary_never_blanks_target(_stub_lcm) -> None:
     assert existing.Summary.get_String(10).Text == "keep me"
 
 
-def test_rerun_hide_minor_entry_source_zero_updates_diverged_target(
+def test_rerun_hide_minor_entry_source_zero_is_unset_target_one_stays(
         _stub_lcm) -> None:
-    """Explicit decision: per `conflict._is_empty` an int 0 is DATA, not
-    empty, so a source 0 against a target 1 is a divergence and updates the
-    target -- the same rule every other scalar merge follows."""
+    """Domain policy Q2: on the overwrite-existing path a source
+    HideMinorEntry 0 is UNSET -- target 1 / source 0 stays 1, no write, no
+    drop. Only a source 1 may overwrite a target 0."""
     existing = _Ref("ref-1", hide=1)
     target = _Target({"entry-1": _Entry("entry-1", refs=[existing])})
     _run(target, [_rec("ref-1", hide=0)])
 
-    assert existing.HideMinorEntry == 0
+    assert existing.HideMinorEntry == 1
+    assert existing.hide_sets == 0
+
+
+def test_rerun_hide_minor_entry_source_one_overwrites_target_zero(
+        _stub_lcm) -> None:
+    existing = _Ref("ref-1", hide=0)
+    target = _Target({"entry-1": _Entry("entry-1", refs=[existing])})
+    _run(target, [_rec("ref-1", hide=1)])
+
+    assert existing.HideMinorEntry == 1
     assert existing.hide_sets == 1
+
+
+def test_non_numeric_hide_minor_entry_is_a_drop_not_an_exception() -> None:
+    class _Weird(_Ref):
+        @property
+        def HideMinorEntry(self):
+            return "n/a"
+
+        @HideMinorEntry.setter
+        def HideMinorEntry(self, value):
+            self.hide_sets += 1
+
+    dropped = []
+    written = _merge_entryref_value_fields(
+        _rec("ref-1", hide=1), _Weird("ref-1"), types.SimpleNamespace(),
+        None, dropped)
+
+    assert written == []
+    assert [d.field_name for d in dropped] == ["HideMinorEntry"]
 
 
 def test_rerun_target_only_ref_is_untouched(_stub_lcm) -> None:

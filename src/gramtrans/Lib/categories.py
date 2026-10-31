@@ -11946,7 +11946,8 @@ def _multistring_alts_by_ws_id(multistring, ws_id_by_handle):
     return alts
 
 
-def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped):
+def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
+                                 existing=False):
     """Issue #114: write a LexEntryRef's two VALUE fields -- `HideMinorEntry`
     (Int32) and `Summary` (IMultiString) -- from the per-ref record stashed by
     `_stash_entry_bindings`.
@@ -11958,8 +11959,12 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped):
     source never blanks the target, a target-only Summary alternative is never
     touched, a matching value is not re-written, and a differing non-empty
     source value is updated. Per `conflict._is_empty`, an int 0 is DATA, not
-    empty: a source `HideMinorEntry == 0` against a target `1` updates the
-    target to 0, exactly as any other scalar field merges.
+    empty -- EXCEPT `HideMinorEntry` on the overwrite-EXISTING-ref path
+    (`existing=True`), where domain policy (issue #114 review, Q2) treats a
+    source 0 as UNSET: only a source 1 may overwrite a target 0; a target 1
+    with source 0 stays 1 and records no drop (0 is the LCM default, so it
+    cannot be told apart from "never set"). On the CREATE path a source 0
+    stays data and rides on the create.
 
     Summary alternatives are written at the TARGET handle of the
     (`ws_map`-translated) writing system, never the raw source handle (the
@@ -11986,18 +11991,28 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped):
 
     src_hide = rec.get("hide_minor_entry")
     if src_hide is not None:
-        tgt_hide = getattr(target_ref, "HideMinorEntry", None)
-        tgt_hide = int(tgt_hide) if tgt_hide is not None else None
-        if _merge_delta(src_hide, tgt_hide) is not None:
+        try:
+            tgt_hide = getattr(target_ref, "HideMinorEntry", None)
+            tgt_hide = int(tgt_hide) if tgt_hide is not None else None
+            unset = existing and src_hide == 0  # policy Q2: 0 == unset
+            do_write = (not unset
+                        and _merge_delta(src_hide, tgt_hide) is not None)
+        except (TypeError, ValueError) as exc:
+            _drop("HideMinorEntry", str(src_hide),
+                  "HideMinorEntry unreadable on the target (%s: %s)"
+                  % (type(exc).__name__, exc))
+            do_write = False
+        if do_write:
             try:
                 target_ref.HideMinorEntry = src_hide
                 back = getattr(target_ref, "HideMinorEntry", None)
+                back = int(back) if back is not None else None
             except Exception as exc:  # noqa: BLE001 -- recorded, never silent
                 _drop("HideMinorEntry", str(src_hide),
                       "HideMinorEntry not written (%s: %s)"
                       % (type(exc).__name__, exc))
             else:
-                if back is None or int(back) != src_hide:
+                if back is None or back != src_hide:
                     _drop("HideMinorEntry", str(src_hide),
                           "HideMinorEntry not present on read-back "
                           "(wanted %r, got %r)" % (src_hide, back))
@@ -12170,7 +12185,8 @@ def _run_entryref_create_pass(context, target, tag=None):
                 # fill empty / update diverged / never blank); a re-run whose
                 # values already match writes nothing.
                 _merge_entryref_value_fields(
-                    rec, existing_refs[ref_guid], target, ws_map, dropped)
+                    rec, existing_refs[ref_guid], target, ws_map, dropped,
+                    existing=True)
                 continue
             _create_error = None
             try:

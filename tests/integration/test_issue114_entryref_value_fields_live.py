@@ -354,9 +354,10 @@ def test_rerun_merge_arm_writes_nothing_when_equal_and_merges_divergence():
     want = _expected()
     # REF_BOTH: emptied en alt refilled; the target-only ko-fonipa alt kept.
     want[REF_BOTH]["Summary"]["ko-fonipa"] = "target only"
-    # REF_DEFAULT: empty source Summary never blanks the target; HideMinorEntry
-    # 0 is data (conflict._is_empty), so the diverged target 1 is updated to 0.
-    want[REF_DEFAULT] = {"HideMinorEntry": 0,
+    # REF_DEFAULT: empty source Summary never blanks the target; policy Q2:
+    # on an existing ref a source HideMinorEntry 0 is UNSET, so the diverged
+    # target 1 / source 0 STAYS 1 (and records no drop).
+    want[REF_DEFAULT] = {"HideMinorEntry": 1,
                          "Summary": {"en": "target-only summary"}}
     assert got == want
     xml = _read_values_xml(TARGET_PATH)
