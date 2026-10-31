@@ -3621,6 +3621,15 @@ class RunPlan:
     # `preview.expand_lexicon_categories`). One plain sentence per note;
     # rendered as [INFO] lines so the substitution is never silent.
     category_notes: tuple = ()  # tuple[str, ...]
+    # Issue #108: `{type_guid: {"system": "ms"|"ph", "label": str,
+    # "members": ((member_guid, member_label), ...)}}` -- the source
+    # `IFsFeatStrucType.FeaturesRS` of every in-scope struct-type (in the
+    # target already, or planned for create), members in source order.
+    # Gathered by `categories.gather_struct_type_feature_refs` after the
+    # closure pull-in, consumed by the post-loop Move pass
+    # `categories._run_struct_type_features_rs_pass` and rendered by
+    # `preview.render_struct_type_features_rs`. Ephemeral per run.
+    struct_type_feature_refs: dict = field(default_factory=dict)
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)
