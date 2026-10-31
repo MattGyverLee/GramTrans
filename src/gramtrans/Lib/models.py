@@ -4189,6 +4189,10 @@ class ReferenceDecision:
     ancestors_to_create: tuple = ()  # tuple of source items, root -> leaf
     dropped: Optional[DroppedItemRecord] = None
     source_item: Any = None
+    # Issue #146: True when this LINK was produced from a Preview `PlannedCreate`
+    # placeholder (the item does not exist yet; `target_item` is None). Move
+    # must never treat such a decision as a real link.
+    planned: bool = False
 
     def __post_init__(self) -> None:
         if self.action == ReferenceAction.REPORT_DROPPED and self.dropped is None:
@@ -4236,6 +4240,7 @@ class ReferenceDecisionRecord:
     item_name: str = ""
     item_guid: str = ""
     new_ancestors: tuple = ()  # tuple[tuple[str, str], ...]
+    planned: bool = False  # issue #146: LINK produced from a PlannedCreate
 
 
 # ============================================================================

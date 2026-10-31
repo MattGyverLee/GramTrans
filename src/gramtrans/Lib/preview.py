@@ -1309,6 +1309,13 @@ def build_run_plan(
     # every reference field/owner so a possibility already resolved earlier
     # in the walk short-circuits to LINK without re-deciding.
     _resolver_cache: dict = {}
+    # Issue #146: a planning cache -- a planned CREATE primes it with a
+    # placeholder so later references show LINK, as Move's real cache does.
+    if __package__:
+        from .references import mark_planning_cache as _mark_planning_cache
+    else:
+        from references import mark_planning_cache as _mark_planning_cache  # type: ignore
+    _mark_planning_cache(_resolver_cache)
     object.__setattr__(context, '_resolver_cache', _resolver_cache)
 
     # Feature 024 (T029/T030, US3, FR-009a): per-run copy-set dict
