@@ -1710,10 +1710,9 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
     the raw SOURCE handle, landing them on a wrong/absent target WS -- the
     bare-GUID-feature defect (research.md T004-B).
 
-    031 US1: after the LAST INFLECTION_FEATURES action, the feature->category
-    wiring post-pass runs exactly once (via `_run_tail_once`), populating each
-    target POS `InflectableFeatsRC`. The tail is invoked from a `finally` so it
-    still fires when an individual feature action returns early or raises.
+    Issue #133: the feature->category wiring (target POS `InflectableFeatsRC`)
+    is NOT done here; `_run_infl_feature_link_pass` is its single writer and
+    `transfer._ensure_infl_feature_links` runs it once after the leaf loop.
     """
     from SIL.LCModel import IFsClosedFeatureFactory, IFsClosedFeature, IFsSymFeatValFactory, IFsSymFeatVal
     from System import Guid as DotNetGuid
@@ -1727,136 +1726,36 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
     target = context.target_handle
     src_guid = action.source_guid
 
-    try:
-        # Locate source feature.
-        src_feat = None
-        for f in source.InflectionFeatures.FeatureGetAll():
-            if _guid_str_from(f) == src_guid:
-                src_feat = f
-                break
-        if src_feat is None:
-            return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
+    # Locate source feature.
+    src_feat = None
+    for f in source.InflectionFeatures.FeatureGetAll():
+        if _guid_str_from(f) == src_guid:
+            src_feat = f
+            break
+    if src_feat is None:
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
-        cache = getattr(target, "Cache")
-        ws = cache.DefaultAnalWs
-        feature_system = cache.LangProject.MsFeatureSystemOA
-        parsed_guid = DotNetGuid.Parse(src_guid)
-        sl = cache.ServiceLocator
-        ws_map = _ws_map_dict(ws_mapping)
+    cache = getattr(target, "Cache")
+    ws = cache.DefaultAnalWs
+    feature_system = cache.LangProject.MsFeatureSystemOA
+    parsed_guid = DotNetGuid.Parse(src_guid)
+    sl = cache.ServiceLocator
+    ws_map = _ws_map_dict(ws_mapping)
 
-        src_class = getattr(src_feat, "ClassName", None)
+    src_class = getattr(src_feat, "ClassName", None)
 
-        # ------------------------------------------------------------
-        # COMPLEX FEATURE branch (coverage-content-fidelity-v2 Part B.1)
-        # ------------------------------------------------------------
-        if src_class == "FsComplexFeature":
-            try:
-                from SIL.LCModel import IFsComplexFeatureFactory, IFsComplexFeature
-            except Exception as _imp_exc:  # noqa: BLE001 -- offline/older LCM build
-                import logging as _logging
-                _logging.getLogger("gramtrans.Lib.categories").warning(
-                    "inflection_features_execute_action: IFsComplexFeatureFactory "
-                    "not importable -- skipping complex feature guid=%s: %s",
-                    src_guid, _imp_exc, exc_info=True,
-                )
-                exec_skips = getattr(context, "_exec_skips", None)
-                if exec_skips is not None:
-                    exec_skips.append(Skip(
-                        category=GrammarCategory.INFLECTION_FEATURES,
-                        source_guid=src_guid,
-                        reason=SkipReason.UNSUPPORTED_LCM_TYPE,
-                        detail=(f"IFsComplexFeatureFactory not importable on this "
-                                f"LCM build; cannot create complex feature {src_guid}"),
-                    ))
-                return ActionOutcome.skipped("IFsComplexFeatureFactory not importable on this LCM build", skip_reason=SkipReason.UNSUPPORTED_LCM_TYPE, recorded=exec_skips is not None)
-
-            complex_factory = sl.GetService(IFsComplexFeatureFactory)
-
-            # Feature 038 (T035): 1-arg Create(Guid), THEN Add(), in that
-            # order. `IFsComplexFeatureFactory.Create(Guid, IFsFeatureSystem)`
-            # is declared on the INTERFACE; `GetService` returns the CONCRETE
-            # factory and pythonnet cannot bind the 2-arg form against it. The
-            # removed "Path A first" attempt therefore raised on every create
-            # and had its exception swallowed by a bare `except Exception:`
-            # before this same 1-arg path ran. Fail loud if even the 1-arg
-            # overload is unavailable rather than silently produce a
-            # fresh-GUID duplicate on re-run (C4/VR-1).
-            try:
-                new_feat_raw = complex_factory.Create(parsed_guid)
-            except Exception as e:
-                raise _create_guid_failure(
-                    "IFsComplexFeatureFactory", src_guid, e,
-                    detail="(complex feature)",
-                ) from e
-            _safe_add_to_owner(new_feat_raw, feature_system.FeaturesOC,
-                               "IFsComplexFeatureFactory", src_guid)
-
-            new_feat = IFsComplexFeature(new_feat_raw)
-            src_feat_typed = IFsComplexFeature(src_feat)
-
-            # Name/Abbreviation/Description via the WS-mapped Operations
-            # surface, falling back to the explicit handle-translation copy
-            # (mirrors the closed-feature path immediately below).
-            try:
-                src_props = source.InflectionFeatures.GetSyncableProperties(src_feat_typed)
-                target.InflectionFeatures.ApplySyncableProperties(
-                    new_feat, src_props, ws_map=ws_map)
-            except Exception:
-                _copy_multistrings_ws_mapped(
-                    src_feat_typed, new_feat, ("Name", "Abbreviation", "Description"),
-                    source=source, target=target, ws_map=ws_map)
-
-            # TypeRA is NOT written here (issue #110). The post-loop tail
-            # (`transfer._ensure_complex_feature_type_ra`, issue #37) is its
-            # one writer and one count: it runs after every Move, wires the
-            # edge Preview recorded for this feature, and is what Preview's
-            # "Wire" rows count. Wiring here too when the struct-type already
-            # existed made the tail see ALREADY_WIRED and under-report.
-
-            # NO ValuesOC loop -- complex features have no symbolic values.
-            apply_carrier_b(new_feat, ws, tag)
-            return new_feat
-
-        # ------------------------------------------------------------
-        # OPEN FEATURE branch -- documented clean skip; no crash, no orphan.
-        # Open features have no closed value set to sync.
-        # ------------------------------------------------------------
-        if src_class == "FsOpenFeature":
-            import logging as _logging
-            _logging.getLogger("gramtrans.Lib.categories").info(
-                "inflection_features_execute_action: FsOpenFeature has no "
-                "closed value set to sync -- skipping guid=%s", src_guid,
-            )
-            exec_skips = getattr(context, "_exec_skips", None)
-            if exec_skips is not None:
-                exec_skips.append(Skip(
-                    category=GrammarCategory.INFLECTION_FEATURES,
-                    source_guid=src_guid,
-                    reason=SkipReason.NEEDS_MANUAL,
-                    detail=(f"source feature {src_guid} is FsOpenFeature; open "
-                            "inflection features have no closed value set and "
-                            "are not supported by this transfer path"),
-                ))
-            return ActionOutcome.skipped("open/complex feature not supported on this path (reported via exec_skips)", skip_reason=SkipReason.NEEDS_MANUAL, recorded=exec_skips is not None)
-
-        # ------------------------------------------------------------
-        # CLOSED FEATURE branch (default / existing GOLD working path).
-        # Any other/unknown ClassName also lands here; if the cast fails
-        # it is reported as UNSUPPORTED_LCM_TYPE below (no crash, no orphan).
-        # ------------------------------------------------------------
+    # ------------------------------------------------------------
+    # COMPLEX FEATURE branch (coverage-content-fidelity-v2 Part B.1)
+    # ------------------------------------------------------------
+    if src_class == "FsComplexFeature":
         try:
-            IFsClosedFeature(src_feat)
-        except Exception as _cast_exc:
-            try:
-                _src_cls = src_feat.GetType().Name
-            except Exception:  # noqa: BLE001
-                _src_cls = type(src_feat).__name__
+            from SIL.LCModel import IFsComplexFeatureFactory, IFsComplexFeature
+        except Exception as _imp_exc:  # noqa: BLE001 -- offline/older LCM build
             import logging as _logging
             _logging.getLogger("gramtrans.Lib.categories").warning(
-                "inflection_features_execute_action: IFsClosedFeature(src_feat) "
-                "cast failed for source feature %s (class=%s) -- treating as "
-                "UNSUPPORTED_LCM_TYPE: %s",
-                src_guid, _src_cls, _cast_exc, exc_info=True,
+                "inflection_features_execute_action: IFsComplexFeatureFactory "
+                "not importable -- skipping complex feature guid=%s: %s",
+                src_guid, _imp_exc, exc_info=True,
             )
             exec_skips = getattr(context, "_exec_skips", None)
             if exec_skips is not None:
@@ -1864,40 +1763,38 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                     category=GrammarCategory.INFLECTION_FEATURES,
                     source_guid=src_guid,
                     reason=SkipReason.UNSUPPORTED_LCM_TYPE,
-                    detail=(f"source feature {src_guid} is {_src_cls}, not "
-                            "IFsClosedFeature; complex/open feature transfer is "
-                            "not supported by this path"),
+                    detail=(f"IFsComplexFeatureFactory not importable on this "
+                            f"LCM build; cannot create complex feature {src_guid}"),
                 ))
-            return ActionOutcome.skipped("feature type not supported on this path (reported via exec_skips)", skip_reason=SkipReason.UNSUPPORTED_LCM_TYPE, recorded=exec_skips is not None)
+            return ActionOutcome.skipped("IFsComplexFeatureFactory not importable on this LCM build", skip_reason=SkipReason.UNSUPPORTED_LCM_TYPE, recorded=exec_skips is not None)
 
-        factory = sl.GetService(IFsClosedFeatureFactory)
+        complex_factory = sl.GetService(IFsComplexFeatureFactory)
 
-        # Feature 038 (T035): 1-arg Create(Guid), THEN Add() -- same reason as
-        # the complex-feature branch above (the 2-arg overload is
-        # interface-only and unbindable from pythonnet, so trying it first
-        # only manufactured a swallowed exception). No no-arg fallback: if
-        # Create(Guid) is unsupported we fail loud rather than silently produce
-        # a fresh-GUID duplicate feature on re-run (031 US2, C4/VR-1;
-        # research.md R3 dedup). Mirrors the value path's fail-loud posture.
+        # Feature 038 (T035): 1-arg Create(Guid), THEN Add(), in that
+        # order. `IFsComplexFeatureFactory.Create(Guid, IFsFeatureSystem)`
+        # is declared on the INTERFACE; `GetService` returns the CONCRETE
+        # factory and pythonnet cannot bind the 2-arg form against it. The
+        # removed "Path A first" attempt therefore raised on every create
+        # and had its exception swallowed by a bare `except Exception:`
+        # before this same 1-arg path ran. Fail loud if even the 1-arg
+        # overload is unavailable rather than silently produce a
+        # fresh-GUID duplicate on re-run (C4/VR-1).
         try:
-            new_feat = factory.Create(parsed_guid)
+            new_feat_raw = complex_factory.Create(parsed_guid)
         except Exception as e:
             raise _create_guid_failure(
-                "IFsClosedFeatureFactory", src_guid, e,
-                detail="(a no-GUID create would produce a duplicate "
-                       "feature on re-run)",
+                "IFsComplexFeatureFactory", src_guid, e,
+                detail="(complex feature)",
             ) from e
-        _safe_add_to_owner(new_feat, feature_system.FeaturesOC,
-                           "IFsClosedFeatureFactory", src_guid)
+        _safe_add_to_owner(new_feat_raw, feature_system.FeaturesOC,
+                           "IFsComplexFeatureFactory", src_guid)
 
-        new_feat = IFsClosedFeature(new_feat)
+        new_feat = IFsComplexFeature(new_feat_raw)
+        src_feat_typed = IFsComplexFeature(src_feat)
 
-        # Apply syncable properties (Name, Abbreviation, Description) with WS
-        # mapping via the Operations surface -- the same call the POS path uses
-        # (categories.py gram_categories create path). Falls back to the explicit
-        # handle-translation copy if that surface is unavailable on this build.
-        src_feat_typed = IFsClosedFeature(src_feat)
-        # ws_map already computed above (shared by all ClassName branches).
+        # Name/Abbreviation/Description via the WS-mapped Operations
+        # surface, falling back to the explicit handle-translation copy
+        # (mirrors the closed-feature path immediately below).
         try:
             src_props = source.InflectionFeatures.GetSyncableProperties(src_feat_typed)
             target.InflectionFeatures.ApplySyncableProperties(
@@ -1907,48 +1804,143 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                 src_feat_typed, new_feat, ("Name", "Abbreviation", "Description"),
                 source=source, target=target, ws_map=ws_map)
 
-        # Co-create values (IFsSymFeatVal) with their canonical GUIDs.
-        # Feature 038 (T035): 1-arg Create(Guid) THEN ValuesOC.Add(), guarded
-        # by _safe_add_to_owner. The interface-declared 2-arg
-        # Create(Guid, IFsClosedFeature) is not bindable on the concrete
-        # factory, so the removed attempt raised once PER VALUE and was
-        # swallowed. No no-arg fallback -- if Create(Guid) is unsupported on
-        # this LCM build we fail loud rather than silently produce
-        # GUID-misaligned values.
-        val_factory = sl.GetService(IFsSymFeatValFactory)
-        if hasattr(src_feat_typed, "ValuesOC"):
-            for src_val in src_feat_typed.ValuesOC:
-                val_guid = _guid_str_from(src_val)
-                parsed_val_guid = DotNetGuid.Parse(val_guid)
-                try:
-                    new_val = val_factory.Create(parsed_val_guid)
-                except Exception as e:
-                    raise _create_guid_failure(
-                        "IFsSymFeatValFactory", val_guid, e,
-                        detail=f"(value GUID on feature {src_guid})",
-                    ) from e
-                _safe_add_to_owner(new_val, new_feat.ValuesOC,
-                                   "IFsSymFeatValFactory", val_guid)
-                new_val = IFsSymFeatVal(new_val)
-                src_val_typed = IFsSymFeatVal(src_val)
-                # C3: values copy via the explicit ws-mapped handle translation
-                # (Operations GetSyncableProperties is unconfirmed for values).
-                _copy_multistrings_ws_mapped(
-                    src_val_typed, new_val, ("Name", "Abbreviation", "Description"),
-                    source=source, target=target, ws_map=ws_map)
+        # TypeRA is NOT written here (issue #110). The post-loop tail
+        # (`transfer._ensure_complex_feature_type_ra`, issue #37) is its
+        # one writer and one count: it runs after every Move, wires the
+        # edge Preview recorded for this feature, and is what Preview's
+        # "Wire" rows count. Wiring here too when the struct-type already
+        # existed made the tail see ALREADY_WIRED and under-report.
 
-        # Carrier B: Description-append on the feature.
+        # NO ValuesOC loop -- complex features have no symbolic values.
         apply_carrier_b(new_feat, ws, tag)
         return new_feat
-    finally:
-        # 031 US1 (T012, contract C2): wire feature->category links exactly once,
-        # on the last INFLECTION_FEATURES action (after every GRAM_CATEGORIES
-        # action has executed -- leaf-dispatch order). The `finally` guarantees
-        # the tail's per-call counter advances even on an early return / raise so
-        # the post-pass still fires on the final action.
-        _run_tail_once(context, target, tag, "_did_infl_feature_link_pass",
-                       GrammarCategory.INFLECTION_FEATURES,
-                       _run_infl_feature_link_pass)
+
+    # ------------------------------------------------------------
+    # OPEN FEATURE branch -- documented clean skip; no crash, no orphan.
+    # Open features have no closed value set to sync.
+    # ------------------------------------------------------------
+    if src_class == "FsOpenFeature":
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").info(
+            "inflection_features_execute_action: FsOpenFeature has no "
+            "closed value set to sync -- skipping guid=%s", src_guid,
+        )
+        exec_skips = getattr(context, "_exec_skips", None)
+        if exec_skips is not None:
+            exec_skips.append(Skip(
+                category=GrammarCategory.INFLECTION_FEATURES,
+                source_guid=src_guid,
+                reason=SkipReason.NEEDS_MANUAL,
+                detail=(f"source feature {src_guid} is FsOpenFeature; open "
+                        "inflection features have no closed value set and "
+                        "are not supported by this transfer path"),
+            ))
+        return ActionOutcome.skipped("open/complex feature not supported on this path (reported via exec_skips)", skip_reason=SkipReason.NEEDS_MANUAL, recorded=exec_skips is not None)
+
+    # ------------------------------------------------------------
+    # CLOSED FEATURE branch (default / existing GOLD working path).
+    # Any other/unknown ClassName also lands here; if the cast fails
+    # it is reported as UNSUPPORTED_LCM_TYPE below (no crash, no orphan).
+    # ------------------------------------------------------------
+    try:
+        IFsClosedFeature(src_feat)
+    except Exception as _cast_exc:
+        try:
+            _src_cls = src_feat.GetType().Name
+        except Exception:  # noqa: BLE001
+            _src_cls = type(src_feat).__name__
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "inflection_features_execute_action: IFsClosedFeature(src_feat) "
+            "cast failed for source feature %s (class=%s) -- treating as "
+            "UNSUPPORTED_LCM_TYPE: %s",
+            src_guid, _src_cls, _cast_exc, exc_info=True,
+        )
+        exec_skips = getattr(context, "_exec_skips", None)
+        if exec_skips is not None:
+            exec_skips.append(Skip(
+                category=GrammarCategory.INFLECTION_FEATURES,
+                source_guid=src_guid,
+                reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+                detail=(f"source feature {src_guid} is {_src_cls}, not "
+                        "IFsClosedFeature; complex/open feature transfer is "
+                        "not supported by this path"),
+            ))
+        return ActionOutcome.skipped("feature type not supported on this path (reported via exec_skips)", skip_reason=SkipReason.UNSUPPORTED_LCM_TYPE, recorded=exec_skips is not None)
+
+    factory = sl.GetService(IFsClosedFeatureFactory)
+
+    # Feature 038 (T035): 1-arg Create(Guid), THEN Add() -- same reason as
+    # the complex-feature branch above (the 2-arg overload is
+    # interface-only and unbindable from pythonnet, so trying it first
+    # only manufactured a swallowed exception). No no-arg fallback: if
+    # Create(Guid) is unsupported we fail loud rather than silently produce
+    # a fresh-GUID duplicate feature on re-run (031 US2, C4/VR-1;
+    # research.md R3 dedup). Mirrors the value path's fail-loud posture.
+    try:
+        new_feat = factory.Create(parsed_guid)
+    except Exception as e:
+        raise _create_guid_failure(
+            "IFsClosedFeatureFactory", src_guid, e,
+            detail="(a no-GUID create would produce a duplicate "
+                   "feature on re-run)",
+        ) from e
+    _safe_add_to_owner(new_feat, feature_system.FeaturesOC,
+                       "IFsClosedFeatureFactory", src_guid)
+
+    new_feat = IFsClosedFeature(new_feat)
+
+    # Apply syncable properties (Name, Abbreviation, Description) with WS
+    # mapping via the Operations surface -- the same call the POS path uses
+    # (categories.py gram_categories create path). Falls back to the explicit
+    # handle-translation copy if that surface is unavailable on this build.
+    src_feat_typed = IFsClosedFeature(src_feat)
+    # ws_map already computed above (shared by all ClassName branches).
+    try:
+        src_props = source.InflectionFeatures.GetSyncableProperties(src_feat_typed)
+        target.InflectionFeatures.ApplySyncableProperties(
+            new_feat, src_props, ws_map=ws_map)
+    except Exception:
+        _copy_multistrings_ws_mapped(
+            src_feat_typed, new_feat, ("Name", "Abbreviation", "Description"),
+            source=source, target=target, ws_map=ws_map)
+
+    # Co-create values (IFsSymFeatVal) with their canonical GUIDs.
+    # Feature 038 (T035): 1-arg Create(Guid) THEN ValuesOC.Add(), guarded
+    # by _safe_add_to_owner. The interface-declared 2-arg
+    # Create(Guid, IFsClosedFeature) is not bindable on the concrete
+    # factory, so the removed attempt raised once PER VALUE and was
+    # swallowed. No no-arg fallback -- if Create(Guid) is unsupported on
+    # this LCM build we fail loud rather than silently produce
+    # GUID-misaligned values.
+    val_factory = sl.GetService(IFsSymFeatValFactory)
+    if hasattr(src_feat_typed, "ValuesOC"):
+        for src_val in src_feat_typed.ValuesOC:
+            val_guid = _guid_str_from(src_val)
+            parsed_val_guid = DotNetGuid.Parse(val_guid)
+            try:
+                new_val = val_factory.Create(parsed_val_guid)
+            except Exception as e:
+                raise _create_guid_failure(
+                    "IFsSymFeatValFactory", val_guid, e,
+                    detail=f"(value GUID on feature {src_guid})",
+                ) from e
+            _safe_add_to_owner(new_val, new_feat.ValuesOC,
+                               "IFsSymFeatValFactory", val_guid)
+            new_val = IFsSymFeatVal(new_val)
+            src_val_typed = IFsSymFeatVal(src_val)
+            # C3: values copy via the explicit ws-mapped handle translation
+            # (Operations GetSyncableProperties is unconfirmed for values).
+            _copy_multistrings_ws_mapped(
+                src_val_typed, new_val, ("Name", "Abbreviation", "Description"),
+                source=source, target=target, ws_map=ws_map)
+
+    # Carrier B: Description-append on the feature.
+    apply_carrier_b(new_feat, ws, tag)
+    return new_feat
+    # Issue #133: the feature->category link pass is NOT anchored to the last
+    # INFLECTION_FEATURES action. It is the single InflectableFeatsRC writer and
+    # runs post-loop from `transfer._ensure_infl_feature_links`.
 
 
 # ----- complex-feature TypeRA tail wiring (issue #37) ----------------------
@@ -3674,29 +3666,27 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
         )
         return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=getattr(context, "_exec_skips", None) is not None)
 
-    # Resolve the target feature defn by GUID in MsFeatureSystemOA.FeaturesOC.
-    cache = getattr(target, "Cache")
-    feature_system = cache.LangProject.MsFeatureSystemOA
-    target_feat = None
-    for feat in feature_system.FeaturesOC:
-        if _guid_str_from(feat) == feat_guid:
-            target_feat = feat
-            break
-
-    if target_feat is None:
-        log.warning(
-            "pos_inflectable_feats_execute_action: source feat defn %s has no "
-            "matching target defn by GUID -- skipping (run inflection_features first).",
-            feat_guid,
-        )
-        return ActionOutcome.skipped("source feature definition %s has no matching target definition by GUID (run inflection_features first)" % feat_guid)
-
-    # #58: `_as_pos`, not a bare `IPartOfSpeech(...)` -- the bare cast raised
-    # TypeError on a duck-typed POS whenever SIL was loaded (and ImportError
-    # host-free). A real POS is cast exactly as before.
-    target_pos_obj = _as_pos(target_pos)
-    target_pos_obj.InflectableFeatsRC.Add(target_feat)
-    return target_feat
+    # Issue #133: SINGLE WRITER. This executor used to resolve the feature and
+    # `InflectableFeatsRC.Add(...)` it unchecked, returning the feature (counted
+    # as added) whether or not the write took. It now records INTENT only: the
+    # (pos, feature) pair goes into the run plan's `feature_category_links`
+    # binding and `_run_infl_feature_link_pass` -- the one writer, which skips
+    # existing pairs and counts only read-back-confirmed links -- performs and
+    # counts it after the leaf loop. The outcome is reported as not-added here
+    # so the leaf `added` count never claims a write this function did not make.
+    link_map = _binding_map(context, "feature_category_links")
+    if link_map is None:
+        return ActionOutcome.skipped(
+            "no feature_category_links binding available to record the link "
+            "intent for the single InflectableFeatsRC writer",
+            recorded=False)
+    bucket = link_map.setdefault(pos_guid, [])
+    if feat_guid not in bucket:
+        bucket.append(feat_guid)
+    return ActionOutcome.skipped(
+        "InflectableFeatsRC link %s -> %s recorded as intent; written and "
+        "counted by the single link pass" % (pos_guid, feat_guid),
+        recorded=True)
 
 
 # ----- stem_names ---------------------------------------------------------
@@ -5767,8 +5757,8 @@ def _stash_feature_category_links(pos_piece, context):
 
     Called from `gram_categories_plan_action` for every in-scope POS (created or
     matched). Records `{source_pos_guid: [feature_guid, ...]}`. Consumed by the
-    Move wiring post-pass `_run_infl_feature_link_pass` (registered via
-    `_run_tail_once`). Idempotent: a (pos, feature) pair already recorded is not
+    Move wiring post-pass `_run_infl_feature_link_pass` (run once, post-loop,
+    by `transfer._ensure_infl_feature_links`). Idempotent: a (pos, feature) pair already recorded is not
     duplicated.
 
     T095 CORRECTED WHAT THIS KEY IS. It used to be documented as
@@ -5780,24 +5770,28 @@ def _stash_feature_category_links(pos_piece, context):
     consumer, which now does it identity-first and key-second rather than
     assuming the two GUIDs are equal.
 
-    In-scope endpoints only: gathers nothing unless INFLECTION_FEATURES is
-    selected (no features transferred => no links to wire), and honors an
-    INFLECTION_FEATURES leaf-pick subset when one is present. Mirrors
+    Gathers for every in-scope POS (issue #133: no longer conditional on
+    INFLECTION_FEATURES being selected) and honors an INFLECTION_FEATURES
+    leaf-pick subset when that category is selected. Mirrors
     `_stash_entry_bindings`."""
     link_map = _binding_map(context, "feature_category_links")
     if link_map is None:
         return
+    # Issue #133: gathered REGARDLESS of whether INFLECTION_FEATURES is
+    # selected. The old gate meant a run that selected POS but not the
+    # features gathered nothing, so a feature ALREADY present in the target
+    # was never linked and the run said nothing. The rule now (see
+    # `_run_infl_feature_link_pass`): a feature that exists in the target (or
+    # is created this run) is linked; one that does not is a reported
+    # dependency drop, never silently deferred. Leaf-picks narrow the set only
+    # when INFLECTION_FEATURES is actually selected.
     selection = getattr(context, "_selection", None)
-    if selection is not None:
-        try:
-            if not selection.is_on(GrammarCategory.INFLECTION_FEATURES):
-                return
-        except (AttributeError, TypeError):
-            pass
     picks = None
     if selection is not None:
         try:
-            picks = selection.leaf_picks_for(GrammarCategory.INFLECTION_FEATURES)
+            if selection.is_on(GrammarCategory.INFLECTION_FEATURES):
+                picks = selection.leaf_picks_for(
+                    GrammarCategory.INFLECTION_FEATURES)
         except (AttributeError, TypeError):
             picks = None
     pos_guid = _guid_str_from(pos_piece)
@@ -13046,8 +13040,34 @@ def _run_infl_feature_link_pass(context, target, tag=None):
     Returns a list of Skip(DEPENDENCY_UNRESOLVED) -- one per unresolved POS and
     one per unresolved feature (VR-4: deferred, never a dangling write).
     Idempotent via a membership guard (VR-3); order-independent (runs after both
-    endpoints exist)."""
+    endpoints exist).
+
+    ISSUE #133 -- THIS IS THE SINGLE WRITER of a POS's `InflectableFeatsRC`.
+    Enrichment (`transfer._enrich_one_collection`) and
+    `pos_inflectable_feats_execute_action` record intent and write nothing.
+    Per pair: skip an existing link; `Add`; read the collection BACK; count
+    the pair (`context._infl_feature_link_writes`) only if the read-back
+    confirms it. A no-op or failed write becomes a WRITE_FAILED
+    `DroppedItemRecord` on `context._dropped` plus a Skip, never a count.
+    A feature absent from the target is a reported dependency drop (the old
+    "deferred, link it only if INFLECTION_FEATURES is selected" silently never
+    linked it); one that exists by GUID is linked whatever the selection.
+    `transfer._ensure_infl_feature_links` runs it post-loop, including on a
+    0-action run when POS are in scope."""
     skips = []
+    writes = 0
+    dropped = getattr(context, "_dropped", None)
+    # Pairs this pass SETTLED (linked, already linked, or dropped with a
+    # record). `_reconcile_deferred_infl_pairs` reports every deferred pair
+    # that is not in here. Shared across invocations on one context and
+    # attached BEFORE the loop so a pass that raises midway keeps its progress.
+    settled = getattr(context, "_infl_pairs_settled", None)
+    if settled is None:
+        settled = set()
+        try:
+            object.__setattr__(context, "_infl_pairs_settled", settled)
+        except (AttributeError, TypeError):
+            pass
     plan = getattr(context, "_run_plan", None)
     if plan is not None:
         bindings = getattr(plan, "feature_category_links", None) or {}
@@ -13093,23 +13113,157 @@ def _run_infl_feature_link_pass(context, target, tag=None):
         for feature_guid in feature_guids:
             target_feat = _resolve_target_by_guid(target, feature_guid)
             if target_feat is None:
-                skips.append(Skip(
-                    category=GrammarCategory.INFLECTION_FEATURES,
-                    source_guid=feature_guid,
-                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
-                    detail=(f"feature_guid={feature_guid} not in target after "
-                            "features transfer"),
-                ))
+                # Issue #133: never silently deferred, and reported ONCE. The
+                # feature is absent from the target (INFLECTION_FEATURES not
+                # selected, or it did not transfer), so the pair cannot be
+                # linked. The DroppedItemRecord is the report; a Skip is
+                # emitted only when there is no drop collector to hold it.
+                if dropped is not None:
+                    _append_dropped_once(dropped, _infl_link_drop(
+                        pos_guid, feature_guid,
+                        "feature definition is not in the target "
+                        "MsFeatureSystemOA.FeaturesOC, so the part of speech "
+                        "cannot be linked to it (select INFLECTION_FEATURES "
+                        "so it transfers first; a later run links it)"))
+                else:
+                    skips.append(Skip(
+                        category=GrammarCategory.INFLECTION_FEATURES,
+                        source_guid=feature_guid,
+                        reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                        detail=(f"feature_guid={feature_guid} not in target "
+                                "after features transfer"),
+                    ))
+                settled.add(_infl_pair_key(pos_guid, feature_guid))
                 continue
             feat_g = _guid_str_from(target_feat)
-            already = any(
-                (existing is target_feat) or (_guid_str_from(existing) == feat_g)
-                for existing in feats_rc
-            )
-            if already:
+            error = None
+            try:
+                already = any(
+                    (existing is target_feat) or (_guid_str_from(existing) == feat_g)
+                    for existing in feats_rc
+                )
+                if already:
+                    settled.add(_infl_pair_key(pos_guid, feature_guid))
+                    continue
+                feats_rc.Add(target_feat)
+            except Exception as exc:  # noqa: BLE001 -- reported, not swallowed
+                error = f"{type(exc).__name__}: {exc}"
+            # Issue #133: read the collection BACK (the #111/#120 model). An
+            # Add that returned normally proves nothing; only membership on
+            # read-back counts the pair as linked.
+            confirmed, readback_error = _infl_feat_in_collection(
+                feats_rc, target_feat, feat_g)
+            if confirmed:
+                writes += 1
+                settled.add(_infl_pair_key(pos_guid, feature_guid))
                 continue
-            feats_rc.Add(target_feat)
+            detail = error or readback_error or (
+                "Add returned normally but the feature is absent from "
+                "InflectableFeatsRC on read-back")
+            # Not DEPENDENCY_UNRESOLVED: both endpoints resolved, the WRITE
+            # failed. NOT_REPRODUCIBLE is "reached it, cannot faithfully write
+            # it", and the Skip carries the link's own category.
+            skips.append(Skip(
+                category=GrammarCategory.POS_INFLECTABLE_FEATS,
+                source_guid=pos_guid,
+                reason=SkipReason.NOT_REPRODUCIBLE,
+                detail=(f"WRITE_FAILED: InflectableFeatsRC link "
+                        f"pos={pos_guid} feature={feature_guid}: {detail}"),
+            ))
+            if dropped is not None:
+                _append_dropped_once(dropped, _infl_link_drop(
+                    pos_guid, feature_guid, "WRITE_FAILED: " + detail))
+            settled.add(_infl_pair_key(pos_guid, feature_guid))
+    # Accumulate (a second invocation links nothing new, so adds 0): the one
+    # count of confirmed links, evidence for the live gate and the report.
+    try:
+        object.__setattr__(context, "_infl_feature_link_writes",
+                           int(getattr(context, "_infl_feature_link_writes", 0)
+                               or 0) + writes)
+    except (AttributeError, TypeError):
+        pass
     return skips
+
+
+def _infl_pair_key(pos_guid, feature_guid):
+    """Normalised identity of one POS->feature pair (GUID case differs
+    between the stash, the enrichment and the LCM repository)."""
+    return (str(pos_guid or "").lower(), str(feature_guid or "").lower())
+
+
+def _reconcile_deferred_infl_pairs(context, cause=None):
+    """Issue #133: no deferred POS->feature pair may vanish without a record.
+
+    Enrichment records the intent of every `InflectableFeatsRC` child it
+    deferred in `context._deferred_infl_pairs` and writes nothing; the link
+    pass is the writer. After it (or instead of it, when it did not run or
+    raised -- `cause` says which) every deferred pair that the pass did not
+    settle (`context._infl_pairs_settled`: linked, already linked, or dropped
+    with a record) becomes a `DroppedItemRecord` whose reason names the cause.
+    Idempotent (`_append_dropped_once`). Returns the records it added."""
+    deferred = getattr(context, "_deferred_infl_pairs", None) or ()
+    dropped = getattr(context, "_dropped", None)
+    if not deferred or dropped is None:
+        return []
+    settled = getattr(context, "_infl_pairs_settled", None) or set()
+    plan = getattr(context, "_run_plan", None)
+    bindings = (getattr(plan, "feature_category_links", None) or {}) \
+        if plan is not None else {}
+    in_map = {_infl_pair_key(p, f)
+              for p, fs in bindings.items() for f in (fs or ())}
+    added = []
+    seen = set()
+    for pos_guid, feature_guid in deferred:
+        key = _infl_pair_key(pos_guid, feature_guid)
+        if key in seen or key in settled:
+            continue
+        seen.add(key)
+        if cause is not None:
+            reason = "deferred link not written: " + cause
+        elif key not in in_map:
+            reason = ("deferred link not written: the pair is absent from the "
+                      "run's feature_category_links map (filtered out by the "
+                      "INFLECTION_FEATURES leaf-pick, or the part of speech "
+                      "was created only through dependency closure and never "
+                      "planned), so the link pass never saw it")
+        else:
+            reason = ("deferred link not written: the link pass saw the pair "
+                      "but could not resolve the target part of speech (or its "
+                      "InflectableFeatsRC), so it attempted no write")
+        rec = _infl_link_drop(pos_guid, feature_guid, reason)
+        before = len(dropped)
+        _append_dropped_once(dropped, rec)
+        if len(dropped) > before:
+            added.append(rec)
+    return added
+
+
+def _infl_link_drop(pos_guid, feature_guid, reason):
+    """The `DroppedItemRecord` for one POS->feature pair that was not linked."""
+    return DroppedItemRecord(
+        owner_kind="PartOfSpeech",
+        owner_guid=pos_guid,
+        owner_label=pos_guid,
+        field_name="InflectableFeatsRC",
+        item_name="FsFeatDefn",
+        item_guid=feature_guid,
+        reason=reason,
+    )
+
+
+def _infl_feat_in_collection(feats_rc, target_feat, feat_guid):
+    """Issue #133 read-back: is `target_feat` in `feats_rc` NOW?
+
+    Returns `(confirmed, error)`. A read-back that itself raises verifies
+    nothing, so it is `(False, "<error>")` -- never linked on no evidence.
+    """
+    try:
+        present = list(feats_rc)
+    except Exception as exc:  # noqa: BLE001 -- reported via the caller
+        return False, f"read-back raised {type(exc).__name__}: {exc}"
+    return any(
+        (p is target_feat) or (_guid_str_from(p) == feat_guid) for p in present
+    ), None
 
 
 def _run_tail_once(context, target, tag, flag_attr, category, runner):

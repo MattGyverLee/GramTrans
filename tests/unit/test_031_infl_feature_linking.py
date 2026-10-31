@@ -143,12 +143,14 @@ class TestLinkGathering:
         categories._stash_feature_category_links(pos, ctx)
         assert ctx._feature_category_links == {"pos-1": ["f-a"]}
 
-    def test_no_gathering_when_features_not_in_scope(self) -> None:
-        # In-scope endpoints only: features off => no links gathered.
+    def test_gathers_even_when_features_not_selected(self) -> None:
+        # Issue #133: the INFLECTION_FEATURES gate is gone. A feature already
+        # in the target is linked whatever the selection; one that is absent is
+        # a reported dependency drop by the link pass, not a silent deferral.
         pos = _FakePOS("POS-1", feats=(_FakeFeat("F-A"),))
         ctx = self._gather_ctx(on=False)
         categories._stash_feature_category_links(pos, ctx)
-        assert ctx._feature_category_links == {}
+        assert ctx._feature_category_links == {"pos-1": ["f-a"]}
 
 
 class TestWiringPostPass:

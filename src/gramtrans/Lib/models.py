@@ -2958,6 +2958,11 @@ class EnrichedCollection:
     already_present: int = 0
     dropped: int = 0
     dropped_records: tuple = ()  # tuple[DroppedItemRecord, ...]
+    #: Issue #133: children this pass deliberately did NOT write because a
+    #: single dedicated writer owns the field (`InflectableFeatsRC` ->
+    #: `categories._run_infl_feature_link_pass`). Not `added`: nothing was
+    #: written, and the one count of linked pairs comes from that writer.
+    deferred: int = 0
 
     def __post_init__(self) -> None:
         if not self.field_name:
@@ -2966,7 +2971,7 @@ class EnrichedCollection:
             canonical_pos_collection_field(self.field_name)
         except ValueError as exc:
             raise ValueError("EnrichedCollection." + str(exc)) from None
-        for name in ("added", "already_present", "dropped"):
+        for name in ("added", "already_present", "dropped", "deferred"):
             if getattr(self, name) < 0:
                 raise ValueError(
                     "EnrichedCollection." + name + " must be >= 0, got "
@@ -2991,7 +2996,8 @@ class EnrichedCollection:
         """How many source children this collection accounted for: added +
         already_present + dropped. `dropped == 0` is what "every source child
         arrived" means for this collection (see `EnrichmentRecord.fidelity`)."""
-        return self.added + self.already_present + self.dropped
+        return (self.added + self.already_present + self.dropped
+                + self.deferred)
 
 
 @dataclass(frozen=True)
@@ -3635,9 +3641,10 @@ class RunPlan:
     # Feature 031 (US1, T005/T009): feature->category link bindings gathered
     # during Preview plan-building from each in-scope source
     # `IPartOfSpeech.InflectableFeatsRC` and consumed by the Move wiring
-    # post-pass (`Lib/categories.py._run_infl_feature_link_pass`, registered via
-    # `_run_tail_once`) that populates the target POS `InflectableFeatsRC`. Shape
-    # mirrors `lexentry_ref_bindings`: {target_pos_guid: [feature_guid, ...]}.
+    # post-pass (`Lib/categories.py._run_infl_feature_link_pass`, run once after
+    # the leaf loop by `transfer._ensure_infl_feature_links` -- issue #133) that
+    # populates the target POS `InflectableFeatsRC`. Shape mirrors
+    # `lexentry_ref_bindings`: {source_pos_guid: [feature_guid, ...]}.
     # Ephemeral per run; not serialised into the run snapshot. See
     # specs/031-fix-inflection-feature-linking/data-model.md (FeatureCategoryLink).
     feature_category_links: dict = field(default_factory=dict)  # str -> list[str]
