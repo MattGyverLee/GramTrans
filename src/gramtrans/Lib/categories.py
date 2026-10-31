@@ -1678,11 +1678,11 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
       IFsComplexFeatureFactory -- 1-arg Create(Guid) then guarded Add
       (feature 038, T035). Copies
       Name/Abbreviation/Description via the WS-mapped Operations surface
-      (falling back to `_copy_multistrings_ws_mapped`). Wires TypeRA by
-      GUID lookup in `MsFeatureSystemOA.TypesOC` if the target struct-type
-      already exists; otherwise leaves TypeRA for the post-loop tail
-      (`_run_complex_feature_type_ra_pass`, issue #37), because
-      FEATURE_STRUCT_TYPES dispatches AFTER this category.
+      (falling back to `_copy_multistrings_ws_mapped`). Never writes
+      TypeRA: the post-loop tail (`_run_complex_feature_type_ra_pass`,
+      issue #37) is its ONLY writer, even when the target struct-type
+      already exists (issue #110 -- a second writer here made the tail see
+      ALREADY_WIRED, so Move reported fewer writes than Preview's Wire rows).
       No ValuesOC loop -- complex features have no symbolic values.
     - "FsOpenFeature": documented clean skip (Skip(NEEDS_MANUAL)) -- open
       features have no closed value set to sync; no crash, no orphan.
@@ -1805,30 +1805,12 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                     src_feat_typed, new_feat, ("Name", "Abbreviation", "Description"),
                     source=source, target=target, ws_map=ws_map)
 
-            # Wire TypeRA by GUID if the target struct-type already exists.
-            # FEATURE_STRUCT_TYPES dispatches AFTER this category, so in a
-            # single run the type is usually not there yet: leave TypeRA for
-            # the post-loop tail (issue #37), which wires it once every owner
-            # object exists and also repairs a feature left null by an earlier
-            # run.
-            src_type_ra = getattr(src_feat_typed, "TypeRA", None)
-            if src_type_ra is not None:
-                src_type_guid = _guid_str_from(src_type_ra)
-                wired = False
-                for tgt_type in getattr(feature_system, "TypesOC", ()) or ():
-                    if _guid_str_from(tgt_type) == src_type_guid:
-                        new_feat.TypeRA = tgt_type
-                        wired = True
-                        break
-                if not wired:
-                    import logging as _logging
-                    _logging.getLogger("gramtrans.Lib.categories").info(
-                        "inflection_features_execute_action: complex feature "
-                        "%s references struct-type %s not (yet) present in "
-                        "target MsFeatureSystemOA.TypesOC -- TypeRA deferred "
-                        "to the post-loop TypeRA tail pass", src_guid,
-                        src_type_guid,
-                    )
+            # TypeRA is NOT written here (issue #110). The post-loop tail
+            # (`transfer._ensure_complex_feature_type_ra`, issue #37) is its
+            # one writer and one count: it runs after every Move, wires the
+            # edge Preview recorded for this feature, and is what Preview's
+            # "Wire" rows count. Wiring here too when the struct-type already
+            # existed made the tail see ALREADY_WIRED and under-report.
 
             # NO ValuesOC loop -- complex features have no symbolic values.
             apply_carrier_b(new_feat, ws, tag)
@@ -2703,9 +2685,9 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
 # Deep-copy MsFeatureSystemOA.TypesOC (IFsFeatStrucType) from source to
 # target, GUID-preserved, then wire FeaturesRS by resolving each source
 # member IFsFeatDefn GUID against the target's MsFeatureSystemOA.FeaturesOC
-# (populated earlier in the same run by INFLECTION_FEATURES -- see the
-# TypeRA-wiring comment in inflection_features_execute_action, which
-# documents the reverse cross-sub-part dependency).
+# (populated earlier in the same run by INFLECTION_FEATURES -- the reverse
+# cross-sub-part dependency, complex-feature TypeRA, is wired by the
+# post-loop tail; see "complex-feature TypeRA tail wiring (issue #37)").
 #
 # Not GOLD_RESERVED (MULTI_INSTANCE, default UPDATE) -- unlike the sibling
 # PHON_FEAT_TYPES category (PhFeatureSystemOA.TypesOC), which is a later,
@@ -2723,7 +2705,7 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
 # FeaturesRS.Add() is guarded per-member: a member whose GUID has no target
 # counterpart in FeaturesOC is logged and skipped, never crashing the whole
 # type's transfer (partial wiring tolerated, matching the sibling
-# TypeRA-absent degrade-gracefully posture in inflection_features).
+# TypeRA tail's report-and-continue posture for a missing struct-type).
 
 def feature_struct_types_enumerate_source(context: RunContext, selection: Selection):
     """Yield each IFsFeatStrucType from source MsFeatureSystemOA.TypesOC."""

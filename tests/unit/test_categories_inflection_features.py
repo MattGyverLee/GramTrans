@@ -579,8 +579,12 @@ def _patch_lcm_b1(monkeypatch):
 
 def test_execute_action_complex_feature_creates_object_not_skipped(_patch_lcm_b1) -> None:
     """(a) FsComplexFeature -> feature IS created, not routed to the
-    Skip(UNSUPPORTED_LCM_TYPE) refusal. TypeRA wired when the target
-    struct-type is resolvable by GUID."""
+    Skip(UNSUPPORTED_LCM_TYPE) refusal.
+
+    Issue #110: the create path leaves TypeRA unset EVEN WHEN the target
+    struct-type already exists. The post-loop tail
+    (`_run_complex_feature_type_ra_pass`) is TypeRA's only writer, so its
+    write count is the one Preview's "Wire" rows promise."""
     fake_lcm = _patch_lcm_b1
     src_type = _FakeFeatStrucTypeB1(guid=_TYPE_GUID_B1)
     src_feat = _FakeComplexFeatureB1(guid=_FEAT_GUID_B1, type_ra=src_type)
@@ -602,7 +606,53 @@ def test_execute_action_complex_feature_creates_object_not_skipped(_patch_lcm_b1
     assert result is new_complex_feat, "complex feature was not created"
     assert ctx._exec_skips == [], "complex feature must not be reported as a skip"
     assert complex_factory.create_calls, "IFsComplexFeatureFactory.Create was not called"
-    assert result.TypeRA is tgt_type, "TypeRA not wired to matching target struct-type"
+    assert result.TypeRA is None, (
+        "create path must not write TypeRA (issue #110: the tail owns it)")
+
+
+def test_preexisting_struct_type_move_writes_equal_preview_wire_rows(_patch_lcm_b1) -> None:
+    """Issue #110 acceptance: the target ALREADY holds the struct-type, the
+    complex feature is created this run. Preview shows one "Wire" row; Move's
+    reported TypeRA write count (`_complex_type_ra_writes`) must equal it,
+    and the feature ends up wired to the matching type."""
+    from types import SimpleNamespace
+
+    from gramtrans.Lib import preview
+
+    fake_lcm = _patch_lcm_b1
+    src_type = _FakeFeatStrucTypeB1(guid=_TYPE_GUID_B1)
+    src_feat = _FakeComplexFeatureB1(guid=_FEAT_GUID_B1, type_ra=src_type)
+
+    tgt_type = _FakeFeatStrucTypeB1(guid=_TYPE_GUID_B1)
+    feat_sys = _FakeFeatureSystemB1(types_oc=[tgt_type])  # type pre-exists
+    new_complex_feat = _FakeNewComplexFeatB1()
+    new_complex_feat.guid = _FEAT_GUID_B1
+    new_complex_feat.ClassName = "FsComplexFeature"
+    complex_factory = _FakeFactoryB1(new_complex_feat)
+    sl = _FakeServiceLocatorB1({id(fake_lcm.IFsComplexFeatureFactory): complex_factory})
+    tgt_proj = _FakeTgtProjectB1(feat_sys, sl)
+    ctx = _ctx_b1(_FakeSrcProjectB1(src_feat), tgt_proj)
+    refs = {_FEAT_GUID_B1: _TYPE_GUID_B1}
+    object.__setattr__(ctx, "_complex_feature_type_refs", dict(refs))
+
+    # Preview, against the target BEFORE Move writes.
+    action = _action_b1(_FEAT_GUID_B1)
+    plan = SimpleNamespace(
+        context=SimpleNamespace(target_handle=tgt_proj), actions=(action,),
+        complex_feature_type_refs=dict(refs))
+    lines = preview.render_complex_feature_type_refs(plan)
+    wire_rows = [ln for ln in lines if ln.strip().startswith("Wire")]
+    assert len(wire_rows) == 1
+
+    # Move: the leaf create, then the post-loop tail.
+    result = categories.inflection_features_execute_action(
+        action, ctx, WSMapping(), tag=None)
+    assert result is new_complex_feat
+    skips = categories._run_complex_feature_type_ra_pass(ctx, tgt_proj)
+
+    assert skips == []
+    assert ctx._complex_type_ra_writes == len(wire_rows) == 1
+    assert new_complex_feat.TypeRA is tgt_type
 
 
 def test_execute_action_complex_feature_type_ra_absent_degrades_gracefully(_patch_lcm_b1) -> None:
