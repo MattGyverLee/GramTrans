@@ -29,8 +29,7 @@ from gramtrans.Lib.preview import (
 )
 
 TH, AP = "ThesaurusItemsRC", "AppendixesRC"
-FOOTER = ("    (Later references to an item created earlier in this run show "
-          "as create; Move links them.)")
+STALE_NOTE = "Later references to an item created earlier"
 
 
 def _plan(records):
@@ -85,10 +84,10 @@ def test_create_rows_over_cap_are_capped_with_an_explicit_count():
                     f"({CAP + k} total)"]
     shown, omitted = len(create), int(re.search(r"and (\d+) more", more[0])[1])
     assert shown + omitted == CAP + k
-    # The footer survives the cap.
-    assert lines[-1] == FOOTER
-    # Bounded: header + cap rows + more-line + footer.
-    assert len(lines) == CAP + 3
+    # The stale "later references show as create" note is gone.
+    assert not any(STALE_NOTE in ln for ln in lines)
+    # Bounded: header + cap rows + more-line.
+    assert len(lines) == CAP + 2
 
 
 def test_exactly_cap_rows_render_byte_identical_to_uncapped():
@@ -105,7 +104,7 @@ def test_dropped_rows_over_cap_point_at_the_dropped_items_list():
     assert _more(lines) == [
         f"    ... and 2 more Not transferred rows not shown here "
         f"({CAP + 2} total; the dropped-items list names every one)"]
-    assert FOOTER not in lines  # no create -> no footer
+    assert not any(STALE_NOTE in ln for ln in lines)
 
 
 def test_update_rows_over_cap_are_capped():
@@ -125,10 +124,8 @@ def test_link_rows_over_cap_collapse_to_one_count_line_per_field():
     lines = render_sense_list_reference_decisions(_plan(recs))
     assert not [ln for ln in lines if ln.startswith("    Link  ") and "{" in ln]
     assert lines[1:] == (
-        f"    Link  {AP}: 20 items already in the target  (3 senses) -- "
-        f"itemized list collapsed above {CAP} rows",
-        f"    Link  {TH}: {CAP} items already in the target  ({CAP} senses) "
-        f"-- itemized list collapsed above {CAP} rows",
+        f"    Link  {AP}: 20 items already in the target  (3 senses)",
+        f"    Link  {TH}: {CAP} items already in the target  ({CAP} senses)",
     )
 
 
@@ -136,7 +133,7 @@ def test_link_rows_at_or_under_cap_stay_itemized():
     lines = render_sense_list_reference_decisions(
         _plan(_items("ap", CAP, AP, ReferenceAction.LINK)))
     assert len([ln for ln in lines if ln.startswith(f"    Link  {AP} '")]) == CAP
-    assert not any("collapsed" in ln for ln in lines)
+    assert not any("already in the target" in ln for ln in lines)
 
 
 def test_link_flood_never_crowds_out_create_or_drop_rows():
@@ -150,10 +147,9 @@ def test_link_flood_never_crowds_out_create_or_drop_rows():
         f"    Create  {TH} 'new1' {{new1}}  (1 sense)",
         f"    Create  {TH} 'new2' {{new2}}  (1 sense)",
         f"    Link  {TH}: {CAP + 5} items already in the target  "
-        f"({CAP + 5} senses) -- itemized list collapsed above {CAP} rows",
+        f"({CAP + 5} senses)",
         f"    Not transferred  {AP} 'gone' {{gone}}  (1 sense) -- see "
         "dropped items for the reason",
-        FOOTER,
     )
     assert set(lines) <= set(render_preview_extra_lines(_plan(recs)))
 
@@ -165,7 +161,7 @@ def test_large_lexicon_output_is_bounded():
             + _items("l", n, AP, ReferenceAction.LINK)
             + _items("d", n, AP, ReferenceAction.REPORT_DROPPED))
     lines = render_sense_list_reference_decisions(_plan(recs))
-    # header + 3 x (cap + more) + 1 collapsed link line + footer
-    assert len(lines) == 1 + 3 * (CAP + 1) + 1 + 1
+    # header + 3 x (cap + more) + 1 collapsed link line
+    assert len(lines) == 1 + 3 * (CAP + 1) + 1
     omitted = sum(int(re.search(r"and (\d+) more", ln)[1]) for ln in _more(lines))
     assert omitted == 3 * (n - CAP)

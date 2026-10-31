@@ -71,6 +71,12 @@ def _link(item):
                              target_item=object())
 
 
+def _planned_link(item):
+    """The post-#146 shape: a LINK to an item this run creates has no target."""
+    return ReferenceDecision(action=ReferenceAction.LINK, source_item=item,
+                             target_item=None, planned=True)
+
+
 def _update(item):
     return ReferenceDecision(action=ReferenceAction.UPDATE, source_item=item,
                              target_item=object())
@@ -131,16 +137,29 @@ def test_reversal_pos_create_link_update_dropped_each_rendered():
 
 
 def test_reversal_pos_recurses_sub_entries_and_aggregates():
+    """Real post-#146 shape: ONE Create plus planned Links across sub-entries."""
     noun = _poss("p-new", "Noun")
     tree = _rev("top", _create(noun), subs=[
-        _rev("sub", _create(noun), subs=[_rev("subsub", _create(noun))])])
+        _rev("sub", _planned_link(noun),
+             subs=[_rev("subsub", _planned_link(noun))])])
     lines = render(_plan(reversal_decisions=[tree]))
-    assert "    Create  'Noun' {p-new}  (3 reversal entrys)" not in lines
-    assert "    Create  'Noun' {p-new}  (3 reversal entrys)".replace("entrys", "entrys") \
-        not in lines
-    assert any(ln.startswith("    Create  'Noun' {p-new}  (3 ") for ln in lines), lines
-    # Created once by Move (shared resolver cache); the note says so.
-    assert "    (Created once; the other references link to it.)" in lines
+    assert "    Create  'Noun' {p-new}  (1 reversal entry)" in lines
+    assert ("    Link  'Noun' {p-new}  (2 reversal entries)"
+            + preview.PLANNED_LINK_ROW_SUFFIX) in lines
+    assert preview.REVERSAL_TEXT_NEW_IN_RUN_NOTE in lines
+
+
+def test_reversal_create_without_planned_links_has_no_new_in_run_note():
+    lines = render(_plan(reversal_decisions=[_rev("e1", _create(_poss("p", "N")))]))
+    assert preview.REVERSAL_TEXT_NEW_IN_RUN_NOTE not in lines
+
+
+def test_reversal_existing_link_has_no_planned_label_or_note():
+    lines = render(_plan(reversal_decisions=[
+        _rev("e1", _link(_poss("p", "Verb")))]))
+    assert "    Link  'Verb' {p}  (1 reversal entry)" in lines
+    assert not any(preview.PLANNED_LINK_ROW_SUFFIX in ln for ln in lines)
+    assert preview.REVERSAL_TEXT_NEW_IN_RUN_NOTE not in lines
 
 
 def test_reversal_pos_create_names_its_ancestor_chain():

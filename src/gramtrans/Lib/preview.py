@@ -2075,6 +2075,20 @@ _SENSE_LIST_REF_LABELS = (
 # (`_capped_rows`); nothing is dropped silently.
 SENSE_LIST_REF_ROW_CAP = 25
 
+# Issue #146 follow-up (domain ruling A, wording approved): a LINK whose item
+# THIS RUN creates (`planned`) must not read like a LINK to an item already
+# in the target. All user-visible strings for that distinction live here.
+PLANNED_LINK_ROW_SUFFIX = " -- links to the item created above in this run"
+SENSE_LIST_LINK_EXISTING_LINE = (
+    "    {label}  {field}: {n} item{n_s} already in the target  "
+    "({m} sense{m_s})")
+SENSE_LIST_LINK_PLANNED_LINE = (
+    "    {label}  {field}: {n} item{n_s} created by this run, linked from "
+    "later references  ({m} sense{m_s})")
+REVERSAL_TEXT_NEW_IN_RUN_NOTE = (
+    "    (New in this run: created once, and the other references link to "
+    "it.)")
+
 
 def _capped_rows(lines, cap: int, noun: str, indent: str = "    ",
                  suffix: str = "") -> List[str]:
@@ -2117,8 +2131,9 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
     while they fit under the cap -- so a small run still shows which shared
     appendixes it links -- and above it collapse to one count line per field.
 
-    Note: later references to an item created earlier in this run show as
-    create; Move links them."""
+    A LINK to an item this run creates (`planned`) is labelled as such, and
+    counted on its own collapse line, so it never reads as already in the
+    target."""
     rows: dict = {}
     for action in getattr(plan, "actions", ()) or ():
         for d in getattr(action, "reference_decisions", ()) or ():
@@ -2132,26 +2147,33 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
                     "name": d.item_name,
                     "ancestors": tuple(getattr(d, "new_ancestors", ()) or ()),
                     "owners": set(),
+                    "planned": False,
                 }
             row["owners"].add(d.owner_guid)
+            row["planned"] = row["planned"] or bool(getattr(d, "planned", False))
     if not rows:
         return ()
     lines: List[str] = ["  Sense appendix / thesaurus references:"]
     for act, label in _SENSE_LIST_REF_LABELS:
         keys = sorted(k for k in rows if k[1] == act)
         if act == "link" and len(keys) > SENSE_LIST_REF_ROW_CAP:
-            # Issue #147: collapse to one count line per field.
+            # Issue #147: collapse to one count line per field. Items this
+            # run creates (planned) are counted on their own line so they are
+            # never read as items already in the target.
             for field in _SENSE_LIST_REF_FIELDS:
-                fkeys = [k for k in keys if k[0] == field]
-                if not fkeys:
-                    continue
-                owners = set().union(*(rows[k]["owners"] for k in fkeys))
-                n, m = len(fkeys), len(owners)
-                lines.append(
-                    f"    {label}  {field}: {n} item{'s' if n != 1 else ''}"
-                    f" already in the target  ({m} sense"
-                    f"{'s' if m != 1 else ''}) -- itemized list collapsed "
-                    f"above {SENSE_LIST_REF_ROW_CAP} rows")
+                for planned, template in (
+                        (False, SENSE_LIST_LINK_EXISTING_LINE),
+                        (True, SENSE_LIST_LINK_PLANNED_LINE)):
+                    fkeys = [k for k in keys if k[0] == field
+                             and rows[k]["planned"] == planned]
+                    if not fkeys:
+                        continue
+                    owners = set().union(*(rows[k]["owners"] for k in fkeys))
+                    n, m = len(fkeys), len(owners)
+                    lines.append(template.format(
+                        label=label, field=field, n=n,
+                        n_s="s" if n != 1 else "", m=m,
+                        m_s="s" if m != 1 else ""))
             continue
         kind_lines: List[str] = []
         for (field, a, guid) in keys:
@@ -2162,6 +2184,8 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
             if row["ancestors"]:
                 line += " -- also creates ancestor(s) " + ", ".join(
                     f"'{name}' {{{g}}}" for name, g in row["ancestors"])
+            if act == "link" and row["planned"]:
+                line += PLANNED_LINK_ROW_SUFFIX
             if act == "report_dropped":
                 line += " -- see dropped items for the reason"
             kind_lines.append(line)
@@ -2169,9 +2193,6 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
             kind_lines, SENSE_LIST_REF_ROW_CAP, f"{label} rows",
             suffix=("; the dropped-items list names every one"
                     if act == "report_dropped" else "")))
-    if any(k[1] == "create" for k in rows):
-        lines.append("    (Later references to an item created earlier in this "
-                     "run show as create; Move links them.)")
     return tuple(lines)
 
 
@@ -2220,8 +2241,10 @@ def _ref_decision_rows(decisions) -> dict:
                 "name": name,
                 "ancestors": tuple(_references._item_label(a) for a in chain),
                 "count": 0,
+                "planned": False,
             }
         row["count"] += 1
+        row["planned"] = row["planned"] or bool(getattr(d, "planned", False))
     return rows
 
 
@@ -2241,6 +2264,8 @@ def _render_ref_decision_section(title: str, rows: dict, unit: str,
             if act == "create" and row["ancestors"]:
                 line += (" -- under " + " > ".join(f"'{a}'" for a in row["ancestors"])
                          + " (created too if absent)")
+            if act == "link" and row["planned"]:
+                line += PLANNED_LINK_ROW_SUFFIX
             if act == "report_dropped":
                 line += " -- see dropped items for the reason"
             body.append(line)
@@ -2248,8 +2273,11 @@ def _render_ref_decision_section(title: str, rows: dict, unit: str,
         extra = len(body) - SENSE_LIST_REF_ROW_CAP
         body = body[:SENSE_LIST_REF_ROW_CAP] + [f"    +{extra} more"]
     lines = [f"  {title}:"] + body
-    if any(k[0] == "create" and rows[k]["count"] > 1 for k in rows):
-        lines.append("    (Created once; the other references link to it.)")
+    # A Create row with planned Link rows for the same GUID: Move creates the
+    # item once and the other references link to it.
+    planned_guids = {k[1] for k in rows if k[0] == "link" and rows[k]["planned"]}
+    if any(k[0] == "create" and k[1] in planned_guids for k in rows):
+        lines.append(REVERSAL_TEXT_NEW_IN_RUN_NOTE)
     return lines
 
 

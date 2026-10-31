@@ -201,9 +201,8 @@ def test_preview_pane_caps_and_collapses_with_exact_counts(live):
             % (EXTRA_CREATE, cap + EXTRA_CREATE)) in lines
     link = [ln for ln in lines if ln.startswith("    Link  ")]
     assert link == [
-        "    Link  AppendixesRC: %d items already in the target  (%d senses) "
-        "-- itemized list collapsed above %d rows"
-        % (cap + EXTRA_LINK, N_SENSES, cap)], link
+        "    Link  AppendixesRC: %d items already in the target  (%d senses)"
+        % (cap + EXTRA_LINK, N_SENSES)], link
     drop = [ln for ln in lines if ln.startswith("    Not transferred  AppendixesRC '")]
     assert len(drop) == N_DROP
     assert all(re.search(r"\{(%s)\}" % "|".join(fx["absent"]), ln) for ln in drop)
