@@ -257,3 +257,29 @@ def test_move2_is_idempotent_on_slot_membership(live):
 
 def test_source_is_unchanged(live):
     assert live["sha_after"] == live["sha_before"]
+
+
+#: Issue #107: the owned collections a 0-action re-run used to fill.
+_ISSUE107_FIELDS = ("AffixSlotsOC", "AffixTemplatesOS", "ReferenceFormsOC")
+
+
+def _issue107_additions(records):
+    return [(e.label, c.canonical_field_name, c.added)
+            for e in records for c in e.collections
+            if c.canonical_field_name in _ISSUE107_FIELDS and c.added]
+
+
+def test_move2_creates_no_slot_or_template_objects(live):
+    """Issue #107 (supersedes the "Deliberately NOT asserted" note above).
+
+    A POS that Move 1 CREATED used to arrive without its owned collections;
+    Move 2 -- planning 0 actions -- then found it present by GUID and its
+    UPDATE enrichment created the missing MoInflAffixSlot /
+    MoInflAffixTemplate / FsFeatStruc objects. The create path now fills them
+    in Move 1, so Move 2 must neither PLAN nor PERFORM any addition there.
+    """
+    planned = [ow.enrichment for ow in live["plan2"].overwrites
+               if getattr(ow, "enrichment", None) is not None]
+    assert _issue107_additions(planned) == [], "Move 2 planned additions"
+    assert _issue107_additions(live["report2"].enrichments) == [], (
+        "Move 2 created slot/template/feature-structure objects")

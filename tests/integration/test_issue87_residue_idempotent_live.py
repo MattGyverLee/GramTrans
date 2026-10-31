@@ -10,11 +10,10 @@ Run:
         tests/integration/test_issue87_residue_idempotent_live.py -v -s
 
 Scenario: POS + GRAM_CATEGORIES + 4 picked Texts, transferred twice into the
-restored Target.  Run 2 plans 0 actions.  The Target.fwdata snapshots taken
-after run 1 and run 2 are compared OBJECT BY OBJECT:
+restored Target (or ``GT_ISSUE87_TARGET``).  Run 2 plans 0 actions.  The
+.fwdata snapshots taken after run 1 and run 2 are compared OBJECT BY OBJECT:
 
-  * no object that existed after run 1 may change, except the explicitly
-    excluded separate defect below;
+  * no object may be created, deleted or changed by run 2 (#107);
   * in particular no object's `[GT-Tag]` lines may change (the #87 symptom: 11
     PartOfSpeech + 4 Text objects gained/replaced a tag line on main).
 
@@ -23,16 +22,17 @@ This test FAILS on main (d9f55c9) -- and also on current main 3a86bb0
 untitled-text gate, its scenario actually exercises Carrier-B POS objects and
 matched titled Texts.
 
-EXCLUDED (separate defect, not #87 -- see ISSUE_REF below: run 2 with 0 planned
-actions still creates MoInflAffixSlot/MoInflAffixTemplate objects):
-  * NEW objects of class MoInflAffixSlot / MoInflAffixTemplate / FsFeatStruc
-    (run 2 adds ~47 FsFeatStruc under POS `ReferenceForms`);
-  * on PartOfSpeech, ONLY the `<objsur guid="X"/>` entries inside
-    `<AffixSlots>` / `<AffixTemplates>` / `<ReferenceForms>` where X is such a
-    NEW object (a wrapper left empty is dropped).  Any other change inside those
-    blocks fails the test.
-Nothing else is excluded (MoInflAffMsa and pre-existing FsFeatStruc changes
-are compared like any other object).
+Issue #107: run 2 must also create and change NOTHING else.  Before #107 this
+test excluded the MoInflAffixSlot / MoInflAffixTemplate / FsFeatStruc objects
+run 2 created (and the POS owner links pointing at them).  Those were not
+duplicates -- they carried their source GUIDs -- but the owned collections of
+every POS that run 1 CREATED, which only the next run's UPDATE enrichment
+filled.  The create path now fills them in the same run, so the exclusions are
+gone: run 2 must leave every object byte-identical.
+
+TARGET override: ``GT_ISSUE87_TARGET`` names a different throwaway project
+(restored from the same backup) so parallel sessions need not share
+``Target``.  It defaults to ``Target``.
 """
 from __future__ import annotations
 
@@ -52,8 +52,11 @@ if os.environ.get("FLEXLIBS_REQUIRE_LIVE") != "1":
                 allow_module_level=True)
 
 SOURCE_NAME = "Mbugwe LizzieHC practice"   # READ-ONLY, exact spelling
-TARGET_NAME = "Target"                     # the ONLY project this module writes
-TARGET_PATH = "C:/ProgramData/SIL/FieldWorks/Projects/Target/Target.fwdata"
+# The ONLY project this module writes (a throwaway, restored before and after).
+TARGET_NAME = os.environ.get("GT_ISSUE87_TARGET", "Target")
+TARGET_PATH = "C:/ProgramData/SIL/FieldWorks/Projects/%s/%s.fwdata" % (
+    TARGET_NAME, TARGET_NAME)
+assert TARGET_NAME not in ("Esperanto", SOURCE_NAME), TARGET_NAME
 BACKUP_NAME = "Target 2026-07-06 0218.fwbackup"
 N_TEXTS = 4
 
@@ -61,16 +64,8 @@ _REPO = Path(__file__).resolve().parents[2]
 _BACKUP_DIRS = (_REPO / "backups", Path("D:/Github/_Projects/_LEX/GramTrans/backups"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Not filed yet; the number is added later as a docstring-only edit.
-ISSUE_REF = ("cycle-3 draft issue (specs/_reviews/batch-1-87/"
-             "cycle3-draft-issue-slot-template-idempotency.md)")
-# Separate template/slot idempotency defect (see module docstring).
-EXCLUDED_NEW_CLASSES = frozenset(
-    {"MoInflAffixSlot", "MoInflAffixTemplate", "FsFeatStruc"})
-_OWNER_LINK_BLOCKS = re.compile(
-    r"[ \t]*<(AffixSlots|AffixTemplates|ReferenceForms)>(.*?)</\1>[ \t]*\n?",
-    re.DOTALL)
-_OBJSUR = re.compile(r'[ \t]*<objsur\b[^>]*\bguid="([^"]+)"[^>]*/>[ \t]*\n?')
+# Slot/template/FsFeatStruc re-creation on a 0-action re-run (fixed).
+ISSUE_REF = "#107"
 _TAG_LINE = re.compile(r"\[GT-Tag\]: GT\|[^\r\n<]*")
 
 
@@ -120,26 +115,6 @@ def _load_objects(path):
     return out
 
 
-def _normalise(cls, xml, drop_guids=frozenset()):
-    """For PartOfSpeech only: drop `<objsur>` entries pointing at `drop_guids`
-    (NEW excluded-class objects) from the three owner-link wrappers, then drop
-    any wrapper left empty.  Everything else is compared verbatim."""
-    if cls != "PartOfSpeech" or not drop_guids:
-        return xml
-
-    return _OWNER_LINK_BLOCKS.sub(
-        lambda m: _rebuild(m, drop_guids), xml)
-
-
-def _rebuild(m, drop_guids):
-    inner = _OBJSUR.sub(
-        lambda o: "" if o.group(1).lower() in drop_guids else o.group(0),
-        m.group(2))
-    if not inner.strip():
-        return ""
-    return m.group(0).replace(m.group(2), inner, 1)
-
-
 @pytest.fixture(autouse=True)
 def _restore_around():
     _restore()
@@ -171,8 +146,11 @@ def test_rerun_leaves_objects_it_did_not_create_or_change_untouched():
             shutil.copyfile(TARGET_PATH, dst)
             snaps.append(_load_objects(dst))
         run1, run2 = snaps
+        import flexicon
         import gramtrans
         print("[LIVE] gramtrans=%s" % gramtrans.__file__)
+        print("[LIVE] flexicon=%s" % flexicon.__file__)
+        print("[LIVE] target=%s" % TARGET_NAME)
         print("[LIVE] run1 actions=%d run2 actions=%d" % (
             len(plans[0].actions), len(plans[1].actions)))
 
@@ -193,25 +171,16 @@ def test_rerun_leaves_objects_it_did_not_create_or_change_untouched():
             "run 2 re-stamped objects it did not create/change: %s" % [
                 (c, g[:8]) for c, g in tag_changes])
 
-        # (2) Nothing new except the excluded separate defect.
-        new_other = [(run2[g][0], g) for g in run2 if g not in run1
-                     and run2[g][0] not in EXCLUDED_NEW_CLASSES]
-        assert not new_other, "run 2 created unexpected objects: %s" % new_other[:10]
+        # (2) Nothing new, nothing deleted (#107: no exclusions).
+        new = [(run2[g][0], g[:8]) for g in run2 if g not in run1]
+        assert not new, "run 2 created objects (%s): %s" % (ISSUE_REF, new[:10])
         assert not [g for g in run1 if g not in run2], "run 2 deleted objects"
 
-        # (3) No field change on any pre-existing object (only owner links that
-        #     point at NEW excluded-class objects are tolerated, on POS).
-        new_excluded = frozenset(
-            g for g in run2 if g not in run1 and run2[g][0] in EXCLUDED_NEW_CLASSES)
-        changed = []
-        for g, (cls, x1) in run1.items():
-            if g not in run2:
-                continue
-            if (_normalise(cls, x1, new_excluded)
-                    != _normalise(cls, run2[g][1], new_excluded)):
-                changed.append((cls, g))
+        # (3) No field change on any pre-existing object.
+        changed = [(cls, g[:8]) for g, (cls, x1) in run1.items()
+                   if g in run2 and x1 != run2[g][1]]
         assert not changed, (
-            "run 2 changed objects it did not create/update: %s" % [
-                (c, g[:8]) for c, g in changed[:20]])
+            "run 2 changed objects it did not create/update (%s): %s" % (
+                ISSUE_REF, changed[:20]))
     finally:
         shutil.rmtree(snapdir, ignore_errors=True)

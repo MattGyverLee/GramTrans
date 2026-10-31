@@ -799,6 +799,26 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                         detail=_result.reason,
                     ))
                 continue
+            # Issue #107: a POS created here gets its owned collections NOW,
+            # not on the next run. Own try: a fill failure must not turn the
+            # (successful) POS create into a leaf failure.
+            try:
+                _fill_created_pos_collections(
+                    action, _result, source, target, report_sink,
+                    ws_map=ws_map, dropped=_dropped,
+                    planned_action_guids=_planned_action_guids,
+                )
+            except Exception as _fill_exc:  # noqa: BLE001 -- LCM/COM failures are wide
+                _log.exception(
+                    "execute leaf-dispatch: created-POS collection fill FAILED "
+                    "category=%s guid=%s", action.category.value,
+                    action.source_guid,
+                )
+                report_sink.Warning(
+                    f"  [{action.category.value}] created-POS owned-collection"
+                    f" fill raised {type(_fill_exc).__name__}: {_fill_exc}"
+                    f"  guid={action.source_guid[:8]}"
+                )
             leaf_count += 1
             leaf_succeeded += 1
             # Issue #49/#68: with no planned destination the expected GUID is
@@ -3336,6 +3356,85 @@ def _enrich_owned_collections(overwrite, src_obj, tgt_obj, source, target,
         f" (add-only)  guid={src_guid[:8]}  {counts}"
     )
     return measured
+
+
+def _fill_created_pos_collections(action, created, source, target, report_sink,
+                                  ws_map=None, dropped=None,
+                                  planned_action_guids=frozenset()):
+    """Give a POS this run just CREATED its seven owned collections (#107).
+
+    `gram_categories_execute_action` creates the POS and copies its scalars;
+    it never touched AffixSlotsOC / AffixTemplatesOS / ReferenceFormsOC / ...
+    Only the UPDATE path (`_enrich_owned_collections`) filled those, and only
+    for a POS the target ALREADY held. So run 1 left every created POS a
+    shell, and run 2 -- planning 0 actions -- found it present by GUID and
+    filled it then (measured: Mbugwe LizzieHC practice -> restored Target,
+    10 slots, 7 templates, 47 FsFeatStruc on run 2; run 3 clean). The
+    transfer converged on the second run instead of the first.
+
+    This runs the SAME per-collection writer (`_enrich_one_collection`: same
+    GUID-then-roster matcher, same GUID-preserving create, same deferral of a
+    child that has its own PlannedAction) right after the create, inside the
+    leaf loop -- i.e. before SLOTS / AFFIX_TEMPLATES / the 17.1 sub-pass need
+    those slots and templates to exist.
+
+    No `EnrichmentRecord` is produced: FR-022 reserves that record for an
+    object that already existed (`was_created=True` is refused), and the
+    children here are part of the create. Drops still reach `dropped`.
+
+    Returns the per-collection rows that did something, or None when `action`
+    is not a POS create or `created` is not a created object.
+    """
+    if action.category not in _ENRICHMENT_CATEGORIES:
+        return None
+    if created is None or isinstance(created, ActionOutcome):
+        return None
+    cats = _categories_mod()
+    if __package__:
+        from .models import POS_OWNED_COLLECTION_FIELDS
+    else:
+        from models import POS_OWNED_COLLECTION_FIELDS  # type: ignore
+
+    src_guid = (action.source_guid or "").lower()
+    src_obj = None
+    try:
+        for pos in source.POS.GetAll(recursive=True):
+            if (cats._guid_str_from(pos) or "").lower() == src_guid:
+                src_obj = pos
+                break
+    except Exception:  # noqa: BLE001 -- an unreadable source is reported below
+        src_obj = None
+    if src_obj is None:
+        report_sink.Warning(
+            f"  [{action.category.value}] created POS: source object not found,"
+            f" owned collections NOT filled  guid={src_guid[:8]}"
+        )
+        return None
+
+    specs = _enrichment_specs()
+    ws_handles = cats._matcher.ws_handles_for(target)
+    source_ws_handles = cats._matcher.ws_handles_for(source)
+    src_inner = cats._unwrap_lcm(src_obj)
+    tgt_inner = cats._unwrap_lcm(created)
+    rows = []
+    for field_name in POS_OWNED_COLLECTION_FIELDS:
+        row, drops = _enrich_one_collection(
+            field_name, specs.get(field_name), src_inner, tgt_inner,
+            source, target, report_sink, src_guid, ws_map, ws_handles,
+            source_ws_handles, planned_action_guids,
+        )
+        if dropped is not None:
+            dropped.extend(drops)
+        if row.added or row.dropped:
+            rows.append(row)
+    if rows:
+        report_sink.Info(
+            f"  [{action.category.value}] created POS: owned collections"
+            f" filled  guid={src_guid[:8]}  " + " | ".join(
+                f"{c.field_name}: added={c.added} dropped={c.dropped}"
+                for c in rows)
+        )
+    return rows
 
 
 def _execute_update_semantic(overwrite, source, target, report_sink, tag: ImportResidueTag,
