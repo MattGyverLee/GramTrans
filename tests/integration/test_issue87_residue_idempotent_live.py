@@ -1,7 +1,8 @@
 """Issue #87 live gate -- a re-run must not re-stamp or touch objects it did
 not create or change.
 
-WRITE PATH: writes ONLY the throwaway project ``Target`` (restored headlessly
+WRITE PATH: writes ONLY the throwaway project ``Target`` -- or the one named
+by ``GT_ISSUE87_TARGET``, see below -- (restored headlessly
 from a known backup before and after).  The source ``Mbugwe LizzieHC practice``
 is opened READ-ONLY (exact spelling).  ``Esperanto`` is never touched.
 
