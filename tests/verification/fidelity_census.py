@@ -374,10 +374,10 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         Bucket.DROP_REPORTED,
         "027-complex-forms-variants now CREATES in-closure LexEntryRef "
         "containers via categories._create_entryref_container / "
-        "_run_entryref_create_pass (categories.py:5014/5041, using the raw "
+        "_run_entryref_create_pass (categories.py:12662/12385, using the raw "
         "ILexEntryRefFactory, categories.py:5026-5031) -- COPIED for those. "
         "Any remaining not-reproducible ref is reported via "
-        "categories._report_dropped_entry_refs (categories.py:4435), called "
+        "categories._report_dropped_entry_refs (categories.py:8559), called "
         "from _walk_lex_entry_closure (Move, categories.py:4535+) and "
         "_plan_entry_reference_decisions (Preview) -- one DroppedItemRecord "
         "per un-reproduced LexEntryRef owned by the entry",
@@ -687,72 +687,87 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
     ("LexEntryRef", "ComponentLexemesRS"): Classification(
         Bucket.DROP_REPORTED,
         "SAME emission site as LexEntry.EntryRefsOS: "
-        "categories._report_dropped_entry_refs (categories.py:4435); "
+        "categories._report_dropped_entry_refs (categories.py:8559); "
         "reproducible refs are instead COPIED via "
-        "categories._run_entryref_create_pass (categories.py:5041)",
+        "categories._run_entryref_create_pass (categories.py:12662)",
         note="subsumed by the parent EntryRefsOS row -- "
              "027-complex-forms-variants added the LexEntryRef create site "
-             "(_create_entryref_container, categories.py:5014, using "
+             "(_create_entryref_container, categories.py:12385, using "
              "ILexEntryRefFactory), so this field IS created when its "
              "owning ref is reproducible; a not-reproducible ref's fields "
              "get no separate DroppedItemRecord (subsumed by the one "
-             "emitted for the owning EntryRefsOS row).",
+             "emitted for the owning EntryRefsOS row). Sibling fields "
+             "HideMinorEntry and Summary are COPIED too (issues #114/#128, "
+             "see their rows below). Line numbers refreshed for #128; the "
+             "function names are the stable reference.",
     ),
     ("LexEntryRef", "PrimaryLexemesRS"): Classification(
         Bucket.DROP_REPORTED,
         "SAME emission site as LexEntry.EntryRefsOS: "
-        "categories._report_dropped_entry_refs (categories.py:4435); "
+        "categories._report_dropped_entry_refs (categories.py:8559); "
         "reproducible refs are instead COPIED via "
-        "categories._run_entryref_create_pass (categories.py:5041)",
+        "categories._run_entryref_create_pass (categories.py:12662)",
         note="subsumed by the parent EntryRefsOS row -- "
              "027-complex-forms-variants added the LexEntryRef create site "
-             "(_create_entryref_container, categories.py:5014, using "
+             "(_create_entryref_container, categories.py:12385, using "
              "ILexEntryRefFactory), so this field IS created when its "
              "owning ref is reproducible; a not-reproducible ref's fields "
              "get no separate DroppedItemRecord (subsumed by the one "
-             "emitted for the owning EntryRefsOS row).",
+             "emitted for the owning EntryRefsOS row). Sibling fields "
+             "HideMinorEntry and Summary are COPIED too (issues #114/#128, "
+             "see their rows below). Line numbers refreshed for #128; the "
+             "function names are the stable reference.",
     ),
     ("LexEntryRef", "VariantEntryTypesRS"): Classification(
         Bucket.DROP_REPORTED,
         "SAME emission site as LexEntry.EntryRefsOS: "
-        "categories._report_dropped_entry_refs (categories.py:4435); "
+        "categories._report_dropped_entry_refs (categories.py:8559); "
         "reproducible refs are instead COPIED via "
-        "categories._run_entryref_create_pass (categories.py:5041)",
+        "categories._run_entryref_create_pass (categories.py:12662)",
         note="subsumed by the parent EntryRefsOS row -- "
              "027-complex-forms-variants added the LexEntryRef create site "
-             "(_create_entryref_container, categories.py:5014, using "
+             "(_create_entryref_container, categories.py:12385, using "
              "ILexEntryRefFactory), so this field IS created when its "
              "owning ref is reproducible; a not-reproducible ref's fields "
              "get no separate DroppedItemRecord (subsumed by the one "
-             "emitted for the owning EntryRefsOS row).",
+             "emitted for the owning EntryRefsOS row). Sibling fields "
+             "HideMinorEntry and Summary are COPIED too (issues #114/#128, "
+             "see their rows below). Line numbers refreshed for #128; the "
+             "function names are the stable reference.",
     ),
     ("LexEntryRef", "ComplexEntryTypesRS"): Classification(
         Bucket.DROP_REPORTED,
         "SAME emission site as LexEntry.EntryRefsOS: "
-        "categories._report_dropped_entry_refs (categories.py:4435); "
+        "categories._report_dropped_entry_refs (categories.py:8559); "
         "reproducible refs are instead COPIED via "
-        "categories._run_entryref_create_pass (categories.py:5041)",
+        "categories._run_entryref_create_pass (categories.py:12662)",
         note="subsumed by the parent EntryRefsOS row -- "
              "027-complex-forms-variants added the LexEntryRef create site "
-             "(_create_entryref_container, categories.py:5014, using "
+             "(_create_entryref_container, categories.py:12385, using "
              "ILexEntryRefFactory), so this field IS created when its "
              "owning ref is reproducible; a not-reproducible ref's fields "
              "get no separate DroppedItemRecord (subsumed by the one "
-             "emitted for the owning EntryRefsOS row).",
+             "emitted for the owning EntryRefsOS row). Sibling fields "
+             "HideMinorEntry and Summary are COPIED too (issues #114/#128, "
+             "see their rows below). Line numbers refreshed for #128; the "
+             "function names are the stable reference.",
     ),
     ("LexEntryRef", "ShowComplexFormsInRS"): Classification(
         Bucket.DROP_REPORTED,
         "SAME emission site as LexEntry.EntryRefsOS: "
-        "categories._report_dropped_entry_refs (categories.py:4435); "
+        "categories._report_dropped_entry_refs (categories.py:8559); "
         "reproducible refs are instead COPIED via "
-        "categories._run_entryref_create_pass (categories.py:5041)",
+        "categories._run_entryref_create_pass (categories.py:12662)",
         note="subsumed by the parent EntryRefsOS row -- "
              "027-complex-forms-variants added the LexEntryRef create site "
-             "(_create_entryref_container, categories.py:5014, using "
+             "(_create_entryref_container, categories.py:12385, using "
              "ILexEntryRefFactory), so this field IS created when its "
              "owning ref is reproducible; a not-reproducible ref's fields "
              "get no separate DroppedItemRecord (subsumed by the one "
-             "emitted for the owning EntryRefsOS row).",
+             "emitted for the owning EntryRefsOS row). Sibling fields "
+             "HideMinorEntry and Summary are COPIED too (issues #114/#128, "
+             "see their rows below). Line numbers refreshed for #128; the "
+             "function names are the stable reference.",
     ),
 
     # ---- LexEntryRef VALUE fields (issue #114) -----------------------------
@@ -772,10 +787,14 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
     ("LexEntryRef", "Summary"): Classification(
         Bucket.COPIED,
         "categories._merge_entryref_value_fields (both arms of "
-        "categories._run_entryref_create_pass); stashed as {source_ws_id: "
-        "text} by categories._stash_entry_bindings and written per "
+        "categories._run_entryref_create_pass; also reached on a 0-action "
+        "re-run via transfer._ensure_entryref_passes, #128); stashed as "
+        "{source_ws_id: text} plus live ITsStrings by categories._stash_entry_bindings and written per "
         "ws_map-translated TARGET handle",
         note="issue #114: was never stashed or written (summary text lost). "
+             "Issue #128: copied as a full ITsString -- runs and run "
+             "properties kept, each run's WS translated to the target "
+             "handle (categories._tss_remap_ws_runs). "
              "Per-alternative merge via conflict._merge_delta (#22 Part 1): "
              "empty source never blanks, a target-only alternative is never "
              "touched, a differing alternative is updated. An alternative "

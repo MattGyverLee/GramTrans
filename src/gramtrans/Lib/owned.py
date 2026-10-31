@@ -496,6 +496,25 @@ def _apply_full_sense_reference_fields(owner_class, src_child, new_child, ctx, t
         resolver_cache, dropped, ws_map=ws_map, source=ctx.source_handle,
         owner_guid=owner_guid,
     )
+    # Issue #136: the 030 appendix/thesaurus resolvers and the 029 picture
+    # seam are NOT part of `_apply_reference_fields`; top-level senses get
+    # them from `_walk_lex_entry_closure`, so a sub-sense must get the SAME
+    # three calls here (any depth: this runs once per recursed sub-sense).
+    _categories._resolve_sense_appendixes(
+        src_child, new_child, ctx.target_handle, dropped)
+    _categories._resolve_sense_thesaurus_items(
+        src_child, new_child, ctx.target_handle, resolver_cache, dropped,
+        tag=tag, ws_map=ws_map, source=ctx.source_handle)
+    _categories._report_dropped_sense_scope_gaps(src_child, dropped)
+    try:
+        if __package__:
+            from . import pictures as _pictures
+        else:
+            import pictures as _pictures  # type: ignore
+    except ImportError:  # pragma: no cover
+        return
+    _pictures.reproduce_sense_pictures(
+        src_child, new_child, ctx, tag, resolver_cache, dropped)
 
 
 def _register_copy_set(ctx, guid: str, value) -> None:
@@ -957,10 +976,28 @@ def _plan_full_sense_reference_decisions(owner_class, src_child, ctx, resolver_c
         )
         return ()
     owner_guid = _references._guid_str(src_child)
-    return _categories._decide_reference_fields(
+    records = list(_categories._decide_reference_fields(
         owner_class, owner_guid, src_child, ctx.target_handle, resolver_cache,
         dropped, source=ctx.source_handle,
-    )
+    ))
+    # Issue #136: Preview twin of the three extra calls the Move twin makes
+    # (same calls top-level senses get in `_plan_entry_reference_decisions`).
+    records.extend(_categories._resolve_sense_appendixes(
+        src_child, None, ctx.target_handle, dropped))
+    records.extend(_categories._resolve_sense_thesaurus_items(
+        src_child, None, ctx.target_handle, resolver_cache, dropped,
+        tag=None, ws_map=None, source=ctx.source_handle))
+    _categories._report_dropped_sense_scope_gaps(src_child, dropped)
+    try:
+        if __package__:
+            from . import pictures as _pictures
+        else:
+            import pictures as _pictures  # type: ignore
+    except ImportError:  # pragma: no cover
+        return tuple(records)
+    records.extend(_pictures.plan_sense_picture_decisions(
+        src_child, ctx, resolver_cache, dropped))
+    return tuple(records)
 
 
 def plan_owned_object_decisions(src_owner, ctx, resolver_cache, dropped,

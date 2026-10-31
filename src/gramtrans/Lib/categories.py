@@ -4561,6 +4561,12 @@ def semantic_domains_plan_action(piece, context, ws_mapping):
     )
 
 
+#: Issue #131: the text a created CmSemanticDomain must carry. All three are
+#: declared on `ICmPossibility`; the extra `ICmSemanticDomain`-only fields
+#: (OcmCodes, Questions, ...) are deliberately out of scope here.
+_SEMANTIC_DOMAIN_MULTISTRINGS = ("Name", "Abbreviation", "Description")
+
+
 def semantic_domains_execute_action(action, context, ws_mapping, tag):
     """Create custom semantic domain with GUID preserved.
 
@@ -4659,6 +4665,10 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
                 new_sd, ICmPossibilityList(target_list).PossibilitiesOS,
                 "ICmSemanticDomainFactory", src_guid,
             )
+            _copy_multistrings_ws_mapped(  # issue #131
+                src_obj, new_sd, _SEMANTIC_DOMAIN_MULTISTRINGS,
+                source=source, target=target, ws_map=ws_mapping,
+            )
             apply_carrier_b(new_sd, ws, tag)
             return new_sd
         _safe_add_to_owner(
@@ -4671,6 +4681,13 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
             "ICmSemanticDomainFactory", src_guid,
         )
 
+    # Issue #131: same gap as #114/T127 -- create + owner-add + carrier B
+    # copied NO text, so a created domain arrived nameless. Copy BEFORE
+    # `apply_carrier_b` (the tag line must stay last in Description).
+    _copy_multistrings_ws_mapped(
+        src_obj, new_sd, _SEMANTIC_DOMAIN_MULTISTRINGS,
+        source=source, target=target, ws_map=ws_mapping,
+    )
     apply_carrier_b(new_sd, ws, tag)
     return new_sd
 
@@ -5731,6 +5748,11 @@ def _stash_entry_bindings(entry, context):
                 record["hide_minor_entry"] = int(hide) if hide is not None else None
                 record["summary"] = _multistring_alts_by_ws_id(
                     getattr(ref_typed, "Summary", None), src_ws_ids)
+                # Issue #128: the same alternatives as live ITsStrings (runs
+                # intact) + the source handle->id map their run WS props need.
+                record["summary_tss"] = _multistring_tss_by_ws_id(
+                    getattr(ref_typed, "Summary", None), src_ws_ids)
+                record["summary_src_ws_ids"] = src_ws_ids
                 create_map.setdefault(entry_guid, []).append(record)
 
 
@@ -12459,6 +12481,55 @@ def _multistring_alts_by_ws_id(multistring, ws_id_by_handle):
     return alts
 
 
+def _multistring_tss_by_ws_id(multistring, ws_id_by_handle):
+    """`{ws_id: ITsString}` of every NON-EMPTY alternative of `multistring`
+    -- the live, run-bearing twin of `_multistring_alts_by_ws_id` (issue #128:
+    Summary must keep its run properties, which a text-only copy loses).
+    {} for a None multistring."""
+    out = {}
+    if multistring is None:
+        return out
+    for handle, ws_id in (ws_id_by_handle or {}).items():
+        try:
+            tss = multistring.get_String(handle)
+            if tss is not None and _tss_read_text(tss):
+                out[ws_id] = tss
+        except Exception:  # noqa: BLE001 -- unreadable alt == absent
+            continue
+    return out
+
+
+def _tss_remap_ws_runs(src_tss, tgt_handle, src_id_by_handle, tgt_handle_by_id,
+                       ws_map):
+    """Issue #128: a copy of the ITsString `src_tss` that KEEPS every run and
+    its properties (named style, bold/italic, colour, ...) but is valid in the
+    TARGET project: the WS-carrying int props (`ktptWs`, `ktptBaseWs`) of each
+    run are translated source handle -> WS id -> (`ws_map`) -> target handle.
+    A run whose WS has no target counterpart falls back to `tgt_handle` (the
+    alternative's own target handle), never to a raw source handle.
+
+    Raises on any LCM failure; the caller records a DroppedItemRecord."""
+    from SIL.LCModel.Core.KernelInterfaces import FwTextPropType
+    ws_props = (int(FwTextPropType.ktptWs), int(FwTextPropType.ktptBaseWs))
+    bldr = src_tss.GetBldr()
+    for i in range(int(src_tss.RunCount)):
+        lo = int(src_tss.get_MinOfRun(i))
+        lim = int(src_tss.get_LimOfRun(i))
+        props = src_tss.get_Properties(i)
+        for tpt in ws_props:
+            res = props.GetIntPropValues(tpt, 0)
+            val, var = (res if isinstance(res, tuple) else (res, 0))
+            if int(val) == -1:  # property absent on this run
+                continue
+            src_id = (src_id_by_handle or {}).get(int(val))
+            tgt_id = (ws_map.get(src_id, src_id) if (ws_map and src_id) else src_id)
+            new_handle = tgt_handle_by_id.get(tgt_id) if tgt_id else None
+            bldr.SetIntPropValues(
+                lo, lim, tpt, int(var),
+                int(new_handle if new_handle is not None else tgt_handle))
+    return bldr.GetString()
+
+
 def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
                                  existing=False):
     """Issue #114: write a LexEntryRef's two VALUE fields -- `HideMinorEntry`
@@ -12544,6 +12615,8 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
         tgt_alts = _multistring_alts_by_ws_id(tgt_ms, tgt_ws_ids)
         delta = _merge_delta(src_alts, tgt_alts, ws_map=ws_map) or {}
         mk = _tss_make_string if _is_dotnet(tgt_ms) else _plain_make_string
+        src_tss_by_id = rec.get("summary_tss") or {}
+        src_id_by_handle = rec.get("summary_src_ws_ids") or {}
         for src_ws, text in delta.items():
             tgt_ws = ws_map.get(src_ws, src_ws) if ws_map else src_ws
             handle = tgt_handle_by_id.get(tgt_ws)
@@ -12553,7 +12626,15 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
                       "(mapped from source %r)" % (tgt_ws, src_ws))
                 continue
             try:
-                tgt_ms.set_String(handle, mk(text, handle))
+                new_tss = None
+                src_tss = src_tss_by_id.get(src_ws)
+                if src_tss is not None and _is_dotnet(tgt_ms):
+                    # Issue #128: runs preserved, WS-mapped per run.
+                    new_tss = _tss_remap_ws_runs(
+                        src_tss, handle, src_id_by_handle, tgt_handle_by_id,
+                        ws_map)
+                tgt_ms.set_String(
+                    handle, new_tss if new_tss is not None else mk(text, handle))
                 back = _tss_read_text(tgt_ms.get_String(handle))
             except Exception as exc:  # noqa: BLE001 -- recorded, never silent
                 _drop("Summary", tgt_ws, "Summary alternative not written "
