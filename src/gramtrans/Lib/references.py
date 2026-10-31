@@ -804,6 +804,7 @@ def decide_reference(source_item, target, spec: "ReferenceFieldSpec", cache: dic
             action=ReferenceAction.LINK,
             target_item=None if is_planned_create(cached) else cached,
             source_item=source_item,
+            planned=is_planned_create(cached),
         )
 
     target_list = spec.target_list_path(target)
@@ -1028,6 +1029,16 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
 
     if decision.action == ReferenceAction.LINK:
         target_item = decision.target_item
+        if target_item is None:
+            # Issue #146: a planned LINK (Preview placeholder) reached the
+            # apply path without being rebound -- nothing was written.
+            _log.warning(
+                "apply_reference: LINK with no target_item for %s.%s "
+                "(planned=%s, source=%s) -- nothing written; a Preview-planned "
+                "LINK was not rebound against Move's cache.",
+                spec.owner_class, spec.field_name,
+                getattr(decision, "planned", False), _item_label(decision.source_item),
+            )
         if owner_obj is not None and target_item is not None:
             setattr(owner_obj, spec.field_name, target_item)
         return target_item

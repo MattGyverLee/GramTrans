@@ -920,13 +920,44 @@ def _resolve_or_create_text_ex(plan, text_ops, ws_map, tgt_id2h, dropped):
         return None, False
 
 
+def _rebind_or_drop(decision, target, spec, resolver_cache, source, dropped,
+                    owner_kind, owner_guid, field_name):
+    """Issue #146: re-decide a Preview-planned LINK against Move's cache.
+    Returns the rebound decision, or None after appending a DroppedItemRecord
+    when the rebind raises or yields nothing -- never a silent fall-back to the
+    target-less placeholder."""
+    try:
+        rebound = _references.rebind_planned_link(
+            decision, target, spec, resolver_cache, source)
+    except Exception as e:
+        _log.warning("texts.apply: rebind of planned %s link failed: %s: %s",
+                     field_name, type(e).__name__, e)
+        rebound = None
+    if rebound is None:
+        src = getattr(decision, "source_item", None)
+        dropped.append(DroppedItemRecord(
+            owner_kind=owner_kind,
+            owner_guid=owner_guid or "?",
+            owner_label="",
+            field_name=field_name,
+            item_name=_references._item_label(src) if src is not None else "",
+            item_guid=_guid_str(src) if src is not None else "",
+            reason="planned reference could not be rebound against the target",
+        ))
+    return rebound
+
+
 def _apply_genres(plan, target, target_text, resolver_cache, tag, source, ws_map, dropped):
     spec = _genre_spec()
     for decision in plan.genre_decisions:
         # Issue #146: a Preview-planned LINK is re-decided against Move's cache.
-        _safe(lambda d=decision: _references.apply_reference(
-            _references.rebind_planned_link(d, target, spec, resolver_cache, source),
-            target, target_text, spec, resolver_cache, tag,
+        rebound = _rebind_or_drop(
+            decision, target, spec, resolver_cache, source, dropped,
+            "StText", getattr(plan, "source_guid", "") or "", spec.field_name)
+        if rebound is None:
+            continue
+        _safe(lambda d=rebound: _references.apply_reference(
+            d, target, target_text, spec, resolver_cache, tag,
             ws_map=ws_map or None, source=source, dropped=dropped,
         ))
 
@@ -973,8 +1004,12 @@ def _apply_segment_tags(seg_plan, target, target_text, tgt_seg, resolver_cache,
         if getattr(decision, "action", None) == ReferenceAction.REPORT_DROPPED:
             continue  # unresolvable — already reported (FR-017/023)
         # Issue #146: a Preview-planned LINK is re-decided against Move's cache.
-        decision = _safe(lambda d=decision: _references.rebind_planned_link(
-            d, target, spec, resolver_cache, source)) or decision
+        decision = _rebind_or_drop(
+            decision, target, spec, resolver_cache, source, dropped,
+            "TextTag", src_tag_guids[idx] if idx < len(src_tag_guids) else "",
+            spec.field_name)
+        if decision is None:
+            continue
         possibility = _safe(lambda d=decision: _references.apply_reference(
             d, target, None, spec, resolver_cache, tag,
             ws_map=ws_map or None, source=source, dropped=dropped,

@@ -410,26 +410,22 @@ def live_texts():
                 print("[WARN] restore of %s failed: %s" % (name, exc))
 
 
-def _xfail_if_genres_unreadable(live_texts):
-    """`texts._decide_genres` reads genres through flexicon `Texts.GetGenre`,
-    which (measured 2026-10-31, flexicon working tree) raises AttributeError
-    ('ILcmReferenceCollection' has no 'FirstOrDefault') -- so NO text genre is
-    planned or transferred at all, independent of #146. The rebind path is
-    then unreachable live (unit-tested instead). Becomes a real assertion as
-    soon as GetGenre works."""
-    err = live_texts["fx"].get("getgenre_error")
-    if err:
-        pytest.xfail("flexicon Texts.GetGenre raises %s; genre path dead live" % err)
+_GENRE_XFAIL = pytest.mark.xfail(
+    strict=True,
+    reason="#161 flexicon Texts.GetGenre raises AttributeError ('ILcmReferenceCollection' "
+           "has no 'FirstOrDefault') so no text genre is planned or transferred live; "
+           "the rebind path is unit-tested instead. A fix on either side XPASSes "
+           "(strict) and this test must be revisited.")
 
 
+@_GENRE_XFAIL
 def test_texts_preview_genre_create_then_link(live_texts):
-    _xfail_if_genres_unreadable(live_texts)
     assert _genre_rows(live_texts["preview"], live_texts["fx"]) == [
         (1, "create"), (2, "link"), (3, "create")]
 
 
+@_GENRE_XFAIL
 def test_texts_move_links_shared_genre_on_both_texts(live_texts):
-    _xfail_if_genres_unreadable(live_texts)
     fx, pre, post = live_texts["fx"], live_texts["pre"], live_texts["post"]
     assert pre["genres"] == [] and all(v is None for v in pre["texts"].values())
     assert post["genres"] == sorted([fx["G"], fx["H"]])   # each created once

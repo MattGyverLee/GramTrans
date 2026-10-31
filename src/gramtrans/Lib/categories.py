@@ -6565,6 +6565,7 @@ def _reference_decision_record(owner_kind, owner_guid, spec, decision):
         action=decision.action,
         item_name=item_name,
         item_guid=item_guid,
+        planned=bool(getattr(decision, "planned", False)),
     )
 
 
