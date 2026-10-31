@@ -51,6 +51,7 @@ LCM API notes (discovered during implementation):
 """
 from __future__ import annotations
 
+import dataclasses
 import types
 from typing import Iterable, Tuple
 
@@ -7052,10 +7053,15 @@ def _plan_entry_reference_decisions(src_entry, context, target):
             # set matches Move by construction (FR-008). Feature 029 reproduces
             # PicturesOS via its own Preview twin below; nothing remains an
             # unconditional drop in `_report_dropped_sense_scope_gaps`.
-            _resolve_sense_appendixes(src_sense, None, target, dropped)
-            _resolve_sense_thesaurus_items(
+            #
+            # Issue #116: keep the CREATE/LINK decisions they compute, not just
+            # the drops, so Preview shows that new possibility-list items will
+            # be created (and which appendixes get linked) before Move writes.
+            records.extend(_resolve_sense_appendixes(
+                src_sense, None, target, dropped))
+            records.extend(_resolve_sense_thesaurus_items(
                 src_sense, None, target, resolver_cache, dropped,
-                tag=None, ws_map=None, source=source)
+                tag=None, ws_map=None, source=source))
             _report_dropped_sense_scope_gaps(src_sense, dropped)
             # Feature 029 (T006): read-only Preview twin of the Move sense
             # loop's `pictures.reproduce_sense_pictures` call -- emits the
@@ -8764,7 +8770,7 @@ def _appendix_drop_reason(scan_errors) -> str:
             "(030 link-by-GUID scope; not created)")
 
 
-def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> None:
+def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> tuple:
     """030 Section A (contracts/appendix-link-by-guid.md): link each source
     `AppendixesRC` reference to a target-owned `LexAppendix` by GUID; if the
     target does not own it, emit a `DroppedItemRecord` (never create it, never
@@ -8772,13 +8778,23 @@ def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> None:
 
     Called from BOTH sense loops: Move passes the created `new_sense` (links
     are written onto `new_sense.AppendixesRC`); Preview passes `new_sense=None`
-    (drops only, no write). The drop decision depends solely on target
-    ownership, so Preview and Move produce the identical drop set by
-    construction (FR-008, G-A5). Never raises (fail-soft)."""
+    (no write). The decision depends solely on target ownership, so Preview
+    and Move reach the identical decision set by construction (FR-008, G-A5).
+
+    Returns one `ReferenceDecisionRecord` per source appendix -- LINK when the
+    target owns it, REPORT_DROPPED when it does not -- in BOTH modes (issue
+    #116). Preview attaches them to `PlannedAction.reference_decisions`, the
+    same way `_decide_reference_fields` records the 024 fields, so the user
+    sees each LINK before Move writes (Principle III); Move ignores them.
+    Never raises (fail-soft)."""
     owner_guid = _guid_str_from(src_sense)
     owner_label = _owner_label_for("LexSense", src_sense)
+    records = []
     for src_ap in list(getattr(src_sense, "AppendixesRC", None) or []):
         guid = _guid_str_from(src_ap)
+        # `LexAppendix` has no `.Name`; label it by a snippet of its own
+        # contents so neither the report nor Preview is GUID-only (issue #42).
+        label = _appendix_label(src_ap)
         scan_errors: list = []
         tgt_ap = _target_appendix_by_guid(target, guid, errors=scan_errors)
         if tgt_ap is None:
@@ -8787,21 +8803,29 @@ def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> None:
                 owner_guid=owner_guid,
                 owner_label=owner_label,
                 field_name="AppendixesRC",
-                # `LexAppendix` has no `.Name`; label it by a snippet of its
-                # own contents so the report is not GUID-only (issue #42).
-                item_name=_appendix_label(src_ap),
+                item_name=label,
                 item_guid=guid,
                 reason=_appendix_drop_reason(scan_errors),
             ))
+            records.append(ReferenceDecisionRecord(
+                owner_kind="LexSense", owner_guid=owner_guid,
+                field_name="AppendixesRC",
+                action=ReferenceAction.REPORT_DROPPED,
+                item_name=label, item_guid=guid))
             continue
+        records.append(ReferenceDecisionRecord(
+            owner_kind="LexSense", owner_guid=owner_guid,
+            field_name="AppendixesRC", action=ReferenceAction.LINK,
+            item_name=label, item_guid=guid))
         if new_sense is None:
-            continue  # Preview: present-by-GUID needs no record and no write
+            continue  # Preview: the LINK is recorded above; no write
         try:
             coll = getattr(new_sense, "AppendixesRC", None)
             if coll is not None and not _collection_already_has(coll, tgt_ap):
                 coll.Add(tgt_ap)
         except (AttributeError, TypeError):
             pass
+    return tuple(records)
 
 
 # ----------------------------------------------------------------------------
@@ -8809,21 +8833,68 @@ def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> None:
 # (contracts/thesaurus-dynamic-owner.md)
 # ----------------------------------------------------------------------------
 
+def _thesaurus_new_ancestors(decision, spec, target, resolver_cache) -> tuple:
+    """Issue #116: the ancestors a thesaurus CREATE will create IN ADDITION to
+    the item itself, as `(item_name, item_guid)` pairs, root -> leaf.
+
+    Mirrors `references.apply_reference`'s CREATE loop: an ancestor is reused
+    (not created) when it is in `resolver_cache` or already in the target
+    list, so it is listed here only when neither holds. Preview and Move both
+    call this BEFORE any write, so they list the same ancestors for the same
+    cache state. Never raises; `()` when it cannot tell."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    try:
+        chain = tuple(getattr(decision, "ancestors_to_create", ()) or ())[:-1]
+        if not chain or spec is None:
+            return ()
+        try:
+            target_list = spec.target_list_path(target)
+        except Exception:  # noqa: BLE001 -- display only; never break the resolver
+            return ()
+        out = []
+        for anc in chain:
+            anc_guid = _guid_str_from(anc)
+            if not anc_guid or resolver_cache.get(anc_guid) is not None:
+                continue
+            if target_list is not None and _references._find_in_possibility_list(
+                    target_list, anc_guid) is not None:
+                continue
+            out.append((_references._item_label(anc), anc_guid))
+        return tuple(out)
+    except Exception as exc:  # noqa: BLE001 -- Move calls this before apply_reference
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_thesaurus_new_ancestors failed (%s); listing no ancestors", exc)
+        return ()
+
+
 def _resolve_sense_thesaurus_items(src_sense, new_sense, target, resolver_cache,
-                                   dropped, tag, ws_map=None, source=None) -> None:
+                                   dropped, tag, ws_map=None, source=None) -> tuple:
     """030 Section B (contracts/thesaurus-dynamic-owner.md): resolve each
     source `ThesaurusItemsRC` `CmPossibility` via the dynamic-owner resolver
     (`references.resolve_thesaurus_item`) and, in Move mode (`new_sense` set),
     write the resolved item onto `new_sense.ThesaurusItemsRC`; in Preview mode
-    (`new_sense=None`) record drops only. An item whose owning list cannot be
+    (`new_sense=None`) write nothing. An item whose owning list cannot be
     discovered on the source or mirrored onto the target emits a
     `DroppedItemRecord` (never silent, FR-005/G-B3). A shared item resolves once
-    via `resolver_cache` (G-B6). Never raises (fail-soft)."""
+    via `resolver_cache` (G-B6).
+
+    Returns one `ReferenceDecisionRecord` per source item -- the
+    CREATE/LINK/UPDATE/REPORT_DROPPED decision the resolver reached, with any
+    ancestors a CREATE will also create in `new_ancestors` -- in BOTH modes
+    (issue #116). Preview attaches them to `PlannedAction.reference_decisions`
+    so the user sees, before Move, which possibility-list items will be
+    created in their project (Principle III); Move ignores them. Never raises
+    (fail-soft)."""
     if __package__:
         from . import references as _references
     else:
         import references as _references  # type: ignore
     owner_guid = _guid_str_from(src_sense)
+    records = []
     for src_item in list(getattr(src_sense, "ThesaurusItemsRC", None) or []):
         decision, spec = _references.resolve_thesaurus_item(
             src_item, target, resolver_cache, source=source)
@@ -8834,10 +8905,24 @@ def _resolve_sense_thesaurus_items(src_sense, new_sense, target, resolver_cache,
                 dropped,
                 _enrich_dropped("LexSense", owner_guid, src_sense, decision.dropped),
             )
-        if spec is None or new_sense is None:
-            # spec is None  -> unresolvable list (drop already recorded).
-            # new_sense None -> Preview (no write). Either way, nothing added.
+        if spec is None:
+            # Unresolvable owning list: no spec to flatten through, so build
+            # the REPORT_DROPPED row directly (drop already recorded above).
+            records.append(ReferenceDecisionRecord(
+                owner_kind="LexSense", owner_guid=owner_guid,
+                field_name="ThesaurusItemsRC", action=decision.action,
+                item_name=_references._item_label(src_item),
+                item_guid=_guid_str_from(src_item)))
             continue
+        record = _reference_decision_record("LexSense", owner_guid, spec, decision)
+        if decision.action == ReferenceAction.CREATE:
+            ancestors = _thesaurus_new_ancestors(
+                decision, spec, target, resolver_cache)
+            if ancestors:
+                record = dataclasses.replace(record, new_ancestors=ancestors)
+        records.append(record)
+        if new_sense is None:
+            continue  # Preview: decision recorded above; no write
         resolved, ok = _call_apply_reference(
             _references, decision, target, None, spec, resolver_cache,
             tag, ws_map, source, dropped, "LexSense", owner_guid, src_sense,
@@ -8850,6 +8935,7 @@ def _resolve_sense_thesaurus_items(src_sense, new_sense, target, resolver_cache,
                 coll.Add(resolved)
         except (AttributeError, TypeError):
             pass
+    return tuple(records)
 
 
 def _create_and_wire_sense_msa(src_sense, new_sense, src_entry, new_entry, context,
