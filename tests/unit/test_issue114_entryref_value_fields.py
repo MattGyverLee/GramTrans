@@ -166,10 +166,8 @@ def _stub_lcm():
 
 
 def _rec(ref_guid, hide=None, summary=None, ref_type=0):
-    rec = ref_record(ref_guid, ref_type=ref_type)
-    rec["hide_minor_entry"] = hide
-    rec["summary"] = dict(summary or {})
-    return rec
+    return ref_record(ref_guid, ref_type=ref_type,
+                      hide_minor_entry=hide, summary=summary)
 
 
 def _run(target, records, ws_map=None, dropped=None):
