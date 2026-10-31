@@ -2055,6 +2055,35 @@ _SENSE_LIST_REF_LABELS = (
     ("report_dropped", "Not transferred"),
 )
 
+# Issue #147: the most rows the sense-list renderer itemizes PER ACTION KIND
+# (create / update / link / not transferred). Per kind, not overall, so a
+# flood of LINK rows can never crowd CREATE or not-transferred rows out of
+# the pane. 25 matches `merge_preview._LIST_ITEM_LIMIT`, the other Preview
+# list cap. Rows held back are counted on an explicit "... and N more" line
+# (`_capped_rows`); nothing is dropped silently.
+SENSE_LIST_REF_ROW_CAP = 25
+
+
+def _capped_rows(lines, cap: int, noun: str, indent: str = "    ",
+                 suffix: str = "") -> List[str]:
+    """Return at most `cap` of `lines`, plus -- if and only if some were held
+    back -- one line saying how many, e.g.
+    ``"    ... and 7 more Create rows not shown here (32 total)"``.
+
+    The count is computed from the very sequence that was sliced, so it
+    cannot drift (the same property `report._rows` documents). `suffix` is
+    appended inside the parentheses and must only name a place that really
+    lists every held-back row. Unlike `report._rows`, this promises no
+    run-report JSON artifact, which Preview-only lines do not have."""
+    lines = list(lines)
+    total = len(lines)
+    out = lines[:cap]
+    omitted = total - len(out)
+    if omitted:
+        out.append(f"{indent}... and {omitted} more {noun} not shown here "
+                   f"({total} total{suffix})")
+    return out
+
 
 def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
     """Issue #116 (030 FR-008, Principle III): render the CREATE / LINK /
@@ -2069,6 +2098,12 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
     also creates (`ReferenceDecisionRecord.new_ancestors`). Not-transferred
     rows point at the dropped-items list, which carries the reason. Returns
     `()` when no action carries a decision for these fields.
+
+    Issue #147: rows are capped at `SENSE_LIST_REF_ROW_CAP` per action kind.
+    Create / Update / Not-transferred rows beyond the cap are counted on one
+    "... and N more" line. LINK rows (no change to the target) are itemized
+    while they fit under the cap -- so a small run still shows which shared
+    appendixes it links -- and above it collapse to one count line per field.
 
     Note: later references to an item created earlier in this run show as
     create; Move links them."""
@@ -2091,7 +2126,23 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
         return ()
     lines: List[str] = ["  Sense appendix / thesaurus references:"]
     for act, label in _SENSE_LIST_REF_LABELS:
-        for (field, a, guid) in sorted(k for k in rows if k[1] == act):
+        keys = sorted(k for k in rows if k[1] == act)
+        if act == "link" and len(keys) > SENSE_LIST_REF_ROW_CAP:
+            # Issue #147: collapse to one count line per field.
+            for field in _SENSE_LIST_REF_FIELDS:
+                fkeys = [k for k in keys if k[0] == field]
+                if not fkeys:
+                    continue
+                owners = set().union(*(rows[k]["owners"] for k in fkeys))
+                n, m = len(fkeys), len(owners)
+                lines.append(
+                    f"    {label}  {field}: {n} item{'s' if n != 1 else ''}"
+                    f" already in the target  ({m} sense"
+                    f"{'s' if m != 1 else ''}) -- itemized list collapsed "
+                    f"above {SENSE_LIST_REF_ROW_CAP} rows")
+            continue
+        kind_lines: List[str] = []
+        for (field, a, guid) in keys:
             row = rows[(field, a, guid)]
             n = len(row["owners"])
             line = (f"    {label}  {field} '{row['name']}' {{{guid}}}"
@@ -2101,7 +2152,11 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
                     f"'{name}' {{{g}}}" for name, g in row["ancestors"])
             if act == "report_dropped":
                 line += " -- see dropped items for the reason"
-            lines.append(line)
+            kind_lines.append(line)
+        lines.extend(_capped_rows(
+            kind_lines, SENSE_LIST_REF_ROW_CAP, f"{label} rows",
+            suffix=("; the dropped-items list names every one"
+                    if act == "report_dropped" else "")))
     if any(k[1] == "create" for k in rows):
         lines.append("    (Later references to an item created earlier in this "
                      "run show as create; Move links them.)")
