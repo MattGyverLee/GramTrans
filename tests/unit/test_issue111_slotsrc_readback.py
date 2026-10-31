@@ -165,9 +165,12 @@ def test_write_failed_may_also_carry_unresolved_slots():
 # --- acceptance: a no-op Add is NOT LINKED, and is reported -----------------
 
 def test_a_noop_add_yields_a_write_failed_record_not_linked():
-    ctx, _skips, bad, _ = _run("noop")
+    ctx, skips, bad, _ = _run("noop")
 
     assert bad.SlotsRC.add_calls == 1          # the write WAS attempted
+    # Parity with SLOT_MISSING: the run's skip counters move too.
+    (skip,) = skips
+    assert "slot_guid=slot-1" in skip.detail and "read-back" in skip.detail
     (rec,) = _records(ctx)
     assert rec.outcome is AffixSlotLinkOutcome.WRITE_FAILED
     assert rec.unwritten_slot_guids == ("slot-1",)
@@ -268,4 +271,4 @@ def test_unresolved_plus_unwritten_is_one_write_failed_record():
     assert rec.outcome is AffixSlotLinkOutcome.WRITE_FAILED
     assert rec.unwritten_slot_guids == ("present",)
     assert rec.unresolved_slot_guids == ("gone",)
-    assert len(skips) == 1                     # the unresolved slot's skip
+    assert len(skips) == 2                     # one per lost column

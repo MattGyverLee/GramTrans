@@ -11066,6 +11066,24 @@ def _run_171_subpass(context, target, tag=None):
                 "destination but are not in SlotsRC on read-back%s",
                 src_msa_guid, ", ".join(unwritten),
                 (" (" + "; ".join(write_errors) + ")") if write_errors else "")
+            # Parity with SLOT_MISSING: a Skip per unwritten slot, so the
+            # run's skip counters move too -- not only the FR-019 panel.
+            # DEPENDENCY_UNRESOLVED is the nearest existing reason; the
+            # detail says what actually happened.
+            for slot_g in unwritten:
+                skips.append(Skip(
+                    category=GrammarCategory.AFFIX_TEMPLATES,
+                    source_guid=slot_g,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=(f"slot_guid={slot_g} resolved in target but is "
+                            "not in SlotsRC on read-back after the write, so "
+                            "affix entry_guid="
+                            f"{owners.get(src_msa_guid, '')} "
+                            f"(msa_guid={src_msa_guid}) is not linked to the "
+                            "template column it occupied in the source"
+                            + (f" ({'; '.join(write_errors)})"
+                               if write_errors else "")),
+                ))
         elif unresolved_slots:
             outcome = AffixSlotLinkOutcome.SLOT_MISSING
         else:
