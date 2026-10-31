@@ -8889,10 +8889,20 @@ def _thesaurus_new_ancestors(decision, spec, target, resolver_cache) -> tuple:
             target_list = spec.target_list_path(target)
         except Exception:  # noqa: BLE001 -- display only; never break the resolver
             return ()
+        # Issue #146: in Preview, `decide_reference` has already primed the
+        # cache with placeholders for THIS decision's chain -- those are still
+        # new; a placeholder planned by an earlier leaf is not (Move would
+        # have created it already).
+        leaf_guid = _references._guid_str(getattr(decision, "source_item", None))
         out = []
         for anc in chain:
             anc_guid = _guid_str_from(anc)
-            if not anc_guid or resolver_cache.get(anc_guid) is not None:
+            if not anc_guid:
+                continue
+            cached = resolver_cache.get(anc_guid)
+            if cached is not None and not (
+                    _references.is_planned_create(cached)
+                    and cached.planned_by == leaf_guid):
                 continue
             if target_list is not None and _references._find_in_possibility_list(
                     target_list, anc_guid) is not None:

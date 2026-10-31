@@ -1527,6 +1527,17 @@ _MSENV_REPRODUCED_FIELDS: frozenset = frozenset(
 # Per-run dedup keys (SC-005/G4): source GUID -> resolved/created target item.
 _MSENV_POS_RESOLVED_KEY = "__owned_msenv_pos_resolved__"
 _MSENV_INFLCLASS_RESOLVED_KEY = "__owned_msenv_inflclass_resolved__"
+# Issue #146: the Preview twins' run-wide "already planned for CREATE" sets --
+# Move's dedup caches above turn a second reference into a reuse (LINK), so
+# Preview must too. Only ever written into the Preview run's resolver cache.
+_MSENV_POS_PLANNED_KEY = "__owned_msenv_pos_planned__"
+_MSENV_INFLCLASS_PLANNED_KEY = "__owned_msenv_inflclass_planned__"
+
+
+def _planned_set(resolver_cache, key) -> set:
+    if not isinstance(resolver_cache, dict):
+        return set()
+    return resolver_cache.setdefault(key, set())
 
 
 def _categories():
@@ -1609,7 +1620,7 @@ def _reproduce_msenv_pos_ra(src_allo, new_allo, ctx, tag, resolver_cache,
     ))
 
 
-def _plan_msenv_pos_ra(src_allo, ctx, dropped) -> list:
+def _plan_msenv_pos_ra(src_allo, ctx, dropped, resolver_cache=None) -> list:
     """Preview twin of `_reproduce_msenv_pos_ra` (G6): LINK when the POS is
     already present, CREATE when absent-but-creatable, REPORT_DROPPED when
     uncreatable. Writes nothing."""
@@ -1632,7 +1643,16 @@ def _plan_msenv_pos_ra(src_allo, ctx, dropped) -> list:
             owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
             field_name="MsEnvPartOfSpeechRA", action=ReferenceAction.LINK,
             item_name=pos_name, item_guid=pos_guid)]
+    planned = _planned_set(resolver_cache, _MSENV_POS_PLANNED_KEY)
+    if pos_guid and pos_guid in planned:
+        # Issue #146: Move created it for an earlier allomorph this run.
+        return [ReferenceDecisionRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            field_name="MsEnvPartOfSpeechRA", action=ReferenceAction.LINK,
+            item_name=pos_name, item_guid=pos_guid)]
     if _categories().target_has_pos_create_infra(ctx.target_handle):
+        if pos_guid:
+            planned.add(pos_guid)
         return [ReferenceDecisionRecord(
             owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
             field_name="MsEnvPartOfSpeechRA", action=ReferenceAction.CREATE,
@@ -1708,7 +1728,7 @@ def _reproduce_inflection_classes_rc(src_allo, new_allo, ctx, tag,
         ))
 
 
-def _plan_inflection_classes_rc(src_allo, ctx, dropped) -> list:
+def _plan_inflection_classes_rc(src_allo, ctx, dropped, resolver_cache=None) -> list:
     """Preview twin of `_reproduce_inflection_classes_rc` (G6): per class LINK
     when present, CREATE when absent-but-owning-POS-present, REPORT_DROPPED
     when the owning POS is out-of-closure."""
@@ -1721,10 +1741,11 @@ def _plan_inflection_classes_rc(src_allo, ctx, dropped) -> list:
     cats = _categories()
     target = ctx.target_handle
     records: list = []
+    planned = _planned_set(resolver_cache, _MSENV_INFLCLASS_PLANNED_KEY)
     for src_class in src_classes:
         class_guid = _references._guid_str(src_class)
         class_name = _references._item_label(src_class)
-        if cats.resolve_target_inflection_class(target, class_guid) is not None:
+        if (class_guid and class_guid in planned) or                 cats.resolve_target_inflection_class(target, class_guid) is not None:
             records.append(ReferenceDecisionRecord(
                 owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
                 field_name="InflectionClassesRC", action=ReferenceAction.LINK,
@@ -1733,6 +1754,8 @@ def _plan_inflection_classes_rc(src_allo, ctx, dropped) -> list:
         if cats.can_create_inflection_class(
                 target, src_class,
                 source_handle=getattr(ctx, "source_handle", None)):
+            if class_guid:
+                planned.add(class_guid)
             records.append(ReferenceDecisionRecord(
                 owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
                 field_name="InflectionClassesRC", action=ReferenceAction.CREATE,
@@ -2134,9 +2157,10 @@ def _plan_moaffix_msenv_decisions(src_allo, ctx, resolver_cache, dropped) -> lis
         return records
     # --- field decision legs land here (US1-US4) ---
     if "MsEnvPartOfSpeechRA" in _MSENV_REPRODUCED_FIELDS:  # US1 (T007)
-        records.extend(_plan_msenv_pos_ra(src_allo, ctx, dropped))
+        records.extend(_plan_msenv_pos_ra(src_allo, ctx, dropped, resolver_cache))
     if "InflectionClassesRC" in _MSENV_REPRODUCED_FIELDS:  # US2 (T009)
-        records.extend(_plan_inflection_classes_rc(src_allo, ctx, dropped))
+        records.extend(_plan_inflection_classes_rc(
+            src_allo, ctx, dropped, resolver_cache))
     if "MsEnvFeaturesOA" in _MSENV_REPRODUCED_FIELDS:  # US3 (T011)
         records.extend(_plan_msenv_features_oa(src_allo, ctx, dropped))
     if "PositionRS" in _MSENV_REPRODUCED_FIELDS:  # US4 (T013)

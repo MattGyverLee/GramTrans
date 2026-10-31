@@ -683,6 +683,91 @@ def _ancestor_chain(source_item) -> tuple:
 
 
 # ============================================================================
+# Issue #146 -- Preview-only "planned CREATE" cache priming
+# ============================================================================
+#
+# Move's `apply_reference` CREATE arm caches every item it creates
+# (`cache[anc_guid] = new_obj`), so a SECOND reference to the same source item
+# in the same run hits the cache and becomes LINK. Preview never runs
+# `apply_reference`, so its cache stayed unprimed and the second reference was
+# shown as CREATE again (Principle III: Preview over-reported vs Move).
+#
+# A Preview run marks its resolver cache as a planning cache
+# (`mark_planning_cache`); `decide_reference` then records a `PlannedCreate`
+# placeholder for every item a CREATE decision WOULD create -- exactly the set
+# Move's CREATE arm caches. The placeholder is never a real LCM object and is
+# never handed back as a `target_item`. Move's cache is never marked, so Move's
+# decisions (including the decide-only reversal pass Move runs before applying)
+# are byte-for-byte unchanged.
+
+PLANNING_CACHE_KEY = "__references_planning_cache__"
+
+
+class PlannedCreate:
+    """Preview-only resolver-cache placeholder for an item a CREATE decision
+    will create in Move. `planned_by` is the GUID of the leaf whose CREATE
+    planned it (an ancestor is planned by the leaf that pulls it in), so the
+    thesaurus `new_ancestors` display can tell "created by THIS decision" from
+    "created by an earlier one"."""
+
+    __slots__ = ("planned_by",)
+
+    def __init__(self, planned_by: str) -> None:
+        self.planned_by = planned_by
+
+    def __repr__(self) -> str:
+        return f"PlannedCreate(planned_by={self.planned_by!r})"
+
+
+def mark_planning_cache(cache: dict) -> dict:
+    """Mark `cache` as a Preview planning cache (issue #146). Returns it."""
+    cache[PLANNING_CACHE_KEY] = True
+    return cache
+
+
+def is_planning_cache(cache) -> bool:
+    try:
+        return bool(cache.get(PLANNING_CACHE_KEY))
+    except AttributeError:
+        return False
+
+
+def is_planned_create(value) -> bool:
+    return isinstance(value, PlannedCreate)
+
+
+def _record_planned_create(ancestors, target_list, cache: dict) -> None:
+    """Prime a planning cache with what Move's CREATE arm would cache: every
+    chain member that is neither cached nor already in the target list (Move
+    reuses those without caching them). An existing entry is never
+    overwritten, so the first planner keeps `planned_by`."""
+    leaf_guid = _guid_str(ancestors[-1]) if ancestors else ""
+    for anc in ancestors:
+        anc_guid = _guid_str(anc)
+        if not anc_guid or cache.get(anc_guid) is not None:
+            continue
+        if _find_in_possibility_list(target_list, anc_guid) is not None:
+            continue
+        cache[anc_guid] = PlannedCreate(leaf_guid)
+
+
+def rebind_planned_link(decision, target, spec, cache, source=None):
+    """Move-side companion for decisions CARRIED OVER from a Preview plan
+    (issue #146; e.g. `texts.py` genre/tag decisions, which Move applies from
+    `plan.text_plans` instead of re-deciding). A planned LINK has no
+    `target_item` -- the item it links to only exists once Move's earlier
+    CREATE has run -- so it is re-decided against Move's own (unmarked) cache
+    right before it is applied. Every other decision is returned unchanged."""
+    if (decision is not None
+            and decision.action == ReferenceAction.LINK
+            and decision.target_item is None
+            and decision.source_item is not None):
+        return decide_reference(decision.source_item, target, spec, cache,
+                                source=source)
+    return decision
+
+
+# ============================================================================
 # T013 -- decide_reference (contracts/reference-resolver.md)
 # ============================================================================
 
@@ -713,8 +798,12 @@ def decide_reference(source_item, target, spec: "ReferenceFieldSpec", cache: dic
 
     cached = cache.get(guid) if guid else None
     if cached is not None:
+        # Issue #146: a Preview-planned CREATE is a LINK for every later
+        # reference (as in Move), but the placeholder is never a target item.
         return ReferenceDecision(
-            action=ReferenceAction.LINK, target_item=cached, source_item=source_item,
+            action=ReferenceAction.LINK,
+            target_item=None if is_planned_create(cached) else cached,
+            source_item=source_item,
         )
 
     target_list = spec.target_list_path(target)
@@ -752,6 +841,8 @@ def decide_reference(source_item, target, spec: "ReferenceFieldSpec", cache: dic
         # always correct, never just when `spec.hierarchical` happens to
         # agree with the live shape.
         ancestors = _ancestor_chain(source_item)
+        if is_planning_cache(cache):
+            _record_planned_create(ancestors, target_list, cache)
         return ReferenceDecision(
             action=ReferenceAction.CREATE,
             ancestors_to_create=ancestors,

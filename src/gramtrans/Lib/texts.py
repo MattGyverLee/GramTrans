@@ -923,8 +923,10 @@ def _resolve_or_create_text_ex(plan, text_ops, ws_map, tgt_id2h, dropped):
 def _apply_genres(plan, target, target_text, resolver_cache, tag, source, ws_map, dropped):
     spec = _genre_spec()
     for decision in plan.genre_decisions:
+        # Issue #146: a Preview-planned LINK is re-decided against Move's cache.
         _safe(lambda d=decision: _references.apply_reference(
-            d, target, target_text, spec, resolver_cache, tag,
+            _references.rebind_planned_link(d, target, spec, resolver_cache, source),
+            target, target_text, spec, resolver_cache, tag,
             ws_map=ws_map or None, source=source, dropped=dropped,
         ))
 
@@ -970,6 +972,9 @@ def _apply_segment_tags(seg_plan, target, target_text, tgt_seg, resolver_cache,
     for idx, decision in enumerate(seg_plan.tag_decisions):
         if getattr(decision, "action", None) == ReferenceAction.REPORT_DROPPED:
             continue  # unresolvable — already reported (FR-017/023)
+        # Issue #146: a Preview-planned LINK is re-decided against Move's cache.
+        decision = _safe(lambda d=decision: _references.rebind_planned_link(
+            d, target, spec, resolver_cache, source)) or decision
         possibility = _safe(lambda d=decision: _references.apply_reference(
             d, target, None, spec, resolver_cache, tag,
             ws_map=ws_map or None, source=source, dropped=dropped,
