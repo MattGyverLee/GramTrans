@@ -479,6 +479,10 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # and one cache for the whole run.
     _dropped: list = []
     _resolver_cache: dict = {}
+    # Issue #130: created here (not at the exec_ctx attach below) so the
+    # OVERWRITE loop, which runs first, can record MSA slot-link outcomes on
+    # the SAME list the 17.1 sub-pass later appends to.
+    _affix_slot_links: list = []
 
     if _log.isEnabledFor(logging.DEBUG):
         _log.debug(
@@ -630,6 +634,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             _ow_result = _execute_overwrite(
                 ow, source, target, report_sink, tag, interactive_session,
                 ws_map=ws_map, dropped=_dropped, resolver_cache=_resolver_cache,
+                affix_slot_links=_affix_slot_links,
             ) or []
             extra_skips.extend(s for s in _ow_result if isinstance(s, Skip))
 
@@ -770,7 +775,6 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # `build_from_plan(extra_affix_slot_links=)` below. Pre-T074 the run report
     # carried no link tally at all, so SC-003 was answerable only from a
     # bespoke driver.
-    _affix_slot_links: list = []
     object.__setattr__(exec_ctx, '_affix_slot_links', _affix_slot_links)
     # Feature 038 T036: the CURRENT action's `PlannedDestination`, re-set on
     # every leaf-dispatch iteration below. Seeded here with the
@@ -3970,9 +3974,166 @@ def _find_obj_by_guid(ops, guid_str: str):
     return None
 
 
+def _lcm_slot(slot):
+    """Issue #130: a raw `IMoInflAffixSlot` for `SlotsRC.Add`.
+
+    `POS.GetAffixSlots` yields flexicon `AffixSlot` wrappers; `_unwrap` only
+    honours a `.concrete` attribute they do not have (it falls through
+    `__getattr__` to the LCM object), so it returned the WRAPPER and
+    `SlotsRC.Add(wrapper)` raised "No method matches given arguments for
+    ICollection`1.Add" on a live LCM. Found by the #130 live proof; offline
+    fakes pass through unchanged.
+    """
+    inner = _unwrap(slot)
+    inner = getattr(inner, "_obj", None) or inner
+    try:
+        from .categories import _cast_lcm
+    except ImportError:  # flat layout
+        from categories import _cast_lcm  # type: ignore
+    return _cast_lcm(inner, "IMoInflAffixSlot")
+
+
+def _overwrite_msa_slots(src_ia, new_ia, target_slots_by_guid, *, src_msa_guid,
+                         entry_guid, report_sink, dropped, affix_slot_links):
+    """Issue #130: re-sync an inflectional MSA's `SlotsRC` for OVERWRITE without
+    ever losing the membership the target already had.
+
+    The pre-fix code did `SlotsRC.Clear()` then an unguarded `Add` per source
+    slot, silently skipping slots missing from the target: a raising or no-op
+    `Add`, or an unresolved slot, ERASED membership and reported nothing.
+
+    Sequence (reuses the PR #120 `WRITE_FAILED` / `_slots_absent_on_readback`
+    machinery):
+      1. Snapshot the target's current members.
+      2. Resolve every source slot. If ANY is unresolved, DO NOT clear: the
+         snapshot is kept (never destroy membership to write a partial set),
+         and a SLOT_MISSING record + Skip(DEPENDENCY_UNRESOLVED) +
+         DroppedItemRecord name each unresolved slot GUID.
+      3. Otherwise Clear, then Add each slot in its own try/except.
+      4. Read `SlotsRC` back once. On any raise or absence, restore the
+         snapshot (Clear, re-Add, read back) and record WRITE_FAILED naming
+         the unwritten slots and whether the restore held.
+    A clean overwrite appends no record. Returns a list of Skips.
+    """
+    if __package__:
+        from .categories import (_slots_absent_on_readback, _guid_str_from,
+                                 _append_dropped_once)
+        from .models import AffixSlotLinkOutcome, AffixSlotLinkRecord
+    else:
+        from categories import (  # type: ignore
+            _slots_absent_on_readback, _guid_str_from, _append_dropped_once)
+        from models import AffixSlotLinkOutcome, AffixSlotLinkRecord  # type: ignore
+    skips = []
+    src_slot_objs = list(src_ia.SlotsRC)
+    src_slot_guids = tuple(_guid_str_from(sl) for sl in src_slot_objs)
+
+    # 1. snapshot BEFORE any write. If we cannot even read it, write nothing.
+    try:
+        snapshot = list(new_ia.SlotsRC)
+    except Exception as exc:  # noqa: BLE001 -- reported
+        report_sink.Warning(
+            f"  IMoInflAffMsa slot re-sync skipped: could not snapshot the "
+            f"target SlotsRC ({type(exc).__name__}: {exc}); left unchanged")
+        return skips
+    snapshot_pairs = [(sl, _guid_str_from(sl)) for sl in snapshot]
+
+    # 2. resolve.
+    resolved = []
+    unresolved = []
+    for sg in src_slot_guids:
+        tgt_slot = target_slots_by_guid.get(sg)
+        if tgt_slot is None:
+            unresolved.append(sg)
+        else:
+            resolved.append((tgt_slot, sg))
+    if unresolved:
+        for sg in unresolved:
+            skips.append(Skip(
+                category=GrammarCategory.AFFIX_TEMPLATES, source_guid=sg,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"slot_guid={sg} not in target, so OVERWRITE of "
+                        f"msa_guid={src_msa_guid} left its SlotsRC unchanged "
+                        "rather than clear it to write a partial set")))
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="MoInflAffMsa", owner_guid=src_msa_guid,
+                owner_label="", field_name="SlotsRC", item_name="",
+                item_guid=sg,
+                reason=("slot unresolved in target; OVERWRITE kept the "
+                        "target's existing SlotsRC membership")))
+        affix_slot_links.append(AffixSlotLinkRecord(
+            msa_guid=src_msa_guid, outcome=AffixSlotLinkOutcome.SLOT_MISSING,
+            entry_guid=entry_guid, source_slot_guids=src_slot_guids,
+            unresolved_slot_guids=tuple(unresolved)))
+        report_sink.Warning(
+            f"  IMoInflAffMsa {src_msa_guid[:8]} slot re-sync skipped: "
+            f"slot(s) {', '.join(g[:8] for g in unresolved)} unresolved in "
+            "target; existing slot membership kept")
+        return skips
+
+    # 3. guarded Clear + Add.
+    errors = []
+    cleared_ok = True
+    try:
+        new_ia.SlotsRC.Clear()
+    except Exception as exc:  # noqa: BLE001
+        cleared_ok = False
+        errors.append(f"Clear {type(exc).__name__}: {exc}")
+    for tgt_slot, sg in resolved:
+        try:
+            new_ia.SlotsRC.Add(tgt_slot)
+        except Exception as exc:  # noqa: BLE001 -- collected per slot
+            errors.append(f"Add {sg}: {type(exc).__name__}: {exc}")
+
+    # 4. read back once.
+    unwritten = _slots_absent_on_readback(new_ia, resolved, errors)
+    if not unwritten and not cleared_ok and resolved:
+        unwritten = [g for _, g in resolved]
+    if not unwritten:
+        return skips
+
+    # restore the snapshot (best effort) and verify the restore too.
+    restore_errors = []
+    try:
+        new_ia.SlotsRC.Clear()
+    except Exception as exc:  # noqa: BLE001
+        restore_errors.append(f"Clear {type(exc).__name__}: {exc}")
+    for sl, g in snapshot_pairs:
+        try:
+            new_ia.SlotsRC.Add(sl)
+        except Exception as exc:  # noqa: BLE001
+            restore_errors.append(f"Add {g}: {type(exc).__name__}: {exc}")
+    missing_after = _slots_absent_on_readback(new_ia, snapshot_pairs,
+                                              restore_errors)
+    try:
+        now = {_guid_str_from(p) for p in new_ia.SlotsRC}
+        extras = sorted(now - {g for _, g in snapshot_pairs})
+    except Exception:  # noqa: BLE001
+        extras = []
+    restored = not missing_after and not extras and not restore_errors
+    restore_note = ("pre-overwrite SlotsRC membership restored" if restored
+                    else "RESTORE FAILED: pre-overwrite membership "
+                         f"({len(snapshot_pairs)} slot(s)) NOT fully "
+                         f"recovered, missing={missing_after}")
+    detail = "; ".join(errors + restore_errors) or "slot absent on read-back"
+    detail = f"{detail}; {restore_note}"
+    _log.warning("OVERWRITE msa_guid=%s: slot(s) %s not in SlotsRC on "
+                 "read-back (%s)", src_msa_guid, ", ".join(unwritten), detail)
+    for sg in unwritten:
+        skips.append(Skip(
+            category=GrammarCategory.AFFIX_TEMPLATES, source_guid=sg,
+            reason=SkipReason.DEPENDENCY_UNRESOLVED,
+            detail=(f"slot_guid={sg} not in SlotsRC on read-back after "
+                    f"OVERWRITE of msa_guid={src_msa_guid} ({detail})")))
+    affix_slot_links.append(AffixSlotLinkRecord(
+        msa_guid=src_msa_guid, outcome=AffixSlotLinkOutcome.WRITE_FAILED,
+        entry_guid=entry_guid, source_slot_guids=src_slot_guids,
+        unwritten_slot_guids=tuple(unwritten), detail=detail))
+    return skips
+
+
 def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidueTag,
                        interactive_session=None, ws_map=None, dropped=None,
-                       resolver_cache=None):
+                       resolver_cache=None, affix_slot_links=None):
     """Apply a single PlannedOverwrite: look up the target object by GUID,
     pull source's syncable properties, and apply them via flexicon's
     `ApplySyncableProperties`.
@@ -3983,6 +4144,10 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
 
     `dropped` (Feature 024 US2, FIX 1a): the per-run `DroppedItemRecord`
     collector (`execute()`'s `_dropped`, shared with the ADD/closure path).
+    `affix_slot_links` (issue #130): the per-run `AffixSlotLinkRecord`
+    collector (`execute()`'s `_affix_slot_links`); the MSA branch appends a
+    record ONLY when its SlotsRC re-sync did not land (see
+    `_overwrite_msa_slots`). Defaults to a call-local list.
     `resolver_cache` (same feature): the per-run GUID -> resolved/created
     target item cache (`execute()`'s `_resolver_cache`, FR-012 idempotency,
     also shared with the ADD/closure path). Both default to a fresh,
@@ -4000,6 +4165,8 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
     """
     if dropped is None:
         dropped = []
+    if affix_slot_links is None:
+        affix_slot_links = []
     if resolver_cache is None:
         resolver_cache = {}
     cat = overwrite.category
@@ -4401,6 +4568,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             "pos": (str(ICmObject(IMoInflAffMsa(tgt_msa).PartOfSpeechRA).Guid).lower()
                     if IMoInflAffMsa(tgt_msa).PartOfSpeechRA is not None else None),
         }
+        _msa_skips = []
         if src_msa is not None:
             src_ia = IMoInflAffMsa(src_msa)
             new_ia = IMoInflAffMsa(tgt_msa)
@@ -4424,14 +4592,15 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                 if tgt_pos is not None:
                     target_slots_by_guid = {}
                     for sl in target.POS.GetAffixSlots(tgt_pos):
-                        target_slots_by_guid[_guid_str(_unwrap(sl))] = _unwrap(sl)
-                    # Clear + re-add the slot refs from source
-                    new_ia.SlotsRC.Clear()
-                    for src_slot in src_ia.SlotsRC:
-                        src_slot_guid = str(ICmObject(src_slot).Guid).lower()
-                        tgt_slot = target_slots_by_guid.get(src_slot_guid)
-                        if tgt_slot is not None:
-                            new_ia.SlotsRC.Add(tgt_slot)
+                        _slot = _lcm_slot(sl)
+                        target_slots_by_guid[_guid_str(_slot)] = _slot
+                    # Issue #130: snapshot -> guarded Clear+Add -> read-back
+                    # -> restore on failure. See `_overwrite_msa_slots`.
+                    _msa_skips.extend(_overwrite_msa_slots(
+                        src_ia, new_ia, target_slots_by_guid,
+                        src_msa_guid=src_guid, entry_guid=owner_entry_guid,
+                        report_sink=report_sink, dropped=dropped,
+                        affix_slot_links=affix_slot_links))
                 elif len(list(src_ia.SlotsRC)) > 0:
                     # T106: identity AND the natural key both failed, and the
                     # source MSA HAS slot membership to re-sync -- so this is a
@@ -4450,7 +4619,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         cache = getattr(target, "Cache")
         apply_residue(tgt_msa, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  IMoInflAffMsa overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
-        return
+        return _msa_skips
 
     if cat == GrammarCategory.ALLOMORPH:
         from SIL.LCModel import ICmObject, IMoAffixAllomorph
