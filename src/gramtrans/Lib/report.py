@@ -930,9 +930,14 @@ def _affix_slot_link_block(links) -> dict:
             "msa_guid": r.msa_guid,
             "source_slot_guids": list(r.source_slot_guids),
             "unresolved_slot_guids": list(r.unresolved_slot_guids),
+            # Issue #111: resolved slot(s) absent on read-back, and why.
+            "unwritten_slot_guids": list(
+                getattr(r, "unwritten_slot_guids", ()) or ()),
+            "detail": getattr(r, "detail", "") or "",
         }
         for r in links
-        if _enum_name(r.outcome) in ("SLOT_MISSING", "MSA_MISSING")
+        if _enum_name(r.outcome) in (
+            "SLOT_MISSING", "MSA_MISSING", "WRITE_FAILED")
     ]
     return {
         "source_msas_with_a_column": len(links),
@@ -2559,6 +2564,17 @@ def _render_038_lines(report: RunReport) -> Iterable[str]:
                     "destination but its inflectional MSA "
                     f"{_guid8(f['msa_guid'])} is not, so there is nothing "
                     "to place in a column"
+                )
+            if f["outcome"] == "WRITE_FAILED":
+                # Issue #111: the column resolved, the write did not land.
+                unwritten = ",".join(
+                    _guid8(g) for g in f["unwritten_slot_guids"])
+                why = f" ({f['detail']})" if f.get("detail") else ""
+                return (
+                    f"    - [NOT LINKED] affix {who}: template column(s) "
+                    f"{unwritten} are in the destination but not in its "
+                    f"inflectional MSA {_guid8(f['msa_guid'])}'s slots after "
+                    f"the write{why}"
                 )
             missing = ",".join(_guid8(g) for g in f["unresolved_slot_guids"])
             return (
