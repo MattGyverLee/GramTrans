@@ -289,6 +289,18 @@ def _asset_cache(ctx) -> dict:
     return cache
 
 
+_PLANNED_ASSET_HASHES_KEY = "__pictures_planned_asset_hashes__"
+
+
+def _planned_asset_hashes(resolver_cache) -> set:
+    """Preview twin of `_asset_cache`: the run-wide set of source-image content
+    hashes already planned for a copy (issue #146). Stored in the Preview
+    run's own resolver cache; a call-local set when none is supplied."""
+    if not isinstance(resolver_cache, dict):
+        return set()
+    return resolver_cache.setdefault(_PLANNED_ASSET_HASHES_KEY, set())
+
+
 def _target_pictures_dir(ctx) -> str:
     """The target project's `LinkedFiles/Pictures` folder, or "" when
     unresolvable. Never raises."""
@@ -767,7 +779,11 @@ def plan_sense_picture_decisions(src_sense, ctx, resolver_cache, dropped) -> lis
     if not src_pictures:
         return records
     owner_guid = _guid_str(src_sense)
-    seen_hashes: set = set()
+    # Issue #146: Move's asset cache (`_asset_cache(ctx)`) spans the whole run,
+    # so an image shared by pictures on DIFFERENT senses is copied once. The
+    # planned-copy set must span the same scope: it lives in the run's
+    # (Preview-only) resolver cache, not in this per-sense call.
+    seen_hashes = _planned_asset_hashes(resolver_cache)
     for src_pic in src_pictures:
         try:
             src_file = getattr(src_pic, "PictureFileRA", None)
