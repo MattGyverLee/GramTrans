@@ -3200,6 +3200,14 @@ class AffixSlotLinkOutcome(enum.Enum):
     #: as a record rather than dropped so the count remains auditable and the
     #: suppression can never be mistaken for silence.
     NOT_IN_RUN = "not_in_run"
+    #: Issue #111: the MSA AND every slot it references resolved in the
+    #: destination, yet at least one slot is NOT in the MSA's `SlotsRC` when it
+    #: is read back after the write -- the `Add` raised, or returned normally
+    #: and wrote nothing. Before #111 this was reported as LINKED (a mutation
+    #: check with a no-op `Add` produced "LINKED 128" with 0 pairs landed).
+    #: Takes precedence over SLOT_MISSING: a resolved write that did not land
+    #: is the more serious loss, and one record per MSA is SC-003's contract.
+    WRITE_FAILED = "write_failed"
 
 
 @dataclass(frozen=True)
@@ -3223,8 +3231,15 @@ class AffixSlotLinkRecord:
     #: Source slot GUIDs this MSA occupied -- the column(s) being claimed.
     source_slot_guids: tuple = ()
     #: The subset of `source_slot_guids` that could not be resolved in the
-    #: destination. Non-empty exactly when `outcome is SLOT_MISSING`.
+    #: destination. Non-empty when `outcome is SLOT_MISSING`; may also be
+    #: non-empty on WRITE_FAILED (an MSA can lose both ways at once).
     unresolved_slot_guids: tuple = ()
+    #: Issue #111: target slot GUIDs that resolved but are absent from the
+    #: MSA's `SlotsRC` on read-back. Non-empty exactly when WRITE_FAILED.
+    unwritten_slot_guids: tuple = ()
+    #: Issue #111: why the write did not land, when known (e.g. the exception
+    #: an `Add` or the read-back raised). Free text for the report.
+    detail: str = ""
 
     def __post_init__(self) -> None:
         if not self.msa_guid:
@@ -3237,7 +3252,20 @@ class AffixSlotLinkRecord:
                 "about -- an MSA with no source slots is not an FR-019 case "
                 "and must not occupy a row in SC-003's denominator"
             )
-        if self.outcome is AffixSlotLinkOutcome.SLOT_MISSING:
+        if self.outcome is AffixSlotLinkOutcome.WRITE_FAILED:
+            if not self.unwritten_slot_guids:
+                raise ValueError(
+                    "AffixSlotLinkRecord(WRITE_FAILED) MUST name the slot(s) "
+                    "absent on read-back -- an unexplained failure to link "
+                    "is the silent loss FR-019 exists to prevent"
+                )
+        elif self.unwritten_slot_guids:
+            raise ValueError(
+                "AffixSlotLinkRecord names unwritten slots but its outcome "
+                f"is {self.outcome.value!r}, not WRITE_FAILED -- a write that "
+                "did not land must not be reported under another verdict"
+            )
+        elif self.outcome is AffixSlotLinkOutcome.SLOT_MISSING:
             if not self.unresolved_slot_guids:
                 raise ValueError(
                     "AffixSlotLinkRecord(SLOT_MISSING) MUST name the slot(s) "

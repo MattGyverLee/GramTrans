@@ -1678,11 +1678,11 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
       IFsComplexFeatureFactory -- 1-arg Create(Guid) then guarded Add
       (feature 038, T035). Copies
       Name/Abbreviation/Description via the WS-mapped Operations surface
-      (falling back to `_copy_multistrings_ws_mapped`). Wires TypeRA by
-      GUID lookup in `MsFeatureSystemOA.TypesOC` if the target struct-type
-      already exists; otherwise leaves TypeRA for the post-loop tail
-      (`_run_complex_feature_type_ra_pass`, issue #37), because
-      FEATURE_STRUCT_TYPES dispatches AFTER this category.
+      (falling back to `_copy_multistrings_ws_mapped`). Never writes
+      TypeRA: the post-loop tail (`_run_complex_feature_type_ra_pass`,
+      issue #37) is its ONLY writer, even when the target struct-type
+      already exists (issue #110 -- a second writer here made the tail see
+      ALREADY_WIRED, so Move reported fewer writes than Preview's Wire rows).
       No ValuesOC loop -- complex features have no symbolic values.
     - "FsOpenFeature": documented clean skip (Skip(NEEDS_MANUAL)) -- open
       features have no closed value set to sync; no crash, no orphan.
@@ -1805,30 +1805,12 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                     src_feat_typed, new_feat, ("Name", "Abbreviation", "Description"),
                     source=source, target=target, ws_map=ws_map)
 
-            # Wire TypeRA by GUID if the target struct-type already exists.
-            # FEATURE_STRUCT_TYPES dispatches AFTER this category, so in a
-            # single run the type is usually not there yet: leave TypeRA for
-            # the post-loop tail (issue #37), which wires it once every owner
-            # object exists and also repairs a feature left null by an earlier
-            # run.
-            src_type_ra = getattr(src_feat_typed, "TypeRA", None)
-            if src_type_ra is not None:
-                src_type_guid = _guid_str_from(src_type_ra)
-                wired = False
-                for tgt_type in getattr(feature_system, "TypesOC", ()) or ():
-                    if _guid_str_from(tgt_type) == src_type_guid:
-                        new_feat.TypeRA = tgt_type
-                        wired = True
-                        break
-                if not wired:
-                    import logging as _logging
-                    _logging.getLogger("gramtrans.Lib.categories").info(
-                        "inflection_features_execute_action: complex feature "
-                        "%s references struct-type %s not (yet) present in "
-                        "target MsFeatureSystemOA.TypesOC -- TypeRA deferred "
-                        "to the post-loop TypeRA tail pass", src_guid,
-                        src_type_guid,
-                    )
+            # TypeRA is NOT written here (issue #110). The post-loop tail
+            # (`transfer._ensure_complex_feature_type_ra`, issue #37) is its
+            # one writer and one count: it runs after every Move, wires the
+            # edge Preview recorded for this feature, and is what Preview's
+            # "Wire" rows count. Wiring here too when the struct-type already
+            # existed made the tail see ALREADY_WIRED and under-report.
 
             # NO ValuesOC loop -- complex features have no symbolic values.
             apply_carrier_b(new_feat, ws, tag)
@@ -2703,9 +2685,9 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
 # Deep-copy MsFeatureSystemOA.TypesOC (IFsFeatStrucType) from source to
 # target, GUID-preserved, then wire FeaturesRS by resolving each source
 # member IFsFeatDefn GUID against the target's MsFeatureSystemOA.FeaturesOC
-# (populated earlier in the same run by INFLECTION_FEATURES -- see the
-# TypeRA-wiring comment in inflection_features_execute_action, which
-# documents the reverse cross-sub-part dependency).
+# (populated earlier in the same run by INFLECTION_FEATURES -- the reverse
+# cross-sub-part dependency, complex-feature TypeRA, is wired by the
+# post-loop tail; see "complex-feature TypeRA tail wiring (issue #37)").
 #
 # Not GOLD_RESERVED (MULTI_INSTANCE, default UPDATE) -- unlike the sibling
 # PHON_FEAT_TYPES category (PhFeatureSystemOA.TypesOC), which is a later,
@@ -2723,7 +2705,7 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
 # FeaturesRS.Add() is guarded per-member: a member whose GUID has no target
 # counterpart in FeaturesOC is logged and skipped, never crashing the whole
 # type's transfer (partial wiring tolerated, matching the sibling
-# TypeRA-absent degrade-gracefully posture in inflection_features).
+# TypeRA tail's report-and-continue posture for a missing struct-type).
 
 def feature_struct_types_enumerate_source(context: RunContext, selection: Selection):
     """Yield each IFsFeatStrucType from source MsFeatureSystemOA.TypesOC."""
@@ -11376,6 +11358,11 @@ def _run_171_subpass(context, target, tag=None):
         # layer 2); fakes pass through unchanged.
         target_msa = _cast_lcm(target_msa, "IMoInflAffMsa")
         unresolved_slots = []
+        # Issue #111: every slot that resolved, as (target slot, its guid) --
+        # the set the read-back below must find in SlotsRC -- and the first
+        # error any write raised.
+        resolved_slots = []
+        write_errors = []
         for src_slot_guid in src_slot_guids:
             target_slot = _resolve_target_by_guid(target, src_slot_guid)
             if target_slot is None:
@@ -11395,24 +11382,71 @@ def _run_171_subpass(context, target, tag=None):
             # slot, not the bare ICmObject.
             target_slot = _cast_lcm(target_slot, "IMoInflAffixSlot")
             slot_g = _guid_str_from(target_slot)
-            already = any(
-                (existing is target_slot) or (_guid_str_from(existing) == slot_g)
-                for existing in target_msa.SlotsRC
-            )
-            if already:
-                continue
-            target_msa.SlotsRC.Add(target_slot)
+            resolved_slots.append((target_slot, slot_g or src_slot_guid))
+            # Issue #111: a raising membership check or Add is caught HERE, per
+            # slot, and lands on this MSA's record. Uncaught, it used to escape
+            # the whole pass: on the template-tail path it became a leaf
+            # failure blamed on an affix TEMPLATE and every later MSA got no
+            # record at all; on the `_ensure_171_subpass` path it was logged
+            # and swallowed. The read-back below decides the verdict either way.
+            try:
+                already = any(
+                    (existing is target_slot)
+                    or (_guid_str_from(existing) == slot_g)
+                    for existing in target_msa.SlotsRC
+                )
+                if not already:
+                    target_msa.SlotsRC.Add(target_slot)
+            except Exception as exc:  # noqa: BLE001 -- reported, not swallowed
+                write_errors.append(f"{type(exc).__name__}: {exc}")
+        # Issue #111: read SlotsRC BACK. An `Add` that returned normally proves
+        # nothing (the #101 UPDATE read-back lesson); only membership on
+        # read-back earns LINKED.
+        unwritten = _slots_absent_on_readback(target_msa, resolved_slots,
+                                              write_errors)
         # One record per MSA, whichever way it went -- SC-003 needs the run to
         # be able to state its own numerator and denominator, not only its
         # failures. A partially-linked MSA counts as SLOT_MISSING: it did not
-        # occupy every column it occupied in the source.
+        # occupy every column it occupied in the source. A resolved slot that
+        # is absent on read-back is WRITE_FAILED, which takes precedence.
+        if unwritten:
+            outcome = AffixSlotLinkOutcome.WRITE_FAILED
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "17.1 sub-pass: msa_guid=%s: slot(s) %s resolved in the "
+                "destination but are not in SlotsRC on read-back%s",
+                src_msa_guid, ", ".join(unwritten),
+                (" (" + "; ".join(write_errors) + ")") if write_errors else "")
+            # Parity with SLOT_MISSING: a Skip per unwritten slot, so the
+            # run's skip counters move too -- not only the FR-019 panel.
+            # DEPENDENCY_UNRESOLVED is the nearest existing reason; the
+            # detail says what actually happened.
+            for slot_g in unwritten:
+                skips.append(Skip(
+                    category=GrammarCategory.AFFIX_TEMPLATES,
+                    source_guid=slot_g,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=(f"slot_guid={slot_g} resolved in target but is "
+                            "not in SlotsRC on read-back after the write, so "
+                            "affix entry_guid="
+                            f"{owners.get(src_msa_guid, '')} "
+                            f"(msa_guid={src_msa_guid}) is not linked to the "
+                            "template column it occupied in the source"
+                            + (f" ({'; '.join(write_errors)})"
+                               if write_errors else "")),
+                ))
+        elif unresolved_slots:
+            outcome = AffixSlotLinkOutcome.SLOT_MISSING
+        else:
+            outcome = AffixSlotLinkOutcome.LINKED
         _record_affix_slot_link(context, AffixSlotLinkRecord(
             msa_guid=src_msa_guid,
-            outcome=(AffixSlotLinkOutcome.SLOT_MISSING if unresolved_slots
-                     else AffixSlotLinkOutcome.LINKED),
+            outcome=outcome,
             entry_guid=owners.get(src_msa_guid, ""),
             source_slot_guids=src_slots,
             unresolved_slot_guids=tuple(unresolved_slots),
+            unwritten_slot_guids=tuple(unwritten),
+            detail="; ".join(write_errors) if unwritten else "",
         ))
 
     skips.extend(_wire_msa_infl_feats(context, target, plan))
@@ -11452,6 +11486,31 @@ def _run_171_subpass(context, target, tag=None):
     # `transfer._ensure_171_subpass` is its safety net.
     skips.extend(_wire_prod_restrictions(context, target))
     return skips
+
+
+def _slots_absent_on_readback(target_msa, resolved_slots, errors):
+    """Issue #111: which resolved slots are NOT in `target_msa.SlotsRC` now?
+
+    `resolved_slots` is `[(target_slot, slot_guid), ...]`. Membership is by
+    identity (offline fakes) or GUID, the same test the pre-Add membership
+    guard uses. Returns the absent slots' GUIDs in input order.
+
+    A read-back that itself RAISES verifies nothing, so every resolved slot is
+    returned as absent and the exception is appended to `errors` -- never
+    LINKED on no evidence (the #101 "unverified" rule).
+    """
+    if not resolved_slots:
+        return []
+    try:
+        present = list(target_msa.SlotsRC)
+        present_guids = {_guid_str_from(p) for p in present}
+    except Exception as exc:  # noqa: BLE001 -- reported via `errors`
+        errors.append(f"read-back raised {type(exc).__name__}: {exc}")
+        return [g for _, g in resolved_slots]
+    return [
+        g for slot, g in resolved_slots
+        if not (any(p is slot for p in present) or g in present_guids)
+    ]
 
 
 def _wire_prod_restrictions(context, target):
