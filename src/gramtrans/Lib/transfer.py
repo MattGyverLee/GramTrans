@@ -819,6 +819,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                     f" fill raised {type(_fill_exc).__name__}: {_fill_exc}"
                     f"  guid={action.source_guid[:8]}"
                 )
+                # Never-silent (FR-010): a Warning alone is discarded by the
+                # export path; each unfilled collection is a reported drop.
+                _record_unfilled_pos_collections(
+                    action, _dropped,
+                    f"owned-collection fill raised {type(_fill_exc).__name__}:"
+                    f" {_fill_exc}",
+                )
             leaf_count += 1
             leaf_succeeded += 1
             # Issue #49/#68: with no planned destination the expected GUID is
@@ -3033,6 +3040,22 @@ def _pos_writable_collection(obj, field_name):
     return None, None, None
 
 
+def _same_lcm_member(a, b) -> bool:
+    """Identity of two collection members. Every iteration of a pythonnet
+    collection yields FRESH wrapper proxies, so `is` is False for the very
+    same LCM object; compare by GUID, falling back to `is` / `==`."""
+    if a is b:
+        return True
+    cats = _categories_mod()
+    ga, gb = cats._guid_str_from(a), cats._guid_str_from(b)
+    if ga and gb:
+        return ga == gb
+    try:
+        return bool(a == b)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _check_add_only(field_name, before, live, report_sink, src_guid):
     """Warn if the write pass disturbed pre-existing destination content.
 
@@ -3058,7 +3081,7 @@ def _check_add_only(field_name, before, live, report_sink, src_guid):
         )
         return False
     for index, original in enumerate(before):
-        if after[index] is not original:
+        if not _same_lcm_member(after[index], original):
             report_sink.Warning(
                 f"  [enrich] {field_name}: ADD-ONLY VIOLATED -- pre-existing"
                 f" member at index {index} moved or was replaced; enrichment"
@@ -3358,6 +3381,31 @@ def _enrich_owned_collections(overwrite, src_obj, tgt_obj, source, target,
     return measured
 
 
+def _record_unfilled_pos_collections(action, dropped, reason):
+    """Record one `DroppedItemRecord` per POS owned collection that a created
+    POS did NOT receive (#107 never-silent). The POS create itself stays
+    successful; only its children are reported as not reproduced."""
+    if dropped is None:
+        return
+    cats = _categories_mod()
+    if __package__:
+        from .models import POS_OWNED_COLLECTION_FIELDS
+    else:
+        from models import POS_OWNED_COLLECTION_FIELDS  # type: ignore
+    guid = (action.source_guid or "")
+    label = (getattr(action, "summary", "") or "").strip() or guid
+    for field_name in POS_OWNED_COLLECTION_FIELDS:
+        cats._append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind=_ENRICH_OWNER_KIND,
+            owner_guid=guid,
+            owner_label=label,
+            field_name=field_name,
+            item_name="(entire collection)",
+            item_guid="",
+            reason=reason,
+        ))
+
+
 def _fill_created_pos_collections(action, created, source, target, report_sink,
                                   ws_map=None, dropped=None,
                                   planned_action_guids=frozenset()):
@@ -3408,6 +3456,10 @@ def _fill_created_pos_collections(action, created, source, target, report_sink,
         report_sink.Warning(
             f"  [{action.category.value}] created POS: source object not found,"
             f" owned collections NOT filled  guid={src_guid[:8]}"
+        )
+        _record_unfilled_pos_collections(
+            action, dropped,
+            "source POS not found; owned collections of created POS not filled",
         )
         return None
 

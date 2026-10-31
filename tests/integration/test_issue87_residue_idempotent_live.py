@@ -58,6 +58,11 @@ TARGET_NAME = os.environ.get("GT_ISSUE87_TARGET", "Target")
 TARGET_PATH = "C:/ProgramData/SIL/FieldWorks/Projects/%s/%s.fwdata" % (
     TARGET_NAME, TARGET_NAME)
 assert TARGET_NAME not in ("Esperanto", SOURCE_NAME), TARGET_NAME
+# Write-safety: an override may only name a private GT-Sandbox-* project (the
+# unset default, the restored throwaway `Target`, is unchanged).
+assert (TARGET_NAME == "Target"
+        or TARGET_NAME.startswith("GT-Sandbox-")), (
+    "GT_ISSUE87_TARGET must start with 'GT-Sandbox-', got %r" % TARGET_NAME)
 BACKUP_NAME = "Target 2026-07-06 0218.fwbackup"
 N_TEXTS = 4
 

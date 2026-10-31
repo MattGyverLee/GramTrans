@@ -193,6 +193,19 @@ def test_an_unfound_source_pos_is_warned_not_silent():
     assert any("NOT filled" in m for m in sink.warning)
 
 
+def test_an_unfound_source_pos_records_a_drop_per_collection():
+    from gramtrans.Lib.models import POS_OWNED_COLLECTION_FIELDS
+    dropped: list = []
+    transfer._fill_created_pos_collections(
+        _action("pos-gone"), base._FakePOS("pos-gone"),
+        base._FakeProject([]), base._FakeProject([], factories=base._all_factories()),
+        base._Sink(), dropped=dropped)
+    assert sorted(d.field_name for d in dropped) == sorted(
+        POS_OWNED_COLLECTION_FIELDS)
+    assert all(d.owner_guid == "pos-gone" and d.owner_label and d.reason
+               for d in dropped)
+
+
 # ----------------------------------------------------------------------------
 # Wiring: execute()'s leaf loop must call the fill on every successful create
 # ----------------------------------------------------------------------------
@@ -264,3 +277,35 @@ def test_a_failing_fill_does_not_fail_the_pos_create(monkeypatch, _quiet_tail):
     assert rep.leaf_failed == 0
     assert rep.per_category[GrammarCategory.GRAM_CATEGORIES].added == 1
     assert any(lvl == "W" and "collection boom" in m for lvl, m in sink.messages)
+
+
+def test_a_failing_fill_records_a_drop_per_collection(monkeypatch, _quiet_tail):
+    from gramtrans.Lib.models import POS_OWNED_COLLECTION_FIELDS
+
+    def handler(action, ctx, ws, tag):
+        return object()
+
+    def fill(*a, **k):
+        raise RuntimeError("collection boom")
+
+    rep, _sink = _execute(monkeypatch, handler, ["p1"], fill)
+    drops = [d for d in rep.dropped_items if d.owner_guid == "p1"]
+    assert sorted(d.field_name for d in drops) == sorted(
+        POS_OWNED_COLLECTION_FIELDS)
+    assert all("collection boom" in d.reason for d in drops)
+
+
+def test_add_only_check_is_not_fooled_by_fresh_proxy_wrappers():
+    """pythonnet yields NEW wrapper objects on each iteration; the same LCM
+    object (same GUID) at the same index must not be reported as moved."""
+    a, b = base._FakeChild("a"), base._FakeChild("b")
+    a2, b2 = base._FakeChild("a"), base._FakeChild("b")   # distinct proxies
+    sink = base._Sink()
+    assert transfer._check_add_only(
+        "AffixTemplatesOS", [a, b], base._FakeOwningCollection([a2, b2]),
+        sink, "pos-1") is True
+    assert sink.warning == []
+    # a genuinely different member at the index is still a violation
+    assert transfer._check_add_only(
+        "AffixTemplatesOS", [a, b],
+        base._FakeOwningCollection([b2, a2]), sink, "pos-1") is False

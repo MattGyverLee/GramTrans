@@ -28,10 +28,10 @@ What it pins, against SOURCE truth walked independently of the plan:
   * Move 2 (no restore between): the pair set is identical, no SlotsRC holds
     a slot twice, and no SlotsRC count changed.
 
-Deliberately NOT asserted: "zero new objects" on Move 2.  A known, separate
-defect re-creates MoInflAffixSlot / MoInflAffixTemplate objects on a 0-action
-re-run (see test_issue87_residue_idempotent_live.py); #31's idempotency claim
-is about SlotsRC membership only.
+Also asserted (test_move2_creates_no_slot_or_template_objects): Move 2 creates
+no MoInflAffixSlot / MoInflAffixTemplate objects on a 0-action re-run (the
+defect tracked in #107 and fixed by creating a POS's owned collections in the
+same run; see test_issue87_residue_idempotent_live.py).
 """
 from __future__ import annotations
 
