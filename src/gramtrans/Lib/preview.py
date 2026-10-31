@@ -1875,38 +1875,66 @@ def render_config_view_records(plan: RunPlan) -> Tuple[str, ...]:
 # Feature 031 (US1, T010) -- feature->category link Preview rendering
 # ============================================================================
 
-def _target_pos_infl_feat_guids(target, pos_guid):
+def _target_pos_infl_feat_guids(target, pos_guid, *, src_pos=None,
+                                source_handle=None):
     """Return the set of feature GUIDs already in a target POS's
     InflectableFeatsRC, or None when the target can't answer (fail-soft ->
     render as 'Link'). Used only to label already-linked pairs as SKIP (C1
-    DEDUP); never mutates the target."""
-    getter = getattr(target, "get_object_by_guid", None)
-    if getter is None:
-        return None
+    DEDUP); never mutates the target.
+
+    Issue #133: the POS is resolved with `_target_pos_for_source_guid` (a
+    `target.POS.GetAll(recursive=True)` GUID scan, then the roster-admitted
+    natural key) -- the same idiom every other Preview probe uses. The old
+    `target.get_object_by_guid` exists only on offline fakes, so against a
+    live project object `getter is None` made EVERY pair render as "Link"
+    even when it was already wired. `pos_guid` is the SOURCE category GUID, so
+    a category the run reuses by natural key resolves too."""
     try:
-        pos = getter(pos_guid)
-    except Exception:  # noqa: BLE001
+        pos = _target_pos_for_source_guid(
+            target, pos_guid, src_pos=src_pos, source_handle=source_handle)
+    except Exception:  # noqa: BLE001 -- fail-soft, never break Preview
         return None
     if pos is None:
         return None
-    pos_typed = pos
+    pos_typed = _unwrap(pos)
     try:
         from SIL.LCModel import IPartOfSpeech  # noqa: PLC0415
-        pos_typed = IPartOfSpeech(pos)
+        pos_typed = IPartOfSpeech(pos_typed)
     except Exception:  # noqa: BLE001
-        pos_typed = pos
+        pass
     feats_rc = getattr(pos_typed, "InflectableFeatsRC", None)
     if feats_rc is None:
         return None
     out = set()
     try:
         for feat in feats_rc:
-            g = str(getattr(feat, "Guid", getattr(feat, "guid", ""))).lower()
+            g = _guid_str(_unwrap(feat))
             if g:
-                out.add(g)
+                out.add(str(g).lower())
     except (AttributeError, TypeError):
         return None
     return out
+
+
+def _target_feature_present(target, plan, feature_guid) -> bool:
+    """Issue #133: will Move be able to resolve this feature? True when the
+    target already holds it (by GUID, via the same resolver the link pass
+    uses) or this run plans to create it."""
+    fg = str(feature_guid).lower()
+    for a in getattr(plan, "actions", ()) or ():
+        if (getattr(a, "category", None) == GrammarCategory.INFLECTION_FEATURES
+                and str(getattr(a, "source_guid", "")).lower() == fg):
+            return True
+    if target is None:
+        return False
+    if __package__:
+        from . import categories as _cats
+    else:
+        import categories as _cats  # type: ignore
+    try:
+        return _cats._resolve_target_by_guid(target, feature_guid) is not None
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def render_feature_category_links(plan: RunPlan) -> Tuple[str, ...]:
@@ -1922,13 +1950,29 @@ def render_feature_category_links(plan: RunPlan) -> Tuple[str, ...]:
     links = getattr(plan, "feature_category_links", None) or {}
     if not links:
         return ()
-    target = getattr(getattr(plan, "context", None), "target_handle", None)
+    context = getattr(plan, "context", None)
+    target = getattr(context, "target_handle", None)
+    source = getattr(context, "source_handle", None)
     lines: List[str] = ["  Inflection feature -> category links:"]
     for pos_guid in sorted(links):
-        present = _target_pos_infl_feat_guids(target, pos_guid)
+        src_pos = None
+        if source is not None:
+            try:
+                src_pos = _find_pos_by_guid(source, pos_guid)
+            except Exception:  # noqa: BLE001
+                src_pos = None
+        present = _target_pos_infl_feat_guids(
+            target, pos_guid, src_pos=src_pos, source_handle=source)
         for feature_guid in links[pos_guid]:
             already = present is not None and str(feature_guid).lower() in present
-            action = "SKIP (already linked)" if already else "Link"
+            if already:
+                action = "SKIP (already linked)"
+            elif _target_feature_present(target, plan, feature_guid):
+                action = "Link"
+            else:
+                # Move reports this pair as a dependency drop and writes
+                # nothing; Preview must not promise a Link it cannot make.
+                action = "DROP (feature absent from target)"
             lines.append(f"    {action}  POS {pos_guid} <- feature {feature_guid}")
     return tuple(lines)
 

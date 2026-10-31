@@ -255,40 +255,40 @@ def _action(pos_guid: str, feat_guid: str) -> PlannedAction:
     )
 
 
-def test_execute_action_resolved_feat_wires_into_target_pos() -> None:
-    """(a) feat defn GUID present in target FeaturesOC -> Add() called on
-    the matching target POS; returns the target feat."""
+def test_execute_action_records_intent_and_never_writes() -> None:
+    """Issue #133 (single writer): the executor records the (pos, feature)
+    pair as intent in `feature_category_links` and does NOT Add -- the one
+    writer is `_run_infl_feature_link_pass`. It reports not-added so the leaf
+    count never claims a write it did not make."""
     tgt_feat = _FakeFeatDefn("feat-300")
     tgt_pos = _FakePOS("pos-A")
     tgt_pos.InflectableFeatsRC = _FakeAddTrackingList()
     tgt = _FakeTgtProject(poses=(tgt_pos,), features_oc=(tgt_feat,))
     ctx = _ctx(_FakeProject(), tgt)
+    links: dict = {}
+    object.__setattr__(ctx, "_feature_category_links", links)
 
     result = _BUNDLE["execute_action"](
         _action("pos-a", "feat-300"), ctx, WSMapping(), tag=None,
     )
 
-    assert result is tgt_feat
-    assert list(tgt_pos.InflectableFeatsRC) == [tgt_feat]
+    assert result.status == "skipped" and result.recorded is True
+    assert list(tgt_pos.InflectableFeatsRC) == []   # no Add from here
+    assert links == {"pos-a": ["feat-300"]}
 
 
-def test_execute_action_unresolved_feat_returns_none_no_crash(caplog) -> None:
-    """(b) feat defn GUID absent in target FeaturesOC -> None, warning
-    logged, no Add, no crash."""
+def test_execute_action_without_binding_channel_is_skipped_not_written() -> None:
     tgt_pos = _FakePOS("pos-A")
     tgt_pos.InflectableFeatsRC = _FakeAddTrackingList()
-    tgt = _FakeTgtProject(poses=(tgt_pos,), features_oc=())
+    tgt = _FakeTgtProject(poses=(tgt_pos,), features_oc=(_FakeFeatDefn("f"),))
     ctx = _ctx(_FakeProject(), tgt)
 
-    with caplog.at_level("WARNING"):
-        result = _BUNDLE["execute_action"](
-            _action("pos-a", "feat-missing"), ctx, WSMapping(), tag=None,
-        )
+    result = _BUNDLE["execute_action"](
+        _action("pos-a", "f"), ctx, WSMapping(), tag=None,
+    )
 
-    # Issue #68: a decline is an explicit skipped outcome, not None.
-    assert result is not None and result.status == "skipped"
+    assert result.status == "skipped"
     assert list(tgt_pos.InflectableFeatsRC) == []
-    assert any("feat" in rec.message.lower() for rec in caplog.records)
 
 
 def test_execute_action_target_pos_absent_returns_none() -> None:

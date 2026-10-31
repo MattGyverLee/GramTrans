@@ -325,6 +325,45 @@ def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips):
             pass
 
 
+def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
+    """Issue #133: run `categories._run_infl_feature_link_pass` -- the SINGLE
+    writer of a POS's `InflectableFeatsRC` -- once, AFTER the leaf-dispatch
+    loop.
+
+    It used to be anchored to the last INFLECTION_FEATURES action, so a run
+    that planned no feature action (0-action run, or INFLECTION_FEATURES
+    unselected with the features already in the target) never linked
+    anything. Here every POS and feature of the run exists whatever the
+    selection planned, and `plan.feature_category_links` carries the pairs for
+    every in-scope POS (plus the intent rows `pos_inflectable_feats_execute_
+    action` recorded). Own latch; never raises -- a failure must not lose the
+    run's writes.
+    """
+    if getattr(exec_ctx, "_did_infl_feature_link_ensure", False):
+        return
+    if getattr(exec_ctx, "_run_plan", None) is None:
+        return
+    if __package__:
+        from .categories import _run_infl_feature_link_pass
+    else:
+        from categories import _run_infl_feature_link_pass  # type: ignore
+    try:
+        object.__setattr__(exec_ctx, "_did_infl_feature_link_ensure", True)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        late_skips = _run_infl_feature_link_pass(exec_ctx, target, tag)
+    except Exception:
+        _log.exception(
+            "execute: InflectableFeatsRC link pass FAILED (swallowed)")
+        return
+    if late_skips and exec_skips is not None:
+        try:
+            exec_skips.extend(late_skips)
+        except (AttributeError, TypeError):
+            pass
+
+
 def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips):
     """Issue #37: wire `IFsComplexFeature.TypeRA` AFTER the leaf-dispatch
     loop, via `categories._run_complex_feature_type_ra_pass`.
@@ -922,6 +961,10 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # loop above has finished EVERY category (slots included), so all wiring
     # endpoints exist, and `_did_171_subpass` makes this a no-op when the
     # template tail already ran it.
+    # Issue #133: the single InflectableFeatsRC writer, after every POS and
+    # feature of the run exists -- and on a run that planned no action at all.
+    _ensure_infl_feature_links(exec_ctx, target, tag, _exec_skips)
+
     _ensure_171_subpass(exec_ctx, target, tag, _exec_skips)
 
     # T119's feature-structure owner pass, AFTER the 17.1 sub-pass and after
@@ -3135,33 +3178,6 @@ def _check_add_only(field_name, before, live, report_sink, src_guid):
     return True
 
 
-def _add_reference_collection_member(child, live, target):
-    """`InflectableFeatsRC` leg: LINK an existing target `IFsFeatDefn`.
-
-    A REFERENCE collection creates NOTHING (`POS_OWNED_COLLECTION_SPECS` gives
-    this row `factory=None` for exactly that reason). The source child is a
-    feature that must already exist in the destination -- resolved by GUID
-    through `categories._resolve_target_by_guid`, the same resolver
-    `categories._run_infl_feature_link_pass` uses for this very field. An
-    unresolved feature is a REPORTED drop, never a created duplicate.
-
-    Returns `(added_object, reason)`; `added_object is None` means dropped.
-    """
-    cats = _categories_mod()
-    child_guid = cats._guid_str_from(child)
-    if not child_guid:
-        return None, "source feature carries no GUID to resolve against target"
-    target_feat = cats._resolve_target_by_guid(target, child_guid)
-    if target_feat is None:
-        return None, (
-            "referenced IFsFeatDefn is absent from the target -- a reference "
-            "collection links an existing feature and never creates one; "
-            "select INFLECTION_FEATURES so the feature transfers first"
-        )
-    live.Add(target_feat)
-    return target_feat, ""
-
-
 def _create_collection_child(spec, child, receiver, live, target):
     """Create one owned child, GUID preserved, and attach it.
 
@@ -3247,6 +3263,7 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
 
     added = 0
     already_present = 0
+    deferred = 0
     drops: list = []
 
     def _drop(child, reason):
@@ -3280,6 +3297,21 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
             already_present += 1
             continue
 
+        if field_name == "InflectableFeatsRC":
+            # Issue #133: SINGLE WRITER. `categories._run_infl_feature_link_pass`
+            # is the only code that writes a POS's InflectableFeatsRC: it
+            # skips existing pairs, reads the collection back after each Add
+            # and counts only what the read-back confirms. This pass used to
+            # `live.Add` here and count `added` before that pass even ran.
+            # Record the intent (the pair is in `plan.feature_category_links`,
+            # gathered at plan time) and write nothing.
+            deferred += 1
+            report_sink.Info(
+                f"  [enrich] {field_name}: child {(cats._guid_str_from(child) or '')[:8]}"
+                f" left to the single InflectableFeatsRC writer (link pass)"
+            )
+            continue
+
         child_guid = cats._guid_str_from(child)
         if child_guid and child_guid in planned_action_guids:
             # A dedicated category owns this child's create and runs later in
@@ -3304,9 +3336,6 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
             if spec is None:
                 new_child, reason = None, (
                     field_name + " has no OwnedObjectSpec row")
-            elif field_name == "InflectableFeatsRC":
-                new_child, reason = _add_reference_collection_member(
-                    child, live, target)
             else:
                 new_child, reason = _create_collection_child(
                     spec, child, receiver, live, target)
@@ -3325,18 +3354,17 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
         # cannot overwrite anything -- which is why this is the ONLY write the
         # pass makes into a child, and why it happens only for children it
         # created itself.
-        if field_name != "InflectableFeatsRC":
-            try:
-                cats._copy_multistrings_ws_mapped(
-                    child, new_child, _ENRICH_CHILD_SCALARS,
-                    source=source, target=target, ws_map=ws_map or {},
-                )
-            except Exception as exc:  # noqa: BLE001 -- scalar copy is best-effort
-                report_sink.Warning(
-                    f"  [enrich] {field_name}: a child was created but its"
-                    f" scalars did not copy ({type(exc).__name__}: {exc})"
-                    f"  guid={src_guid[:8]}"
-                )
+        try:
+            cats._copy_multistrings_ws_mapped(
+                child, new_child, _ENRICH_CHILD_SCALARS,
+                source=source, target=target, ws_map=ws_map or {},
+            )
+        except Exception as exc:  # noqa: BLE001 -- scalar copy is best-effort
+            report_sink.Warning(
+                f"  [enrich] {field_name}: a child was created but its"
+                f" scalars did not copy ({type(exc).__name__}: {exc})"
+                f"  guid={src_guid[:8]}"
+            )
         added += 1
         candidates.append(new_child)
 
@@ -3348,6 +3376,7 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
         already_present=already_present,
         dropped=len(drops),
         dropped_records=tuple(drops),
+        deferred=deferred,
     ), drops
 
 
@@ -3416,6 +3445,7 @@ def _enrich_owned_collections(overwrite, src_obj, tgt_obj, source, target,
     counts = " | ".join(
         f"{c.field_name}: added={c.added} already_present={c.already_present}"
         f" dropped={c.dropped}"
+        + (f" deferred={c.deferred}" if c.deferred else "")
         for c in rows
     )
     report_sink.Info(
