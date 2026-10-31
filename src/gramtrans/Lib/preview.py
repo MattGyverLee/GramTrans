@@ -2163,6 +2163,139 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
     return tuple(lines)
 
 
+# ============================================================================
+# Issue #144 (Principle III) -- reversal-category and text genre / markup-tag
+# reference decisions
+# ============================================================================
+
+# Max rows per section before the rest collapse into one "+N more" line.
+_REF_DECISION_ROW_CAP = 25
+
+# Same vocabulary and order as `_SENSE_LIST_REF_LABELS`.
+_REF_DECISION_LABELS = (
+    ("create", "Create"),
+    ("update", "Update"),
+    ("link", "Link"),
+    ("report_dropped", "Not transferred"),
+)
+
+
+def _ref_decision_rows(decisions) -> dict:
+    """Aggregate live `ReferenceDecision`s to one row per (action, item GUID)
+    with the number of owners that reference it. The item is named from
+    `source_item` (a CREATE has no `target_item`); a CREATE row also carries
+    the ancestors in its chain (`ancestors_to_create[:-1]`), which Move
+    creates only when the target lacks them."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    rows: dict = {}
+    for d in decisions:
+        act = getattr(getattr(d, "action", None), "value", "")
+        item = getattr(d, "source_item", None)
+        guid = _references._guid_str(item) if item is not None else ""
+        if not guid and getattr(d, "dropped", None) is not None:
+            guid = d.dropped.item_guid
+        row = rows.get((act, guid))
+        if row is None:
+            name = _references._item_label(item) if item is not None else ""
+            if not name and getattr(d, "dropped", None) is not None:
+                name = d.dropped.item_name
+            chain = tuple(getattr(d, "ancestors_to_create", ()) or ())[:-1]
+            rows[(act, guid)] = row = {
+                "name": name,
+                "ancestors": tuple(_references._item_label(a) for a in chain),
+                "count": 0,
+            }
+        row["count"] += 1
+    return rows
+
+
+def _render_ref_decision_section(title: str, rows: dict, unit: str,
+                                 units: str) -> List[str]:
+    """One titled block of Create/Update/Link/Not-transferred rows, capped at
+    `_REF_DECISION_ROW_CAP` rows."""
+    if not rows:
+        return []
+    body: List[str] = []
+    for act, label in _REF_DECISION_LABELS:
+        for key in sorted(k for k in rows if k[0] == act):
+            row = rows[key]
+            n = row["count"]
+            line = (f"    {label}  '{row['name']}' {{{key[1]}}}"
+                    f"  ({n} {unit if n == 1 else units})")
+            if act == "create" and row["ancestors"]:
+                line += (" -- under " + " > ".join(f"'{a}'" for a in row["ancestors"])
+                         + " (created too if absent)")
+            if act == "report_dropped":
+                line += " -- see dropped items for the reason"
+            body.append(line)
+    if len(body) > _REF_DECISION_ROW_CAP:
+        extra = len(body) - _REF_DECISION_ROW_CAP
+        body = body[:_REF_DECISION_ROW_CAP] + [f"    +{extra} more"]
+    lines = [f"  {title}:"] + body
+    if any(k[0] == "create" and rows[k]["count"] > 1 for k in rows):
+        lines.append("    (Created once; the other references link to it.)")
+    return lines
+
+
+def _iter_reversal_pos_decisions(decisions):
+    """Yield every non-None `pos_decision` in a reversal decision tree."""
+    for decision in decisions:
+        if decision.pos_decision is not None:
+            yield decision.pos_decision
+        yield from _iter_reversal_pos_decisions(decision.sub_entry_decisions)
+
+
+def render_reversal_and_text_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #144 (Principle III): render the reference decisions Move applies
+    but Preview never showed --
+
+    * `ReversalDecision.pos_decision` (recursing sub-entries): the reversal
+      entry's `PartOfSpeechRA`, resolved against the reversal index's OWN
+      category list (`reversals._apply_pos_decision`), not the lexicon's
+      parts of speech. An entry with no source category has no decision
+      and no row.
+    * `TextTransferPlan.genre_decisions`: each text's `GenresRC`
+      (`texts._apply_genres`).
+    * `SegmentPlan.tag_decisions`: the text-markup tag each source tag
+      references (`texts._apply_segment_tags`). Move writes tags only into
+      paragraphs it creates, so a text already in the target (UPDATE) gets
+      none -- a note says so when the plan holds one.
+
+    Not-transferred rows point at the dropped-items list, which carries the
+    reason. Returns `()` when the plan holds no such decision."""
+    lines: List[str] = []
+    lines += _render_ref_decision_section(
+        "Reversal categories (each reversal index's own category list)",
+        _ref_decision_rows(_iter_reversal_pos_decisions(
+            getattr(plan, "reversal_decisions", ()) or ())),
+        "reversal entry", "reversal entries")
+    text_plans = getattr(plan, "text_plans", ()) or ()
+    lines += _render_ref_decision_section(
+        "Text genres",
+        _ref_decision_rows(d for tp in text_plans for d in tp.genre_decisions),
+        "text", "texts")
+    tag_rows = _ref_decision_rows(
+        d for tp in text_plans for para in tp.paragraphs
+        for seg in para.segments for d in seg.tag_decisions)
+    tag_lines = _render_ref_decision_section("Text markup tags", tag_rows, "tag", "tags")
+    if tag_lines:
+        matched = sum(
+            1 for tp in text_plans
+            if getattr(tp.disposition, "value", "") == "update"
+            and any(seg.tag_decisions for para in tp.paragraphs
+                    for seg in para.segments))
+        if matched:
+            tag_lines.append(
+                f"    ({matched} text{'s' if matched != 1 else ''} already in "
+                "the target: tags are added only if the target text has no "
+                "paragraphs yet; Move leaves an existing text's structure as-is.)")
+    lines += tag_lines
+    return tuple(lines)
+
+
 def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
     """Compose the Preview-only extra lines -- the reversal Add/Link plan
     (`render_reversal_decisions`), the config-view Add/Overwrite/Skip
@@ -2187,6 +2320,7 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_complex_feature_type_refs(plan))
         + tuple(render_struct_type_features_rs(plan))
         + tuple(render_sense_list_reference_decisions(plan))
+        + tuple(render_reversal_and_text_decisions(plan))
     )
 
 
