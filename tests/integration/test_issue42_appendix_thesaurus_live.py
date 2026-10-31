@@ -531,8 +531,8 @@ def test_preview_create_link_decisions_match_move(live):
     # 5. Move 2: its plan's Preview decisions equal the decisions its
     #    resolvers reach, row for row (no shared CREATE in this run). s3's
     #    references are to items Move 1 created: nothing is created again and
-    #    nothing drops. (They decide UPDATE, not LINK -- a pre-existing CREATE
-    #    fidelity defect this Preview now makes visible; see the strict xfail
+    #    nothing drops. (They decide LINK -- issue #129: the divergence
+    #    fingerprint ignores the import-residue line Move 1 wrote; see
     #    `test_items_created_by_move1_link_on_the_next_run`.)
     s3 = fx["s3"]
     preview2 = [r for r in _ref_rows(_plan_ref_decisions(live["move2"]["plan"]))
@@ -545,15 +545,13 @@ def test_preview_create_link_decisions_match_move(live):
     assert not {a for a in s3_th.values()} & {"create", "report_dropped"}, s3_th
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "pre-existing, found by the #116 live proof: references.apply_reference's "
-    "CREATE arm passes an empty source Description as a plain '' that "
-    "ApplySyncableProperties rejects (TypeError: property is read-only, "
-    "swallowed), and the next run decides UPDATE for items this run created. "
-    "See PR #123 (found-defect section)."))
 def test_items_created_by_move1_link_on_the_next_run(live):
     """An item a run created from the source must be identical to the source,
-    so a later run that references it again decides LINK, not UPDATE."""
+    so a later run that references it again decides LINK, not UPDATE.
+
+    Issue #129: the UPDATE came from `apply_residue`'s `[GT-Tag]:` Description
+    line making the created item's fingerprint differ from the source, not
+    from the (separate) plain-string TypeError on the CREATE arm."""
     fx = live["fx"]
     s3_th = {r[3]: r[2] for r in _ref_rows(_plan_ref_decisions(live["move2"]["plan"]))
              if r[0] == fx["s3"] and r[1] == "ThesaurusItemsRC"}
