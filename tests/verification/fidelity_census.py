@@ -142,6 +142,10 @@ import pytest
 # EXPECTED_MODEL_FIELDS -- the captured live inventory (truth-source)
 # ============================================================================
 
+# Value-field kinds (no LCM type suffix): see FieldSpec.
+_VALUE_KINDS = frozenset({"MU", "INT"})
+
+
 @dataclass(frozen=True)
 class FieldSpec:
     """One REAL owning/reference field on a class, per the injected inventory.
@@ -164,6 +168,9 @@ class FieldSpec:
     the ONLY change `FieldSpec`/`_all_real_fields` needed to carry a value
     field through the SAME never-silent machinery every owning/reference
     field already uses (no other module semantics touched).
+    Issue #114 ADDITION: `kind == "INT"` denotes an Int32 VALUE field (e.g.
+    `LexEntryRef.HideMinorEntry`). Like "MU" it has no LCM type suffix, so
+    `prop` returns `name` unsuffixed for both value kinds.
     """
 
     name: str
@@ -171,7 +178,7 @@ class FieldSpec:
 
     @property
     def prop(self) -> str:
-        if self.kind == "MU":
+        if self.kind in _VALUE_KINDS:
             return self.name
         return f"{self.name}{self.kind}"
 
@@ -230,6 +237,12 @@ EXPECTED_MODEL_FIELDS: dict[str, tuple[FieldSpec, ...]] = {
         FieldSpec("PrimaryLexemes", "RS"),
         FieldSpec("ShowComplexFormsIn", "RS"),
         FieldSpec("VariantEntryTypes", "RS"),
+        # Issue #114: the ref's two VALUE fields, tracked like
+        # ReversalIndexEntry.ReversalForm (kind "MU") because they were found
+        # silently lost -- an untracked value field on an object GramTrans
+        # creates is exactly the gap SC-003/FR-010 forbids.
+        FieldSpec("HideMinorEntry", "INT"),
+        FieldSpec("Summary", "MU"),
     ),
     "LexReference": (
         FieldSpec("Targets", "RS"),
@@ -742,6 +755,34 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
              "emitted for the owning EntryRefsOS row).",
     ),
 
+    # ---- LexEntryRef VALUE fields (issue #114) -----------------------------
+    ("LexEntryRef", "HideMinorEntry"): Classification(
+        Bucket.COPIED,
+        "categories._merge_entryref_value_fields, called from BOTH arms of "
+        "categories._run_entryref_create_pass (the CREATE arm on a fresh ref "
+        "and the INV-1 arm on a ref already on the target); stashed as an int "
+        "by categories._stash_entry_bindings",
+        note="issue #114: was never stashed or written (a hidden minor entry "
+             "arrived visible). Merge rule is conflict._merge_delta (#22 "
+             "Part 1): equal -> no write, differing -> update; int 0 is data "
+             "per conflict._is_empty. A write the read-back does not show is a "
+             "DroppedItemRecord on the ref. A not-reproducible ref is subsumed "
+             "by the LexEntry.EntryRefsOS drop, like the five RS fields.",
+    ),
+    ("LexEntryRef", "Summary"): Classification(
+        Bucket.COPIED,
+        "categories._merge_entryref_value_fields (both arms of "
+        "categories._run_entryref_create_pass); stashed as {source_ws_id: "
+        "text} by categories._stash_entry_bindings and written per "
+        "ws_map-translated TARGET handle",
+        note="issue #114: was never stashed or written (summary text lost). "
+             "Per-alternative merge via conflict._merge_delta (#22 Part 1): "
+             "empty source never blanks, a target-only alternative is never "
+             "touched, a differing alternative is updated. An alternative "
+             "with no target writing system, or one absent on read-back, is a "
+             "DroppedItemRecord on the ref (never silent).",
+    ),
+
     # ---- LexReference ------------------------------------------------------
     ("LexReference", "TargetsRS"): Classification(
         Bucket.COPIED,
@@ -996,8 +1037,8 @@ def test_guard_fires_for_unclassified_property() -> None:
 
 
 def test_expected_model_fields_field_count() -> None:
-    """Sanity check on the captured inventory itself: 79 REAL fields total
-    across the 12 classes (11+15+2+3+6+5+1+9+7+13+3+4), matching the injected
+    """Sanity check on the captured inventory itself: 81 REAL fields total
+    across the 12 classes (11+15+2+3+6+7+1+9+7+13+3+4), matching the injected
     flextoolsMCP-verified/reflection-confirmed snapshot exactly -- guards
     against an accidental edit silently dropping or duplicating a row in
     `EXPECTED_MODEL_FIELDS`. Cycle-17: added `LexExtendedNote` (2 REAL
@@ -1008,7 +1049,9 @@ def test_expected_model_fields_field_count() -> None:
     multistring/IMultiUnicode field like `Discussion`, but is deliberately
     COVERED here (kind="MU", a real COPIED classification) rather than
     excluded, per the (a)/(b) decision documented on its own CLASSIFICATION
-    entry above -- `Discussion` itself remains excluded, unchanged)."""
+    entry above -- `Discussion` itself remains excluded, unchanged). Issue
+    #114: `LexEntryRef` 5 -> 7 (`HideMinorEntry` kind "INT", `Summary` kind
+    "MU" -- the ref's two value fields, found silently lost)."""
     counts = {name: len(fields) for name, fields in EXPECTED_MODEL_FIELDS.items()}
     assert counts == {
         "LexEntry": 11,
@@ -1016,7 +1059,7 @@ def test_expected_model_fields_field_count() -> None:
         "LexExtendedNote": 2,
         "MoStemAllomorph": 3,
         "MoAffixAllomorph": 6,
-        "LexEntryRef": 5,
+        "LexEntryRef": 7,
         "LexReference": 1,
         "MoStemMsa": 9,
         "MoInflAffMsa": 7,
@@ -1024,7 +1067,7 @@ def test_expected_model_fields_field_count() -> None:
         "MoUnclassifiedAffixMsa": 3,
         "ReversalIndexEntry": 4,
     }
-    assert sum(counts.values()) == 79
+    assert sum(counts.values()) == 81
 
 
 # ============================================================================

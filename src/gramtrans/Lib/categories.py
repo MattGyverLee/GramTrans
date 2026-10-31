@@ -5337,6 +5337,7 @@ def _stash_entry_bindings(entry, context):
     create_map = _binding_map(context, "entryref_create_bindings")
     if ref_map is not None or create_map is not None:
         entry_guid = _guid_str_from(entry)
+        src_ws_ids = None  # {handle: ws_id}, enumerated once, lazily
         for ref in getattr(entry, "EntryRefsOS", None) or []:
             comp = [_guid_str_from(x)
                     for x in (getattr(ref, "ComponentLexemesRS", None) or [])]
@@ -5371,6 +5372,18 @@ def _stash_entry_bindings(entry, context):
                         _guid_str_from(x)
                         for x in (getattr(ref, "ShowComplexFormsInRS", None) or [])],
                 }
+                # Issue #114: the two VALUE fields of the ref, stashed as plain
+                # data (an int and a {source_ws_id: text} dict) so C1 can merge
+                # them with `conflict._merge_delta` -- see
+                # `_merge_entryref_value_fields`.
+                if src_ws_ids is None:
+                    src_ws_ids = _ws_id_by_handle(
+                        getattr(context, "source_handle", None))
+                ref_typed = _cast_lcm(ref, "ILexEntryRef")
+                hide = getattr(ref_typed, "HideMinorEntry", None)
+                record["hide_minor_entry"] = int(hide) if hide is not None else None
+                record["summary"] = _multistring_alts_by_ws_id(
+                    getattr(ref_typed, "Summary", None), src_ws_ids)
                 create_map.setdefault(entry_guid, []).append(record)
 
 
@@ -11907,6 +11920,125 @@ def _entryref_type_source(rec):
     return ns, skip
 
 
+def _ws_id_by_handle(project):
+    """`{ws_handle: ws_id}` for every writing system of `project`, or {} when
+    the project exposes none (offline fakes, `object()` handles)."""
+    try:
+        return {ws.Handle: ws.Id for ws in project.WritingSystems.GetAll()}
+    except (AttributeError, TypeError):
+        return {}
+
+
+def _multistring_alts_by_ws_id(multistring, ws_id_by_handle):
+    """`{ws_id: text}` of every NON-EMPTY alternative of `multistring` across
+    the given `{handle: ws_id}` map -- the dict shape `conflict._merge_delta`
+    compares (issue #114). {} for a None multistring."""
+    alts = {}
+    if multistring is None:
+        return alts
+    for handle, ws_id in (ws_id_by_handle or {}).items():
+        try:
+            text = _tss_read_text(multistring.get_String(handle))
+        except Exception:  # noqa: BLE001 -- unreadable alt == absent
+            continue
+        if text:
+            alts[ws_id] = str(text)
+    return alts
+
+
+def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped):
+    """Issue #114: write a LexEntryRef's two VALUE fields -- `HideMinorEntry`
+    (Int32) and `Summary` (IMultiString) -- from the per-ref record stashed by
+    `_stash_entry_bindings`.
+
+    ONE path for both callers in `_run_entryref_create_pass`: the CREATE arm
+    (a fresh ref, so this is a merge against empty) and the INV-1 arm (the ref
+    already exists on the target -- a re-run). The write decision is
+    `conflict._merge_delta`, the single issue #22 Part 1 Merge rule: an empty
+    source never blanks the target, a target-only Summary alternative is never
+    touched, a matching value is not re-written, and a differing non-empty
+    source value is updated. Per `conflict._is_empty`, an int 0 is DATA, not
+    empty: a source `HideMinorEntry == 0` against a target `1` updates the
+    target to 0, exactly as any other scalar field merges.
+
+    Summary alternatives are written at the TARGET handle of the
+    (`ws_map`-translated) writing system, never the raw source handle (the
+    `_copy_multistrings_ws_mapped` rule). Every write is read back; a source
+    alternative with no target writing system, a raising write, or a write the
+    read-back does not show is a `DroppedItemRecord` on the ref -- never
+    silent. Returns the list of field labels actually written (for tests and
+    the log)."""
+    if __package__:
+        from .conflict import _merge_delta
+    else:  # pragma: no cover - script-mode import shim
+        from conflict import _merge_delta  # type: ignore
+    ref_guid = rec.get("ref_guid") or ""
+    label = _LEX_ENTRY_REF_KIND_BY_TYPE.get(
+        rec.get("ref_type"), "RefType=%r" % (rec.get("ref_type"),))
+    written = []
+
+    def _drop(field_name, item_name, reason):
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexEntryRef", owner_guid=ref_guid, owner_label=label,
+            field_name=field_name, item_name=item_name, item_guid="",
+            reason=reason,
+        ))
+
+    src_hide = rec.get("hide_minor_entry")
+    if src_hide is not None:
+        tgt_hide = getattr(target_ref, "HideMinorEntry", None)
+        tgt_hide = int(tgt_hide) if tgt_hide is not None else None
+        if _merge_delta(src_hide, tgt_hide) is not None:
+            try:
+                target_ref.HideMinorEntry = src_hide
+                back = getattr(target_ref, "HideMinorEntry", None)
+            except Exception as exc:  # noqa: BLE001 -- recorded, never silent
+                _drop("HideMinorEntry", str(src_hide),
+                      "HideMinorEntry not written (%s: %s)"
+                      % (type(exc).__name__, exc))
+            else:
+                if back is None or int(back) != src_hide:
+                    _drop("HideMinorEntry", str(src_hide),
+                          "HideMinorEntry not present on read-back "
+                          "(wanted %r, got %r)" % (src_hide, back))
+                else:
+                    written.append("HideMinorEntry")
+
+    src_alts = rec.get("summary") or {}
+    if src_alts:
+        tgt_ms = getattr(target_ref, "Summary", None)
+        if tgt_ms is None:
+            _drop("Summary", ", ".join(sorted(src_alts)),
+                  "Summary unavailable on the target LexEntryRef")
+            return written
+        tgt_ws_ids = _ws_id_by_handle(target)
+        tgt_handle_by_id = {ws_id: h for h, ws_id in tgt_ws_ids.items()}
+        tgt_alts = _multistring_alts_by_ws_id(tgt_ms, tgt_ws_ids)
+        delta = _merge_delta(src_alts, tgt_alts, ws_map=ws_map) or {}
+        mk = _tss_make_string if _is_dotnet(tgt_ms) else _plain_make_string
+        for src_ws, text in delta.items():
+            tgt_ws = ws_map.get(src_ws, src_ws) if ws_map else src_ws
+            handle = tgt_handle_by_id.get(tgt_ws)
+            if handle is None:
+                _drop("Summary", tgt_ws,
+                      "no target writing system for Summary alternative %r "
+                      "(mapped from source %r)" % (tgt_ws, src_ws))
+                continue
+            try:
+                tgt_ms.set_String(handle, mk(text, handle))
+                back = _tss_read_text(tgt_ms.get_String(handle))
+            except Exception as exc:  # noqa: BLE001 -- recorded, never silent
+                _drop("Summary", tgt_ws, "Summary alternative not written "
+                      "(%s: %s)" % (type(exc).__name__, exc))
+                continue
+            if back is None or str(back) != text:
+                _drop("Summary", tgt_ws,
+                      "Summary alternative not present on read-back")
+            else:
+                written.append("Summary@%s" % tgt_ws)
+    return written
+
+
 def _plan_entryref_type_decisions(src_entry, target, resolver_cache, dropped,
                                   source=None):
     """Preview twin of `_run_entryref_create_pass`'s C3 entry-type
@@ -12024,15 +12156,22 @@ def _run_entryref_create_pass(context, target, tag=None):
                         f"{target_entry_guid}"),
             ))
             continue
-        existing_guids = {
-            _guid_str_from(_cast_lcm(r, "ILexEntryRef")) for r in entry_refs
-        }
+        existing_refs = {}
+        for r in entry_refs:
+            r_typed = _cast_lcm(r, "ILexEntryRef")
+            existing_refs[_guid_str_from(r_typed)] = r_typed
         for rec in ref_records:
             ref_guid = rec.get("ref_guid")
             if not ref_guid:
                 continue
-            if ref_guid in existing_guids:
-                continue  # INV-1 idempotency guard -- already reproduced
+            if ref_guid in existing_refs:
+                # INV-1 idempotency guard -- already reproduced, so nothing is
+                # created. Its VALUE fields still merge (issue #114, #22 Part 1:
+                # fill empty / update diverged / never blank); a re-run whose
+                # values already match writes nothing.
+                _merge_entryref_value_fields(
+                    rec, existing_refs[ref_guid], target, ws_map, dropped)
+                continue
             _create_error = None
             try:
                 new_ref = _create_entryref_container(target, ref_guid)
@@ -12071,6 +12210,10 @@ def _run_entryref_create_pass(context, target, tag=None):
                 new_ref_typed.RefType = ref_type
             except (AttributeError, TypeError):
                 pass
+            # Issue #114: HideMinorEntry / Summary (a merge against a fresh,
+            # empty ref -- the same function the INV-1 arm above uses).
+            _merge_entryref_value_fields(
+                rec, new_ref_typed, target, ws_map, dropped)
             # C3: resolve entry-type references now that the container is
             # owned and RefType-correct (`_entryref_type_source`).
             type_src, type_skip = _entryref_type_source(rec)
@@ -12079,7 +12222,7 @@ def _run_entryref_create_pass(context, target, tag=None):
                 resolver_cache, dropped, skip_fields=type_skip,
                 ws_map=ws_map, source=source, owner_guid=ref_guid,
             )
-            existing_guids.add(ref_guid)
+            existing_refs[ref_guid] = new_ref_typed
     return skips
 
 
