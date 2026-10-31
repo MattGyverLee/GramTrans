@@ -345,3 +345,62 @@ def test_msenv_twins_keep_three_arg_signature(fn):
     getattr(owned, fn)(
         t028._FakeAffixAllomorph("a", msenv_pos=t028._FakePOS("pos-abs")),
         t028._FakeCtx(target), [])
+
+
+# ============================================================================
+# Plan-carried decisions: Move's texts leg applies Preview's genre/tag
+# decisions (plan.text_plans) instead of re-deciding, so a planned LINK must
+# be re-bound against Move's cache, never applied as a target-less LINK.
+# ============================================================================
+
+def test_rebind_planned_link_resolves_against_move_cache():
+    fx = _thes_fixture()
+    spec = _spec(fx)
+    preview_cache = _planning()
+    references.decide_reference(fx["C"], fx["target"], spec, preview_cache)
+    planned = references.decide_reference(fx["C"], fx["target"], spec, preview_cache)
+    assert planned.action == ReferenceAction.LINK and planned.target_item is None
+
+    created = object()
+    move_cache = {"c": created}  # Move's first CREATE cached the real item
+    rebound = references.rebind_planned_link(planned, fx["target"], spec, move_cache)
+    assert rebound.action == ReferenceAction.LINK and rebound.target_item is created
+    # Move's first CREATE failed (nothing cached) -> CREATE again, as pre-#146.
+    again = references.rebind_planned_link(planned, fx["target"], spec, {})
+    assert again.action == ReferenceAction.CREATE
+    # Real decisions pass through untouched; the Move cache gets no placeholder.
+    real_link = references.decide_reference(fx["C"], fx["target"], spec, move_cache)
+    assert references.rebind_planned_link(real_link, fx["target"], spec, {}) is real_link
+    assert not any(references.is_planned_create(v) for v in move_cache.values())
+
+
+def test_texts_apply_genres_rebinds_planned_link(monkeypatch):
+    """Two texts share a new genre: Preview plans CREATE then LINK; Move must
+    give BOTH texts the genre (pre-fix-of-the-fix, the second LINK carried
+    target_item=None and linked nothing)."""
+    from types import SimpleNamespace
+    from gramtrans.Lib import texts
+
+    fx = _thes_fixture()
+    target = fx["target"]
+    monkeypatch.setattr(texts, "_genre_spec", lambda: _spec(fx))
+    spec = _spec(fx)
+    preview_cache = _planning()
+    plans = [SimpleNamespace(genre_decisions=(references.decide_reference(
+        fx["C"], target, spec, preview_cache),)) for _ in range(2)]
+    assert [p.genre_decisions[0].action for p in plans] == [
+        ReferenceAction.CREATE, ReferenceAction.LINK]
+
+    applied = []
+
+    def fake_apply(decision, target_, owner, spec_, cache, tag, **k):
+        resolved, _ = _fake_move_apply(None, decision, target_, owner, spec_, cache)
+        applied.append((owner, decision.action, resolved))
+        return resolved
+
+    monkeypatch.setattr(texts._references, "apply_reference", fake_apply)
+    move_cache: dict = {}
+    for i, plan in enumerate(plans):
+        texts._apply_genres(plan, target, "text%d" % i, move_cache, None, None, None, [])
+    assert [a[1] for a in applied] == [ReferenceAction.CREATE, ReferenceAction.LINK]
+    assert applied[0][2] is not None and applied[1][2] is applied[0][2]

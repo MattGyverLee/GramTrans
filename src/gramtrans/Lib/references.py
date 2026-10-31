@@ -751,6 +751,22 @@ def _record_planned_create(ancestors, target_list, cache: dict) -> None:
         cache[anc_guid] = PlannedCreate(leaf_guid)
 
 
+def rebind_planned_link(decision, target, spec, cache, source=None):
+    """Move-side companion for decisions CARRIED OVER from a Preview plan
+    (issue #146; e.g. `texts.py` genre/tag decisions, which Move applies from
+    `plan.text_plans` instead of re-deciding). A planned LINK has no
+    `target_item` -- the item it links to only exists once Move's earlier
+    CREATE has run -- so it is re-decided against Move's own (unmarked) cache
+    right before it is applied. Every other decision is returned unchanged."""
+    if (decision is not None
+            and decision.action == ReferenceAction.LINK
+            and decision.target_item is None
+            and decision.source_item is not None):
+        return decide_reference(decision.source_item, target, spec, cache,
+                                source=source)
+    return decision
+
+
 # ============================================================================
 # T013 -- decide_reference (contracts/reference-resolver.md)
 # ============================================================================

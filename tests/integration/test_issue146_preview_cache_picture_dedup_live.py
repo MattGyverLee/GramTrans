@@ -302,3 +302,138 @@ def test_preview_after_move_links_everything(live):
     rows = _rows(live["preview3"], live["fx"])
     # Entry now present by GUID -> skipped, or every ref is a LINK.
     assert all(r[2] == "link" for r in rows), rows
+
+
+# ============================================================================
+# Plan-carried decisions: Move's texts leg APPLIES Preview's genre decisions
+# (plan.text_plans) rather than re-deciding. Two texts share a new genre G; a
+# third uses a different new genre H (negative control). Preview must show
+# G create then G link, and Move must still give BOTH texts G (a planned LINK
+# carries no target item; Move re-binds it against its own cache).
+# ============================================================================
+
+def _author_texts() -> dict:
+    from SIL.LCModel import (ILangProject, ICmPossibilityList, ICmPossibilityFactory)
+    from System import Guid as DotNetGuid
+    proj = _open(SOURCE_NAME, write=True)
+    try:
+        lp = ILangProject(proj.Cache.LangProject)
+        sl = proj.Cache.ServiceLocator
+        pf = ICmPossibilityFactory(sl.GetService(ICmPossibilityFactory))
+        genres = ICmPossibilityList(lp.GenreListOA)
+        g_new = pf.Create(DotNetGuid.NewGuid(), genres)
+        _name(proj, g_new, "GT146 shared genre")
+        h_new = pf.Create(DotNetGuid.NewGuid(), genres)
+        _name(proj, h_new, "GT146 control genre")
+        texts = [proj.Texts.Create("GT146 text one", genre=g_new),
+                 proj.Texts.Create("GT146 text two", genre=g_new),
+                 proj.Texts.Create("GT146 text three", genre=h_new)]
+        try:
+            proj.Texts.GetGenre(texts[0])
+            getgenre_error = ""
+        except Exception as exc:  # noqa: BLE001
+            getgenre_error = repr(exc)
+        return dict(G=_g(g_new), H=_g(h_new), t=[_g(t) for t in texts],
+                    getgenre_error=getgenre_error)
+    finally:
+        proj.CloseProject()
+
+
+def _text_state(fx) -> dict:
+    from SIL.LCModel import ILangProject, IText
+    from System import Guid
+    proj = _open(TARGET_NAME)
+    try:
+        repo = proj.Cache.ServiceLocator.ObjectRepository
+        lp = ILangProject(proj.Cache.LangProject)
+        out = {"genres": sorted(_g(x) for x in lp.GenreListOA.PossibilitiesOS
+                                if _g(x) in (fx["G"], fx["H"])),
+               "texts": {}}
+        for tg in fx["t"]:
+            try:
+                t = IText(repo.GetObject(Guid.Parse(tg)))
+                out["texts"][tg] = sorted(_g(x) for x in t.GenresRC)
+            except Exception:  # noqa: BLE001
+                out["texts"][tg] = None
+        return out
+    finally:
+        proj.CloseProject()
+
+
+def _genre_rows(plan, fx):
+    idx = {g: i + 1 for i, g in enumerate(fx["t"])}
+    rows = []
+    for tp in getattr(plan, "text_plans", ()) or ():
+        i = idx.get(getattr(tp, "source_guid", ""))
+        if i is None:
+            continue
+        for d in tp.genre_decisions:
+            rows.append((i, d.action.value))
+    return sorted(rows)
+
+
+@pytest.fixture(scope="module")
+def live_texts():
+    from harness import full_run
+    from gramtrans.Lib.models import GrammarCategory as GC, Selection
+
+    def run(fx, preview_only=False):
+        assert TARGET_NAME == "GT-Sandbox-146"  # write guard
+
+        def _sel(_full):
+            return Selection(categories={GC.TEXTS: True},
+                             text_picks=frozenset(fx["t"]), include_closure=True)
+        return full_run.run_full_transfer(
+            SOURCE_NAME, TARGET_NAME, TARGET_PATH, selection_transform=_sel,
+            preview_only=preview_only)
+
+    try:
+        _fork_target()
+        fx = _author_texts()
+        res = {"fx": fx, "pre": _text_state(fx)}
+        res["preview"], _ = run(fx, preview_only=True)
+        res["plan"], res["report"] = run(fx)
+        res["post"] = _text_state(fx)
+        run(fx)
+        res["post2"] = _text_state(fx)
+        print("[LIVE-TEXTS] fixture=%s" % fx)
+        print("[LIVE-TEXTS] preview genre rows=%s" % _genre_rows(res["preview"], fx))
+        print("[LIVE-TEXTS] post=%s" % res["post"])
+        print("[LIVE-TEXTS] post2=%s" % res["post2"])
+        yield res
+    finally:
+        for name in (TARGET_NAME, SOURCE_NAME):
+            try:
+                _restore(name)
+                _clear_pictures(name)
+            except Exception as exc:  # noqa: BLE001
+                print("[WARN] restore of %s failed: %s" % (name, exc))
+
+
+def _xfail_if_genres_unreadable(live_texts):
+    """`texts._decide_genres` reads genres through flexicon `Texts.GetGenre`,
+    which (measured 2026-10-31, flexicon working tree) raises AttributeError
+    ('ILcmReferenceCollection' has no 'FirstOrDefault') -- so NO text genre is
+    planned or transferred at all, independent of #146. The rebind path is
+    then unreachable live (unit-tested instead). Becomes a real assertion as
+    soon as GetGenre works."""
+    err = live_texts["fx"].get("getgenre_error")
+    if err:
+        pytest.xfail("flexicon Texts.GetGenre raises %s; genre path dead live" % err)
+
+
+def test_texts_preview_genre_create_then_link(live_texts):
+    _xfail_if_genres_unreadable(live_texts)
+    assert _genre_rows(live_texts["preview"], live_texts["fx"]) == [
+        (1, "create"), (2, "link"), (3, "create")]
+
+
+def test_texts_move_links_shared_genre_on_both_texts(live_texts):
+    _xfail_if_genres_unreadable(live_texts)
+    fx, pre, post = live_texts["fx"], live_texts["pre"], live_texts["post"]
+    assert pre["genres"] == [] and all(v is None for v in pre["texts"].values())
+    assert post["genres"] == sorted([fx["G"], fx["H"]])   # each created once
+    t1, t2, t3 = (post["texts"][g] for g in fx["t"])
+    assert t1 == t2 == [fx["G"]]                          # 2nd text still linked
+    assert t3 == [fx["H"]]
+    assert live_texts["post2"] == post                    # idempotent
