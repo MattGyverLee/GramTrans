@@ -1655,6 +1655,25 @@ def build_run_plan(
         _run_scope_guids((GrammarCategory.SLOTS,), actions, overwrites, skips),
     )
 
+    # Issue #108: the struct-type `FeaturesRS` edges the post-loop Move pass
+    # repairs. Gathered HERE, after the closure pull-in, because a pull-in
+    # plans struct-types without switching their category on; and gathered
+    # from the source rather than inside a planner, because the repairing
+    # re-run plans no action for the (already present) type. The drops it
+    # projects go into `_dropped` so Preview reports what Move will report.
+    if __package__:
+        from . import categories as _cats108
+    else:
+        import categories as _cats108  # type: ignore
+    try:
+        _struct_type_feature_refs = _cats108.gather_struct_type_feature_refs(
+            context, selection, actions)
+        _cats108.plan_struct_type_features_rs_drops(
+            _struct_type_feature_refs, target, actions, _dropped)
+    except Exception:  # noqa: BLE001 -- never break Preview; logged
+        _log.exception("build_run_plan: struct-type FeaturesRS gather failed")
+        _struct_type_feature_refs = {}
+
     # Feature 038 (T073, FR-017, SC-010): the edges now say what was refused
     # or unreachable; this is what tells the user which items therefore ARRIVE
     # INCOMPLETE. Read after the pull-in, because "is the dependency
@@ -1713,6 +1732,8 @@ def build_run_plan(
         feature_category_links=_feature_category_links,
         # Issue #37: gathered complex-feature TypeRA edges.
         complex_feature_type_refs=_complex_feature_type_refs,
+        # Issue #108: gathered struct-type FeaturesRS edges.
+        struct_type_feature_refs=_struct_type_feature_refs,
         excluded_lossy=tuple(excluded_lossy),
         # QC P1 (cycle-1 review, feature 024): carry the read-only resolver's
         # projected drops into the plan so Preview is symmetric with Move
@@ -1958,6 +1979,66 @@ def render_complex_feature_type_refs(plan: RunPlan) -> Tuple[str, ...]:
     return tuple(lines)
 
 
+def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #108 (Principle III): render `plan.struct_type_feature_refs` --
+    one row per in-scope struct-type (both feature systems), classified by
+    the SAME `categories._classify_struct_type_features_rs` the Move pass
+    runs, with this run's planned creates counted as present. The number of
+    **Repair** rows equals the number of `FeaturesRS` rewrites Move makes.
+    Unresolvable members and preserved target-only members get their own
+    REPORT rows. Returns `()` when nothing is in scope."""
+    refs = getattr(plan, "struct_type_feature_refs", None) or {}
+    if not refs:
+        return ()
+    if __package__:
+        from . import categories as _cats
+    else:
+        import categories as _cats  # type: ignore
+    target = getattr(getattr(plan, "context", None), "target_handle", None)
+    planned_feats, planned_types = _cats._planned_feature_system_guids(
+        getattr(plan, "actions", ()) or ())
+    labels = {
+        _cats.FEATURES_RS_REPAIR: "Repair",
+        _cats.FEATURES_RS_REORDERED: "SKIP (reordered in target, left as-is)",
+        _cats.FEATURES_RS_COMPLETE: "SKIP (already complete)",
+        _cats.FEATURES_RS_CREATE_WIRED: "Wire at create",
+    }
+    lines: List[str] = ["  Struct-type FeaturesRS (member features, source order):"]
+    for type_guid in sorted(refs):
+        ref = refs[type_guid]
+        try:
+            outcome, _t, desired, unresolved, target_only = (
+                _cats._classify_struct_type_features_rs(
+                    target, ref["system"], type_guid, ref["members"],
+                    planned_feat_guids=planned_feats,
+                    planned_type_guids=planned_types))
+        except Exception:  # noqa: BLE001 -- render must never break Preview
+            lines.append(f"    REPORT (could not classify)  type {type_guid}")
+            continue
+        if outcome == _cats.FEATURES_RS_TYPE_ABSENT:
+            continue
+        # Never print a target sequence we do not write: Repair lists only
+        # the members it INSERTS (insert-only; existing members untouched);
+        # Wire-at-create shows source order; the rest name just the type.
+        if outcome == _cats.FEATURES_RS_REPAIR:
+            tail = f" insert {list(desired)}"
+        elif outcome == _cats.FEATURES_RS_CREATE_WIRED:
+            tail = f" -> {list(desired)} (source order)"
+        else:
+            tail = ""
+        lines.append(f"    {labels.get(outcome, outcome)}  "
+                     f"[{ref['system']}] type {type_guid}{tail}")
+        for g, _label in unresolved:
+            lines.append(f"    REPORT (member feature unavailable)  "
+                         f"type {type_guid} member {g}")
+        for g in target_only:
+            lines.append(f"    REPORT (target-only member kept)  "
+                         f"type {type_guid} member {g}")
+    if len(lines) == 1:
+        return ()
+    return tuple(lines)
+
+
 # Issue #116: the sense fields whose resolver decisions the Preview pane
 # itemizes. Feature 030's two fields only -- they are the ones that can CREATE
 # new possibility-list items (thesaurus) or LINK project-level appendixes the
@@ -2049,6 +2130,7 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_config_view_records(plan))
         + tuple(render_feature_category_links(plan))
         + tuple(render_complex_feature_type_refs(plan))
+        + tuple(render_struct_type_features_rs(plan))
         + tuple(render_sense_list_reference_decisions(plan))
     )
 

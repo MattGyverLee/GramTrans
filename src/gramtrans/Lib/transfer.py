@@ -364,6 +364,46 @@ def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips):
             pass
 
 
+def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips):
+    """Issue #108: repair `IFsFeatStrucType.FeaturesRS` (both feature
+    systems) AFTER the leaf-dispatch loop, via
+    `categories._run_struct_type_features_rs_pass`.
+
+    The create paths wire `FeaturesRS` only when the type is created; a type
+    created before its member defns existed stayed incomplete forever,
+    because every later run plans it ALREADY_PRESENT_BY_GUID. The repairing
+    re-run plans no action in the types or the features category, so this
+    cannot be an action-anchored `_run_tail_once` tail; here, after every
+    category, all endpoints of the run exist whatever the selection planned.
+
+    Own latch (never shared with the #37 TypeRA pass); never raises -- a
+    failure must not lose the writes the run already made.
+    """
+    if getattr(exec_ctx, "_did_struct_type_features_rs", False):
+        return
+    if getattr(exec_ctx, "_run_plan", None) is None:
+        return
+    if __package__:
+        from .categories import _run_struct_type_features_rs_pass
+    else:
+        from categories import _run_struct_type_features_rs_pass  # type: ignore
+    try:
+        object.__setattr__(exec_ctx, "_did_struct_type_features_rs", True)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        late_skips = _run_struct_type_features_rs_pass(exec_ctx, target)
+    except Exception:
+        _log.exception(
+            "execute: struct-type FeaturesRS repair pass FAILED (swallowed)")
+        return
+    if late_skips and exec_skips is not None:
+        try:
+            exec_skips.extend(late_skips)
+        except (AttributeError, TypeError):
+            pass
+
+
 def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             interactive_session=None) -> RunReport:
     """Apply `plan.actions` to `target` and return a finalized RunReport.
@@ -872,6 +912,10 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Issue #37: complex-feature TypeRA, after every feature and struct-type
     # of the run exists -- and on a re-run that planned neither.
     _ensure_complex_feature_type_ra(exec_ctx, target, _exec_skips)
+
+    # Issue #108: struct-type FeaturesRS, after every feature defn and
+    # struct-type of the run exists -- and on a re-run that planned neither.
+    _ensure_struct_type_features_rs(exec_ctx, target, _exec_skips)
 
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check
