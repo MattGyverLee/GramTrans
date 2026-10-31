@@ -2060,6 +2060,35 @@ _SENSE_LIST_REF_LABELS = (
     ("report_dropped", "Not transferred"),
 )
 
+# Issue #147: the most rows the sense-list renderer itemizes PER ACTION KIND
+# (create / update / link / not transferred). Per kind, not overall, so a
+# flood of LINK rows can never crowd CREATE or not-transferred rows out of
+# the pane. 25 matches `merge_preview._LIST_ITEM_LIMIT`, the other Preview
+# list cap. Rows held back are counted on an explicit "... and N more" line
+# (`_capped_rows`); nothing is dropped silently.
+SENSE_LIST_REF_ROW_CAP = 25
+
+
+def _capped_rows(lines, cap: int, noun: str, indent: str = "    ",
+                 suffix: str = "") -> List[str]:
+    """Return at most `cap` of `lines`, plus -- if and only if some were held
+    back -- one line saying how many, e.g.
+    ``"    ... and 7 more Create rows not shown here (32 total)"``.
+
+    The count is computed from the very sequence that was sliced, so it
+    cannot drift (the same property `report._rows` documents). `suffix` is
+    appended inside the parentheses and must only name a place that really
+    lists every held-back row. Unlike `report._rows`, this promises no
+    run-report JSON artifact, which Preview-only lines do not have."""
+    lines = list(lines)
+    total = len(lines)
+    out = lines[:cap]
+    omitted = total - len(out)
+    if omitted:
+        out.append(f"{indent}... and {omitted} more {noun} not shown here "
+                   f"({total} total{suffix})")
+    return out
+
 
 def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
     """Issue #116 (030 FR-008, Principle III): render the CREATE / LINK /
@@ -2074,6 +2103,12 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
     also creates (`ReferenceDecisionRecord.new_ancestors`). Not-transferred
     rows point at the dropped-items list, which carries the reason. Returns
     `()` when no action carries a decision for these fields.
+
+    Issue #147: rows are capped at `SENSE_LIST_REF_ROW_CAP` per action kind.
+    Create / Update / Not-transferred rows beyond the cap are counted on one
+    "... and N more" line. LINK rows (no change to the target) are itemized
+    while they fit under the cap -- so a small run still shows which shared
+    appendixes it links -- and above it collapse to one count line per field.
 
     Note: later references to an item created earlier in this run show as
     create; Move links them."""
@@ -2096,7 +2131,23 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
         return ()
     lines: List[str] = ["  Sense appendix / thesaurus references:"]
     for act, label in _SENSE_LIST_REF_LABELS:
-        for (field, a, guid) in sorted(k for k in rows if k[1] == act):
+        keys = sorted(k for k in rows if k[1] == act)
+        if act == "link" and len(keys) > SENSE_LIST_REF_ROW_CAP:
+            # Issue #147: collapse to one count line per field.
+            for field in _SENSE_LIST_REF_FIELDS:
+                fkeys = [k for k in keys if k[0] == field]
+                if not fkeys:
+                    continue
+                owners = set().union(*(rows[k]["owners"] for k in fkeys))
+                n, m = len(fkeys), len(owners)
+                lines.append(
+                    f"    {label}  {field}: {n} item{'s' if n != 1 else ''}"
+                    f" already in the target  ({m} sense"
+                    f"{'s' if m != 1 else ''}) -- itemized list collapsed "
+                    f"above {SENSE_LIST_REF_ROW_CAP} rows")
+            continue
+        kind_lines: List[str] = []
+        for (field, a, guid) in keys:
             row = rows[(field, a, guid)]
             n = len(row["owners"])
             line = (f"    {label}  {field} '{row['name']}' {{{guid}}}"
@@ -2106,10 +2157,148 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
                     f"'{name}' {{{g}}}" for name, g in row["ancestors"])
             if act == "report_dropped":
                 line += " -- see dropped items for the reason"
-            lines.append(line)
+            kind_lines.append(line)
+        lines.extend(_capped_rows(
+            kind_lines, SENSE_LIST_REF_ROW_CAP, f"{label} rows",
+            suffix=("; the dropped-items list names every one"
+                    if act == "report_dropped" else "")))
     if any(k[1] == "create" for k in rows):
         lines.append("    (Later references to an item created earlier in this "
                      "run show as create; Move links them.)")
+    return tuple(lines)
+
+
+# ============================================================================
+# Issue #144 (Principle III) -- reversal-category and text genre / markup-tag
+# reference decisions
+# ============================================================================
+
+# Row cap: shares `SENSE_LIST_REF_ROW_CAP` (single source of truth). Rows past
+# it collapse into one "+N more" line. #147's `_capped_rows` is NOT reused
+# because it emits a different string ("... and N more ... not shown here").
+
+# Same vocabulary and order as `_SENSE_LIST_REF_LABELS`.
+_REF_DECISION_LABELS = (
+    ("create", "Create"),
+    ("update", "Update"),
+    ("link", "Link"),
+    ("report_dropped", "Not transferred"),
+)
+
+
+def _ref_decision_rows(decisions) -> dict:
+    """Aggregate live `ReferenceDecision`s to one row per (action, item GUID)
+    with the number of owners that reference it. The item is named from
+    `source_item` (a CREATE has no `target_item`); a CREATE row also carries
+    the ancestors in its chain (`ancestors_to_create[:-1]`), which Move
+    creates only when the target lacks them."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    rows: dict = {}
+    for d in decisions:
+        act = getattr(getattr(d, "action", None), "value", "")
+        item = getattr(d, "source_item", None)
+        guid = _references._guid_str(item) if item is not None else ""
+        if not guid and getattr(d, "dropped", None) is not None:
+            guid = d.dropped.item_guid
+        row = rows.get((act, guid))
+        if row is None:
+            name = _references._item_label(item) if item is not None else ""
+            if not name and getattr(d, "dropped", None) is not None:
+                name = d.dropped.item_name
+            chain = tuple(getattr(d, "ancestors_to_create", ()) or ())[:-1]
+            rows[(act, guid)] = row = {
+                "name": name,
+                "ancestors": tuple(_references._item_label(a) for a in chain),
+                "count": 0,
+            }
+        row["count"] += 1
+    return rows
+
+
+def _render_ref_decision_section(title: str, rows: dict, unit: str,
+                                 units: str) -> List[str]:
+    """One titled block of Create/Update/Link/Not-transferred rows, capped at
+    `SENSE_LIST_REF_ROW_CAP` rows."""
+    if not rows:
+        return []
+    body: List[str] = []
+    for act, label in _REF_DECISION_LABELS:
+        for key in sorted(k for k in rows if k[0] == act):
+            row = rows[key]
+            n = row["count"]
+            line = (f"    {label}  '{row['name']}' {{{key[1]}}}"
+                    f"  ({n} {unit if n == 1 else units})")
+            if act == "create" and row["ancestors"]:
+                line += (" -- under " + " > ".join(f"'{a}'" for a in row["ancestors"])
+                         + " (created too if absent)")
+            if act == "report_dropped":
+                line += " -- see dropped items for the reason"
+            body.append(line)
+    if len(body) > SENSE_LIST_REF_ROW_CAP:
+        extra = len(body) - SENSE_LIST_REF_ROW_CAP
+        body = body[:SENSE_LIST_REF_ROW_CAP] + [f"    +{extra} more"]
+    lines = [f"  {title}:"] + body
+    if any(k[0] == "create" and rows[k]["count"] > 1 for k in rows):
+        lines.append("    (Created once; the other references link to it.)")
+    return lines
+
+
+def _iter_reversal_pos_decisions(decisions):
+    """Yield every non-None `pos_decision` in a reversal decision tree."""
+    for decision in decisions:
+        if decision.pos_decision is not None:
+            yield decision.pos_decision
+        yield from _iter_reversal_pos_decisions(decision.sub_entry_decisions)
+
+
+def render_reversal_and_text_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #144 (Principle III): render the reference decisions Move applies
+    but Preview never showed --
+
+    * `ReversalDecision.pos_decision` (recursing sub-entries): the reversal
+      entry's `PartOfSpeechRA`, resolved against the reversal index's OWN
+      category list (`reversals._apply_pos_decision`), not the lexicon's
+      parts of speech. An entry with no source category has no decision
+      and no row.
+    * `TextTransferPlan.genre_decisions`: each text's `GenresRC`
+      (`texts._apply_genres`).
+    * `SegmentPlan.tag_decisions`: the text-markup tag each source tag
+      references (`texts._apply_segment_tags`). Move writes tags only into
+      paragraphs it creates, so a text already in the target (UPDATE) gets
+      none -- a note says so when the plan holds one.
+
+    Not-transferred rows point at the dropped-items list, which carries the
+    reason. Returns `()` when the plan holds no such decision."""
+    lines: List[str] = []
+    lines += _render_ref_decision_section(
+        "Reversal categories (each reversal index's own category list)",
+        _ref_decision_rows(_iter_reversal_pos_decisions(
+            getattr(plan, "reversal_decisions", ()) or ())),
+        "reversal entry", "reversal entries")
+    text_plans = getattr(plan, "text_plans", ()) or ()
+    lines += _render_ref_decision_section(
+        "Text genres",
+        _ref_decision_rows(d for tp in text_plans for d in tp.genre_decisions),
+        "text", "texts")
+    tag_rows = _ref_decision_rows(
+        d for tp in text_plans for para in tp.paragraphs
+        for seg in para.segments for d in seg.tag_decisions)
+    tag_lines = _render_ref_decision_section("Text markup tags", tag_rows, "tag", "tags")
+    if tag_lines:
+        matched = sum(
+            1 for tp in text_plans
+            if getattr(tp.disposition, "value", "") == "update"
+            and any(seg.tag_decisions for para in tp.paragraphs
+                    for seg in para.segments))
+        if matched:
+            tag_lines.append(
+                f"    ({matched} text{'s' if matched != 1 else ''} already in "
+                "the target: tags are added only if the target text has no "
+                "paragraphs yet; Move leaves an existing text's structure as-is.)")
+    lines += tag_lines
     return tuple(lines)
 
 
@@ -2165,6 +2354,7 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_complex_feature_type_refs(plan))
         + tuple(render_struct_type_features_rs(plan))
         + tuple(render_sense_list_reference_decisions(plan))
+        + tuple(render_reversal_and_text_decisions(plan))
         + tuple(render_lexical_relation_decisions(plan))
     )
 

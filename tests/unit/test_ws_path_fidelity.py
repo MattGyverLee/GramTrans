@@ -437,6 +437,9 @@ def run_phase2_with_ws_failure(monkeypatch, patched_api):
     monkeypatch.setattr(gt, "collect_overwrite_conflicts", lambda *a: [])
     monkeypatch.setattr(gt, "execute", _fake_execute)
     monkeypatch.setattr(gt, "render_text_summary", lambda r: [])
+    # Issue #145: phase2 now renders the Preview extra lines; the `_Plan`
+    # stub carries none of the fields those renderers read.
+    monkeypatch.setattr(gt, "render_preview_extra_lines", lambda p: ())
     monkeypatch.setattr(patched_api, "_ensure_writing_systems", _fake_ensure)
 
     report = _Report()
