@@ -50,7 +50,8 @@ if not _LIVE:
                 allow_module_level=True)
 
 SOURCE_NAME = "Ngoreme"                # READ-ONLY
-TARGET_NAME = "GT-Sandbox-31"          # the ONLY project this module writes
+TARGET_NAME = os.environ.get(           # the ONLY project this module writes
+    "GT_ISSUE31_SANDBOX", "GT-Sandbox-31")
 BACKUP_NAME = "Target 2026-07-06 0218.fwbackup"
 _PROJECTS_ROOT = Path(os.environ.get(
     "GRAMTRANS_PROJECTS_ROOT", "C:/ProgramData/SIL/FieldWorks/Projects"))
@@ -139,7 +140,7 @@ def _link_tally(report) -> Counter:
 @pytest.fixture(scope="module")
 def live():
     """Restore the sandbox, run Move 1 and Move 2, collect evidence."""
-    assert TARGET_NAME == "GT-Sandbox-31" and TARGET_NAME != SOURCE_NAME
+    assert TARGET_NAME.startswith("GT-Sandbox-") and TARGET_NAME != SOURCE_NAME
     if not SOURCE_FWDATA.is_file():
         pytest.fail("[FAIL] source %s not found" % SOURCE_FWDATA)
     try:
