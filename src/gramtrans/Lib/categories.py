@@ -2888,7 +2888,9 @@ def feature_struct_types_execute_action(
                 if tgt_defn is None:
                     log.warning(
                         "feature_struct_types_execute_action: source defn GUID %s "
-                        "has no target counterpart in FeaturesOC -- skipping member.",
+                        "has no target counterpart in FeaturesOC -- member deferred "
+                        "to the FeaturesRS repair pass (issue #108), which reports "
+                        "it as dropped if it is still missing.",
                         defn_guid,
                     )
                     continue
@@ -3128,7 +3130,9 @@ def phon_feat_types_execute_action(
                 if tgt_defn is None:
                     log.warning(
                         "phon_feat_types_execute_action: source defn GUID %s "
-                        "has no target counterpart in FeaturesOC -- skipping member.",
+                        "has no target counterpart in FeaturesOC -- member deferred "
+                        "to the FeaturesRS repair pass (issue #108), which reports "
+                        "it as dropped if it is still missing.",
                         defn_guid,
                     )
                     continue
@@ -3154,6 +3158,371 @@ def phon_feat_types_execute_action(
         pass
 
     return new_type
+
+
+# ----- struct-type FeaturesRS repair pass (issue #108) ----------------------
+#
+# `IFsFeatStrucType.FeaturesRS` (FEATURE_STRUCT_TYPES, and the phonological
+# twin PHON_FEAT_TYPES) is wired by the two create paths above and nowhere
+# else. A type created before its member feature definitions exist in the
+# target -- types selected without features, or (issue #108's comment) a
+# STEMS/AFFIXES run whose closure pulls the type through
+# MSA_TO_FEAT_STRUC_TYPE but not the defns its `FeaturesRS` names -- arrives
+# partially wired. Every later run plans that type ALREADY_PRESENT_BY_GUID, so
+# before #108 nothing ever completed it. Same shape as #37 (`TypeRA`), one
+# link over, and fixed the same way: Preview gathers the edges into
+# `RunPlan.struct_type_feature_refs`, Move repairs them in a pass that runs
+# AFTER the leaf-dispatch loop (`transfer._ensure_struct_type_features_rs`).
+# Not on `_run_tail_once`: the repairing re-run plans no action in either the
+# types or the features category, so an action-anchored tail never fires.
+#
+# ORDERING POLICY (insert-only, domain Q1). `FeaturesRS` is an ORDERED
+# reference sequence, but the target's existing order is the user's:
+#   S = the source type's members that resolve in the target (by GUID), in
+#       source order; C = the target type's current `FeaturesRS`.
+#   * REPAIR iff some member of S is absent from C: each missing member is
+#     INSERTED at its source-relative position (after its nearest present
+#     source predecessor, else before its nearest present successor, else at
+#     the start). Nothing already in C is moved or removed (no RemoveAt).
+#   * COMPLETE (no write) iff every member of S is in C and C restricted to S
+#     is in source order. Target-only members may sit anywhere in C.
+#   * REORDERED iff every member of S is in C but the shared members' order
+#     differs from source: NOT written; reported as a Skip in Preview and
+#     Move alike ("reordered in target, left as-is").
+#   * Target-only members (in C, not in the source type) are NEVER removed.
+#     Each one is REPORTED as Skip(NEEDS_MANUAL) on every run that touches
+#     the feature system -- the target owns that decision.
+#   * A source member whose defn is not in the target is reported as a
+#     `DroppedItemRecord` (field `FeaturesRS`), not only a log line, and is
+#     picked up by the first later run in which the defn exists.
+# Source [A, B], create-time target [B] (A arrived later): A is inserted
+# before B -> [A, B]; a complete sequence is never touched, so a third run
+# writes nothing.
+#
+# ONE classifier, TWO consumers (Principle III): Preview's
+# `render_struct_type_features_rs` and the Move pass both call
+# `_classify_struct_type_features_rs`, so each "Repair" row Preview shows is
+# exactly one `FeaturesRS` rewrite Move makes.
+
+#: system key -> (feature-system attr, types category, features category).
+STRUCT_TYPE_FEATURE_SYSTEMS = {
+    "ms": ("MsFeatureSystemOA", GrammarCategory.FEATURE_STRUCT_TYPES,
+           GrammarCategory.INFLECTION_FEATURES),
+    "ph": ("PhFeatureSystemOA", GrammarCategory.PHON_FEAT_TYPES,
+           GrammarCategory.PHONOLOGICAL_FEATURES),
+}
+
+#: `_classify_struct_type_features_rs` outcomes.
+FEATURES_RS_COMPLETE = "complete"
+FEATURES_RS_REPAIR = "repair"          # insert missing members (insert-only)
+FEATURES_RS_REORDERED = "reordered"    # complete, shared order differs: Skip
+FEATURES_RS_CREATE_WIRED = "create_wired"  # planned create; the create path wires it
+FEATURES_RS_TYPE_ABSENT = "type_absent"    # not in the target, not planned: out of scope
+
+
+def _target_feature_system(target, attr):
+    """`target.Cache.LangProject.<attr>` (Ms/PhFeatureSystemOA), or None."""
+    try:
+        return getattr(target.Cache.LangProject, attr)
+    except Exception:  # noqa: BLE001 -- unbound/duck-typed target
+        return None
+
+
+def _features_rs_guids(struct_type):
+    """Current `FeaturesRS` of a target struct-type as (guid, obj) pairs."""
+    seq = getattr(_cast_lcm(struct_type, "IFsFeatStrucType"), "FeaturesRS",
+                  None)
+    out = []
+    for d in seq or ():
+        g = _guid_str_from(d)
+        if g:
+            out.append((g, d))
+    return out
+
+
+def gather_struct_type_feature_refs(context, selection, actions) -> dict:
+    """Preview: record every in-scope source struct-type's `FeaturesRS`.
+
+    Returns `{type_guid: {"system": "ms"|"ph", "label": str,
+    "members": ((member_guid, member_label), ...)}}` with members in source
+    order. Labels ride along because Move's pass only has the plan to build
+    its `DroppedItemRecord`s from.
+
+    A feature system is in scope when its types or features category is
+    selected OR has a planned action (a closure pull-in plans struct-types
+    without switching the category on). Within it, a type is recorded when the
+    target already holds it by GUID (the repair case) or this run plans to
+    create it. Any other source type is not this run's business.
+    """
+    source = getattr(context, "source_handle", None)
+    target = getattr(context, "target_handle", None)
+    refs: dict = {}
+    for system, (attr, types_cat, feats_cat) in STRUCT_TYPE_FEATURE_SYSTEMS.items():
+        planned_types = {a.source_guid for a in actions
+                         if getattr(a, "category", None) == types_cat}
+        planned_any = planned_types or any(
+            getattr(a, "category", None) == feats_cat for a in actions)
+        on = False
+        if selection is not None:
+            try:
+                on = selection.is_on(types_cat) or selection.is_on(feats_cat)
+            except AttributeError:
+                on = False
+        if not (on or planned_any):
+            continue
+        src_fs = _target_feature_system(source, attr)
+        if src_fs is None:
+            continue
+        tgt_fs = _target_feature_system(target, attr)
+        tgt_types = {_guid_str_from(t)
+                     for t in (getattr(tgt_fs, "TypesOC", None) or ())}
+        for src_type in getattr(src_fs, "TypesOC", None) or ():
+            type_guid = _guid_str_from(src_type)
+            if not type_guid or (type_guid not in tgt_types
+                                 and type_guid not in planned_types):
+                continue
+            members = []
+            seen = set()
+            for g, d in _features_rs_guids(src_type):
+                if g in seen:
+                    continue
+                seen.add(g)
+                members.append((g, _references_item_label(d)))
+            refs[type_guid] = {
+                "system": system,
+                "label": _references_item_label(
+                    _cast_lcm(src_type, "IFsFeatStrucType")),
+                "members": tuple(members),
+            }
+    return refs
+
+
+def _classify_struct_type_features_rs(target, system, type_guid, members, *,
+                                      planned_feat_guids=(),
+                                      planned_type_guids=()):
+    """Decide what the `FeaturesRS` pass does for one struct-type.
+
+    Returns `(outcome, target_type, desired_guids, unresolved, target_only)`:
+    outcome is a `FEATURES_RS_*` constant; `desired_guids` is, for REPAIR, the
+    MISSING members to insert (source order); for a planned create, the
+    resolvable source members; otherwise the current sequence (COMPLETE) or
+    `()` (REORDERED -- nothing is written). `unresolved` is the
+    `(guid, label)` source members with no target defn; `target_only` the
+    GUIDs in the target sequence that the source type does not hold.
+    Read-only.
+
+    INSERT-ONLY policy (domain Q1): REPAIR means "at least one resolvable
+    source member is absent from the target sequence"; the repair inserts it
+    and never moves or removes anything. When every resolvable member is
+    present but the shared members' relative order differs from source, the
+    outcome is REORDERED (a Skip in Preview AND Move -- the target's order
+    is a user decision).
+
+    `planned_feat_guids` / `planned_type_guids` are this run's creates; Preview
+    passes them (the objects do not exist yet), Move passes nothing.
+    """
+    attr = STRUCT_TYPE_FEATURE_SYSTEMS[system][0]
+    fs = _target_feature_system(target, attr)
+    feats = {_guid_str_from(f) for f in (getattr(fs, "FeaturesOC", None) or ())}
+    types = list(getattr(fs, "TypesOC", None) or ()) if fs is not None else []
+    tgt_type = _find_target_obj_by_guid(types, type_guid)
+    current = [g for g, _ in _features_rs_guids(tgt_type)] if tgt_type is not None else []
+    current_set = set(current)
+    resolvable, unresolved = [], []
+    for g, label in members:
+        if g in feats or g in current_set or g in planned_feat_guids:
+            resolvable.append(g)
+        else:
+            unresolved.append((g, label))
+    if tgt_type is None:
+        if type_guid in planned_type_guids:
+            return (FEATURES_RS_CREATE_WIRED, None, tuple(resolvable),
+                    tuple(unresolved), ())
+        return (FEATURES_RS_TYPE_ABSENT, None, (), (), ())
+    src_set = {g for g, _ in members}
+    target_only = tuple(g for g in current if g not in src_set)
+    missing = tuple(g for g in dict.fromkeys(resolvable)
+                    if g not in current_set)
+    if missing:
+        return (FEATURES_RS_REPAIR, tgt_type, missing,
+                tuple(unresolved), target_only)
+    res_set = set(resolvable)
+    # dict.fromkeys: compare first occurrences, so a (pathological) duplicate
+    # reference in the target cannot make every run look reordered.
+    if list(dict.fromkeys(g for g in current if g in res_set)) == \
+            list(dict.fromkeys(resolvable)):
+        return (FEATURES_RS_COMPLETE, tgt_type, tuple(current),
+                tuple(unresolved), target_only)
+    return (FEATURES_RS_REORDERED, tgt_type, (), tuple(unresolved),
+            target_only)
+
+
+def _rewrite_features_rs(tgt_type, source_order, defn_by_guid, inserted=None):
+    """INSERT-ONLY repair of `tgt_type.FeaturesRS`: every source member absent
+    from the sequence is inserted right after its nearest source predecessor
+    present in the sequence (else before its nearest present successor, else
+    at the start). No existing member is moved or removed (never RemoveAt).
+
+    `source_order`: resolvable source member GUIDs, source order. `inserted`
+    (optional list) is appended to after each successful Insert, so a caller
+    can state exactly what landed if a later Insert raises."""
+    seq = _cast_lcm(tgt_type, "IFsFeatStrucType").FeaturesRS
+    order = list(dict.fromkeys(source_order))
+    for pos, g in enumerate(order):
+        cur = [_guid_str_from(d) for d in seq]
+        if g in cur or g not in defn_by_guid:
+            continue
+        idx = None
+        for pred in reversed(order[:pos]):
+            if pred in cur:
+                idx = cur.index(pred) + 1
+                break
+        if idx is None:
+            for succ in order[pos + 1:]:
+                if succ in cur:
+                    idx = cur.index(succ)
+                    break
+        if idx is None:
+            idx = 0
+        seq.Insert(idx, defn_by_guid[g])
+        if inserted is not None:
+            inserted.append(g)
+
+
+def _features_rs_drop(type_guid, ref, member_guid, member_label):
+    attr, _types_cat, feats_cat = STRUCT_TYPE_FEATURE_SYSTEMS[ref["system"]]
+    return DroppedItemRecord(
+        owner_kind="FsFeatStrucType",
+        owner_guid=type_guid,
+        owner_label=ref.get("label", "") or "",
+        field_name="FeaturesRS",
+        item_name=member_label or "",
+        item_guid=member_guid,
+        reason=(f"member feature definition is not in the target "
+                f"{attr}.FeaturesOC; FeaturesRS left incomplete (select "
+                f"{feats_cat.value} -- a later run repairs the sequence)"),
+    )
+
+
+def plan_struct_type_features_rs_drops(refs, target, actions, dropped) -> None:
+    """Preview: append the `DroppedItemRecord`s the Move pass will emit, so
+    the drop is visible BEFORE Move (Principle III)."""
+    planned_feats, planned_types = _planned_feature_system_guids(actions)
+    for type_guid in sorted(refs):
+        ref = refs[type_guid]
+        outcome, _t, _d, unresolved, _o = _classify_struct_type_features_rs(
+            target, ref["system"], type_guid, ref["members"],
+            planned_feat_guids=planned_feats, planned_type_guids=planned_types)
+        if outcome == FEATURES_RS_TYPE_ABSENT:
+            continue
+        for g, label in unresolved:
+            _append_dropped_once(dropped, _features_rs_drop(type_guid, ref, g, label))
+
+
+def _planned_feature_system_guids(actions):
+    """(planned feature-defn GUIDs, planned struct-type GUIDs), both systems."""
+    feat_cats = {v[2] for v in STRUCT_TYPE_FEATURE_SYSTEMS.values()}
+    type_cats = {v[1] for v in STRUCT_TYPE_FEATURE_SYSTEMS.values()}
+    feats = frozenset(a.source_guid for a in actions
+                      if getattr(a, "category", None) in feat_cats)
+    types = frozenset(a.source_guid for a in actions
+                      if getattr(a, "category", None) in type_cats)
+    return feats, types
+
+
+def _run_struct_type_features_rs_pass(context, target, tag=None):
+    """Move: repair `FeaturesRS` from `plan.struct_type_feature_refs` once
+    every feature defn and struct-type of the run exists (issue #108).
+
+    INSERT-ONLY (see the banner): missing members are inserted at their
+    source-relative position; existing members are never moved or removed. A
+    complete-but-reordered sequence is left untouched and reported as a Skip.
+    Unresolvable source members become `DroppedItemRecord`s on
+    `context._dropped`; target-only members become `Skip(NEEDS_MANUAL)`
+    (returned). Each struct-type is processed in its own try, so one bad type
+    records a Skip and the pass continues. The rewrite count is left on the
+    context as `_struct_type_features_rs_writes` (evidence for the live gate)."""
+    import logging as _logging
+    log = _logging.getLogger("gramtrans.Lib.categories")
+    refs = _binding_map(context, "struct_type_feature_refs") or {}
+    dropped = getattr(context, "_dropped", None)
+    skips = []
+    writes = 0
+    for type_guid in sorted(refs):
+        ref = refs[type_guid]
+        types_cat = GrammarCategory.FEATURE_STRUCT_TYPES
+        inserted: list = []
+        try:
+            system = ref["system"]
+            attr, types_cat, _feats_cat = STRUCT_TYPE_FEATURE_SYSTEMS[system]
+            outcome, tgt_type, missing, unresolved, target_only = (
+                _classify_struct_type_features_rs(
+                    target, system, type_guid, ref["members"]))
+            if outcome == FEATURES_RS_TYPE_ABSENT:
+                continue
+            if outcome == FEATURES_RS_REORDERED:
+                skips.append(Skip(
+                    category=types_cat, source_guid=type_guid,
+                    reason=SkipReason.NEEDS_MANUAL,
+                    detail=(f"struct-type {type_guid} FeaturesRS holds every "
+                            "source member but in a different order than "
+                            "the source; reordered in target, left as-is"),
+                ))
+            elif outcome == FEATURES_RS_REPAIR:
+                fs = _target_feature_system(target, attr)
+                defn_by_guid = {_guid_str_from(f): f
+                                for f in (getattr(fs, "FeaturesOC", None) or ())}
+                source_order = [g for g, _ in ref["members"]]
+                try:
+                    _rewrite_features_rs(tgt_type, source_order, defn_by_guid,
+                                         inserted)
+                except Exception as exc:  # noqa: BLE001 -- report, keep the run
+                    log.warning("struct-type %s: FeaturesRS repair failed "
+                                "after inserting %s: %r", type_guid,
+                                inserted, exc)
+                    skips.append(Skip(
+                        category=types_cat, source_guid=type_guid,
+                        reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                        detail=(f"FeaturesRS repair failed "
+                                f"({type(exc).__name__}: {exc}); inserted "
+                                f"before the failure: "
+                                f"{inserted if inserted else 'nothing'}; no "
+                                "existing member was moved or removed"),
+                    ))
+                else:
+                    writes += 1
+                    log.info("struct-type %s: FeaturesRS repaired, inserted "
+                             "%s", type_guid, inserted)
+            if dropped is not None:
+                for g, label in unresolved:
+                    log.warning("struct-type %s: FeaturesRS member %s has no "
+                                "target defn in %s.FeaturesOC -- reported as "
+                                "dropped", type_guid, g, attr)
+                    _append_dropped_once(
+                        dropped, _features_rs_drop(type_guid, ref, g, label))
+            for g in target_only:
+                skips.append(Skip(
+                    category=types_cat, source_guid=type_guid,
+                    reason=SkipReason.NEEDS_MANUAL,
+                    detail=(f"target struct-type {type_guid} FeaturesRS holds "
+                            f"{g}, which the source type does not; preserved, "
+                            "not removed (review manually)"),
+                ))
+        except Exception as exc:  # noqa: BLE001 -- one bad type must not abort
+            log.warning("struct-type %s: FeaturesRS pass failed: %r",
+                        type_guid, exc)
+            skips.append(Skip(
+                category=types_cat, source_guid=type_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"FeaturesRS pass failed ({type(exc).__name__}: "
+                        f"{exc}); inserted before the failure: "
+                        f"{inserted if inserted else 'nothing'}"),
+            ))
+    try:
+        object.__setattr__(context, "_struct_type_features_rs_writes", writes)
+    except (AttributeError, TypeError):
+        pass
+    return skips
 
 
 # ----- pos_inflectable_feats (coverage-content-fidelity-v2 Part B.3) -------
