@@ -840,6 +840,57 @@ def _best_text(ms) -> str:
     return ""
 
 
+def _default_analysis_ws_id(ops, target_ws_by_id: dict):
+    """Target's DEFAULT ANALYSIS WS Id, resolved explicitly, or ``None``.
+
+    Reads ``ops.project.GetDefaultAnalysisWSHandle()`` and maps the handle
+    back through `target_ws_by_id`. Never guesses: an unresolvable default
+    (no accessor, raises, handle not in the table) yields ``None`` -- callers
+    must then skip the fallback rather than pick an arbitrary (dict-order)
+    writing system (issue #129 follow-up, ruling 3)."""
+    if not target_ws_by_id:
+        return None
+    try:
+        handle = ops.project.GetDefaultAnalysisWSHandle()
+    except Exception:
+        return None
+    for ws_id, ws_handle in target_ws_by_id.items():
+        if ws_handle == handle:
+            return ws_id
+    return None
+
+
+def _source_vernacular_ids(source):
+    """``set`` of the SOURCE project's vernacular WS Ids, or ``None`` when
+    it cannot be determined (never raises)."""
+    ws_ops = getattr(source, "WritingSystems", None)
+    getter = getattr(ws_ops, "GetVernacular", None)
+    if getter is None:
+        return None
+    try:
+        return {ws.Id for ws in (getter() or [])}
+    except Exception:
+        return None
+
+
+def _owner_ids(owner_obj) -> tuple:
+    """Best-effort ``(owner_guid, owner_label)`` for a DroppedItemRecord."""
+    if owner_obj is None:
+        return "", ""
+    label = ""
+    for attr in ("Name", "Gloss", "HeadWord", "ShortName"):
+        val = getattr(owner_obj, attr, None)
+        if val is None:
+            continue
+        if isinstance(val, str):
+            label = val
+        else:
+            label = next((t for t in _multistring_dict(val).values() if t), "")
+        if label:
+            break
+    return _guid_str(owner_obj), label
+
+
 def _wrap_plain_text(text, ops, target_ws_by_id: dict) -> dict:
     """Wrap a plain-string multistring value as a `{target_ws_id: text}` dict.
 
@@ -847,21 +898,13 @@ def _wrap_plain_text(text, ops, target_ws_by_id: dict) -> dict:
     `setattr`s it, which raises `TypeError: property is read-only` for a
     multistring (Name/Abbreviation/Description). Only the dict shape is
     accepted. Empty text yields `{}` (nothing to write). The WS is the target's
-    default analysis WS when resolvable, else its first registered WS; with no
-    target WS table at all, `{}`."""
+    default analysis WS, resolved explicitly; when it cannot be resolved the
+    result is `{}` (no dict-order guess)."""
     if not text or not target_ws_by_id:
         return {}
-    chosen = None
-    try:
-        handle = ops.project.GetDefaultAnalysisWSHandle()
-        for ws_id, ws_handle in target_ws_by_id.items():
-            if ws_handle == handle:
-                chosen = ws_id
-                break
-    except Exception:
-        chosen = None
+    chosen = _default_analysis_ws_id(ops, target_ws_by_id)
     if chosen is None:
-        chosen = next(iter(target_ws_by_id))
+        return {}
     return {chosen: text}
 
 
@@ -1213,6 +1256,10 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                     _project_handle_to_id(source) if source is not None else {}
                 )
                 create_props = {}
+                owner_guid, owner_label = _owner_ids(owner_obj)
+                source_vern_ids = (
+                    _source_vernacular_ids(source) if source_handle_to_id else None
+                )
                 for field_name in _FINGERPRINT_FIELDS:
                     field_ms = getattr(anc, field_name, None)
                     if field_ms is None:
@@ -1220,31 +1267,70 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                     if source_handle_to_id:
                         src_id_keyed = _multistring_dict(field_ms, source_handle_to_id)
                         field_props = {}
+                        pending_drops = []
                         for src_id, text in src_id_keyed.items():
                             if not text:
                                 continue
                             tgt_id = ws_map.get(src_id, src_id) if ws_map else src_id
                             if tgt_id not in target_ws_by_id:
-                                if dropped is not None:
-                                    dropped.append(DroppedItemRecord(
-                                        owner_kind=spec.owner_class,
-                                        owner_guid="",
-                                        owner_label="",
-                                        field_name=spec.field_name,
-                                        item_name=_item_label(anc),
-                                        item_guid=_guid_str(anc),
-                                        reason=(
-                                            f"source writing system {src_id!r} "
-                                            "absent in target"
-                                        ),
-                                    ))
+                                pending_drops.append(DroppedItemRecord(
+                                    owner_kind=spec.owner_class,
+                                    owner_guid=owner_guid,
+                                    owner_label=owner_label,
+                                    field_name=spec.field_name,
+                                    item_name=_item_label(anc),
+                                    item_guid=_guid_str(anc),
+                                    reason=(
+                                        f"source writing system {src_id!r} "
+                                        "absent in target"
+                                    ),
+                                ))
                                 continue
                             field_props[tgt_id] = text
-                        field_props = field_props or _wrap_plain_text(
-                            _best_text(field_ms), ops, target_ws_by_id)
+                        if not field_props and pending_drops:
+                            # Every source WS dropped. Relocate the best-alt
+                            # text into the target's DEFAULT ANALYSIS WS only
+                            # when (a) that WS resolves explicitly and (b) the
+                            # best alt's source WS is known NOT to be
+                            # vernacular (vernacular text under an analysis WS
+                            # is misleading). Otherwise keep the plain drops
+                            # and leave the field empty (issue #129 follow-up).
+                            best_src_id, best_text = next(
+                                ((k, t) for k, t in src_id_keyed.items() if t),
+                                (None, ""))
+                            dest_id = _default_analysis_ws_id(ops, target_ws_by_id)
+                            if (best_text and dest_id is not None
+                                    and source_vern_ids is not None
+                                    and best_src_id not in source_vern_ids):
+                                field_props = {dest_id: best_text}
+                                pending_drops = [DroppedItemRecord(
+                                    owner_kind=spec.owner_class,
+                                    owner_guid=owner_guid,
+                                    owner_label=owner_label,
+                                    field_name=spec.field_name,
+                                    item_name=_item_label(anc),
+                                    item_guid=_guid_str(anc),
+                                    reason=(
+                                        f"relocated: {field_name} text from source "
+                                        f"writing system {best_src_id!r} written into "
+                                        f"target default analysis writing system "
+                                        f"{dest_id!r} (no source writing system "
+                                        "present in target)"
+                                    ),
+                                )]
+                        if dropped is not None:
+                            dropped.extend(pending_drops)
                         if field_props:
                             create_props[field_name] = field_props
                     else:
+                        # Legacy `source is None` branch: the source WS Ids are
+                        # unknown, so no per-WS "absent in target" drops are
+                        # recorded here (nothing to replace with a relocation
+                        # record) and the best alt's source WS cannot be
+                        # classified vernacular/analysis (ruling 2 cannot
+                        # apply). Ruling 3 still does: `_wrap_plain_text` now
+                        # uses only the explicitly resolved default analysis
+                        # WS and yields nothing otherwise.
                         src_snapshot = _multistring_dict(field_ms)
                         if not src_snapshot:
                             continue
@@ -1270,8 +1356,8 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                     if dropped is not None:
                         dropped.append(DroppedItemRecord(
                             owner_kind=spec.owner_class,
-                            owner_guid="",
-                            owner_label="",
+                            owner_guid=owner_guid,
+                            owner_label=owner_label,
                             field_name=spec.field_name,
                             item_name=_item_label(anc),
                             item_guid=_guid_str(anc),
