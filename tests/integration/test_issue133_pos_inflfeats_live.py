@@ -194,6 +194,9 @@ def test_preview_link_rows_equal_move_writes_and_zero_action_run_links(monkeypat
     assert calls1 == 1
     assert src_pairs <= got1, "[FAIL] seed run did not link every source pair"
     assert writes1[0] == len(links1), "[FAIL] run 1: Link rows != writes"
+    # sanity for _feature_guids (used by the reconciliation case): the seed
+    # run really created the 10 source features it links to.
+    assert len(_feature_guids(TARGET_NAME)) >= 10, "[FAIL] _feature_guids reads nothing"
 
     # ---- make some pairs missing in the sandbox ---------------------------
     removed = set(sorted(src_pairs)[:N_REMOVE])
@@ -250,3 +253,45 @@ def test_zero_action_run_links_a_missing_pair(monkeypatch):
     assert calls == 1
     assert len(links) == writes[0] == 1
     assert victim in _pairs(TARGET_NAME)
+
+
+def _feature_guids(project_name: str) -> set:
+    proj = _open(project_name, write=False)
+    try:
+        return {str(f.Guid).lower() if hasattr(f, "Guid")
+                else str(f).lower()
+                for f in proj.InflectionFeatures.FeatureGetAll()}
+    finally:
+        proj.CloseProject()
+
+
+def test_reconciliation_pos_only_run_reports_every_deferred_pair(monkeypatch):
+    """Cycle 3: POS selected, INFLECTION_FEATURES NOT selected, on a target
+    that holds none of the source features. POS are created (#107 path), their
+    InflectableFeatsRC children are deferred, the link pass can link none of
+    them -- so EVERY deferred pair must surface as a DroppedItemRecord, and the
+    run must not create or edit a single feature definition (domain boundary)."""
+    src_pairs = _pairs(SOURCE_NAME)
+    feats_before = _feature_guids(TARGET_NAME)
+    src_feats = {f for _, f in src_pairs}
+    absent = src_feats - feats_before
+    print("[LIVE] source pairs=%d, features not in sandbox=%d/%d"
+          % (len(src_pairs), len(absent), len(src_feats)))
+    assert absent, "[SETUP] every source feature already exists in the sandbox"
+    absent_pairs = {pf for pf in src_pairs if pf[1] in absent}
+
+    plan, report, _links, _skips, writes, calls = _run(SEL_POS_ONLY, monkeypatch)
+    assert calls == 1
+    after = _pairs(TARGET_NAME)
+    feats_after = _feature_guids(TARGET_NAME)
+    drops = {(d.owner_guid.lower(), d.item_guid.lower())
+             for d in report.dropped_items if d.field_name == "InflectableFeatsRC"}
+    print("[LIVE] reconcile: absent pairs=%d drops=%d writes=%s "
+          "features before=%d after=%d"
+          % (len(absent_pairs), len(drops), writes[0],
+             len(feats_before), len(feats_after)))
+    assert feats_after == feats_before, "[FAIL] a feature definition was created/removed"
+    assert absent_pairs <= drops, (
+        "[FAIL] deferred pairs vanished unreported: %s"
+        % sorted(absent_pairs - drops)[:5])
+    assert not (absent_pairs & after), "[FAIL] linked to an absent feature"

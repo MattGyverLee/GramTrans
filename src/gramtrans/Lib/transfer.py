@@ -341,22 +341,39 @@ def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
     """
     if getattr(exec_ctx, "_did_infl_feature_link_ensure", False):
         return
-    if getattr(exec_ctx, "_run_plan", None) is None:
-        return
-    if __package__:
-        from .categories import _run_infl_feature_link_pass
-    else:
-        from categories import _run_infl_feature_link_pass  # type: ignore
     try:
         object.__setattr__(exec_ctx, "_did_infl_feature_link_ensure", True)
     except (AttributeError, TypeError):
         pass
+    cause = None
+    late_skips = None
+    if getattr(exec_ctx, "_run_plan", None) is None:
+        cause = ("the InflectableFeatsRC link pass did not run: the run has "
+                 "no RunPlan, so there is no link map to write from")
+    else:
+        try:
+            if __package__:
+                from .categories import _run_infl_feature_link_pass
+            else:
+                from categories import _run_infl_feature_link_pass  # type: ignore
+            late_skips = _run_infl_feature_link_pass(exec_ctx, target, tag)
+        except Exception as exc:  # noqa: BLE001 -- must not lose the run's writes
+            _log.exception(
+                "execute: InflectableFeatsRC link pass FAILED (swallowed)")
+            cause = ("the InflectableFeatsRC link pass raised "
+                     f"{type(exc).__name__}: {exc}")
+    # Issue #133: whatever happened above, every deferred pair is reconciled
+    # against what the pass settled -- none may vanish without a record.
     try:
-        late_skips = _run_infl_feature_link_pass(exec_ctx, target, tag)
-    except Exception:
+        if __package__:
+            from .categories import _reconcile_deferred_infl_pairs
+        else:
+            from categories import _reconcile_deferred_infl_pairs  # type: ignore
+        _reconcile_deferred_infl_pairs(exec_ctx, cause)
+    except Exception:  # noqa: BLE001 -- reconciliation must not raise out
         _log.exception(
-            "execute: InflectableFeatsRC link pass FAILED (swallowed)")
-        return
+            "execute: deferred InflectableFeatsRC reconciliation FAILED "
+            "(swallowed)")
     if late_skips and exec_skips is not None:
         try:
             exec_skips.extend(late_skips)
@@ -385,11 +402,28 @@ def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips):
     plan = getattr(exec_ctx, "_run_plan", None)
     if plan is None:
         return
-    if __package__:
-        from .categories import _run_entryref_create_pass, _run_post_pass_a
-    else:
-        from categories import (  # type: ignore
-            _run_entryref_create_pass, _run_post_pass_a)
+    try:
+        if __package__:
+            from .categories import _run_entryref_create_pass, _run_post_pass_a
+        else:
+            from categories import (  # type: ignore
+                _run_entryref_create_pass, _run_post_pass_a)
+    except Exception as exc:  # noqa: BLE001 -- must not raise out of execute()
+        _log.exception(
+            "execute: entry-ref safety-net import FAILED (swallowed)")
+        _dropped_sink = getattr(exec_ctx, "_dropped", None)
+        if _dropped_sink is not None:
+            _dropped_sink.append(DroppedItemRecord(
+                owner_kind="LexEntryRef",
+                owner_guid="",
+                owner_label="(run)",
+                field_name="EntryRefs",
+                item_name="(entry-ref create + component passes)",
+                item_guid="",
+                reason=("entry-ref safety-net passes did not run: import "
+                        f"failed ({type(exc).__name__}: {exc})"),
+            ))
+        return
     for flag, runner in (("_did_entryref_create_pass", _run_entryref_create_pass),
                          ("_did_post_pass_a", _run_post_pass_a)):
         if getattr(exec_ctx, flag, False):
@@ -524,6 +558,9 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # so the leaf-dispatch/closure-walk resolver calls share one collector
     # and one cache for the whole run.
     _dropped: list = []
+    # Issue #133: (source POS guid, feature guid) pairs enrichment deferred to
+    # the InflectableFeatsRC link pass; reconciled after it so none vanishes.
+    _deferred_infl_pairs: list = []
     _resolver_cache: dict = {}
     # Issue #130: created here (not at the exec_ctx attach below) so the
     # OVERWRITE loop, which runs first, can record MSA slot-link outcomes on
@@ -657,6 +694,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                 dropped=_dropped,
                 enrichments=_measured_enrichments,
                 planned_action_guids=_planned_action_guids,
+                deferred_pairs=_deferred_infl_pairs,
             )
             if _update_skips:
                 extra_skips.extend(_update_skips)
@@ -772,6 +810,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # calls append during that loop are ALSO present here — not a second,
     # disconnected collector.
     object.__setattr__(exec_ctx, '_dropped', _dropped)
+    object.__setattr__(exec_ctx, '_deferred_infl_pairs', _deferred_infl_pairs)
     # Feature 024 (T016, FR-012): per-run GUID -> resolved/created target
     # item cache for the resolver, mirroring `_dropped` above (and
     # `Lib/preview.py.build_run_plan`'s identical attachment). Also the SAME
@@ -936,6 +975,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                     action, _result, source, target, report_sink,
                     ws_map=ws_map, dropped=_dropped,
                     planned_action_guids=_planned_action_guids,
+                    deferred_pairs=_deferred_infl_pairs,
                 )
             except Exception as _fill_exc:  # noqa: BLE001 -- LCM/COM failures are wide
                 _log.exception(
@@ -3287,7 +3327,8 @@ def _create_collection_child(spec, child, receiver, live, target):
 
 def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
                            report_sink, src_guid, ws_map, ws_handles,
-                           source_ws_handles, planned_action_guids):
+                           source_ws_handles, planned_action_guids,
+                           deferred_pairs=None):
     """Add every source child the destination lacks, for ONE collection.
 
     Returns `(EnrichedCollection, [DroppedItemRecord, ...])` whose three
@@ -3360,6 +3401,9 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
             # Record the intent (the pair is in `plan.feature_category_links`,
             # gathered at plan time) and write nothing.
             deferred += 1
+            if deferred_pairs is not None:
+                deferred_pairs.append(
+                    (src_guid, cats._guid_str_from(child) or ""))
             report_sink.Info(
                 f"  [enrich] {field_name}: child {(cats._guid_str_from(child) or '')[:8]}"
                 f" left to the single InflectableFeatsRC writer (link pass)"
@@ -3436,7 +3480,8 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
 
 def _enrich_owned_collections(overwrite, src_obj, tgt_obj, source, target,
                               report_sink, ws_map=None, dropped=None,
-                              planned_action_guids=frozenset()):
+                              planned_action_guids=frozenset(),
+                              deferred_pairs=None):
     """Execute the plan's `EnrichmentRecord` and return the MEASURED one.
 
     The plan's record PROJECTS what each collection would gain; this returns a
@@ -3476,6 +3521,7 @@ def _enrich_owned_collections(overwrite, src_obj, tgt_obj, source, target,
             field_name, specs.get(field_name), src_inner, tgt_inner,
             source, target, report_sink, src_guid, ws_map, ws_handles,
             source_ws_handles, planned_action_guids,
+            deferred_pairs=deferred_pairs,
         )
         rows.append(row)
         if dropped is not None:
@@ -3536,7 +3582,8 @@ def _record_unfilled_pos_collections(action, dropped, reason):
 
 def _fill_created_pos_collections(action, created, source, target, report_sink,
                                   ws_map=None, dropped=None,
-                                  planned_action_guids=frozenset()):
+                                  planned_action_guids=frozenset(),
+                                  deferred_pairs=None):
     """Give a POS this run just CREATED its seven owned collections (#107).
 
     `gram_categories_execute_action` creates the POS and copies its scalars;
@@ -3602,6 +3649,7 @@ def _fill_created_pos_collections(action, created, source, target, report_sink,
             field_name, specs.get(field_name), src_inner, tgt_inner,
             source, target, report_sink, src_guid, ws_map, ws_handles,
             source_ws_handles, planned_action_guids,
+            deferred_pairs=deferred_pairs,
         )
         if dropped is not None:
             dropped.extend(drops)
@@ -3619,7 +3667,8 @@ def _fill_created_pos_collections(action, created, source, target, report_sink,
 
 def _execute_update_semantic(overwrite, source, target, report_sink, tag: ImportResidueTag,
                              ws_map=None, dropped=None, enrichments=None,
-                             planned_action_guids=frozenset()):
+                             planned_action_guids=frozenset(),
+                             deferred_pairs=None):
     """Apply the non-destructive UPDATE write semantic (T012, FR-003) for a
     PlannedOverwrite whose category mode is ConflictMode.UPDATE.
 
@@ -3851,6 +3900,7 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
                 overwrite, src_obj, tgt_obj, source, target, report_sink,
                 ws_map=ws_map, dropped=dropped,
                 planned_action_guids=planned_action_guids,
+                deferred_pairs=deferred_pairs,
             )
         except Exception as exc:  # noqa: BLE001 -- LCM/COM failures are wide
             _log.exception(
