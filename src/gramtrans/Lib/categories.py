@@ -7283,6 +7283,10 @@ _LEXICAL_RELATION_TREE_TYPES = frozenset({3, 8, 13})
 
 _LEXREL_REPRODUCED_KEY = "__categories_lexrel_reproduced__"
 _LEXREL_PLANNED_KEY = "__categories_lexrel_planned__"
+# Issue #142: `{source type guid: label}` of every relation type Preview
+# predicted as `PLAN_TIME_PENDING` (absent from the target, Move will create
+# it). Its own key so it never collides with `_LEXREL_PLANNED_KEY`.
+_LEXREF_TYPE_PENDING_KEY = "__categories_lexreftype_pending__"
 
 
 def _lex_ref_type_label(lex_ref_type) -> str:
@@ -7710,7 +7714,8 @@ def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
     return _create_target_lex_ref_type(source_type, ctx, dropped)
 
 
-def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False):
+def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
+                               pending_types=None):
     """Shared decision core for both `reproduce_lexical_relation` (Move) and
     `plan_lexical_relation_decision` (Preview): resolves the target
     `ILexRefType`, classifies every `TargetsRS` member against
@@ -7740,6 +7745,13 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False):
     keeps the pair-minimum and tree-root guards LIVE at plan time, where the
     target type may be `PLAN_TIME_PENDING`. Guards that read `None` are the
     dead code T123's second entry has already fixed once.
+
+    `pending_types` (issue #142, plan time only): a dict that receives
+    `{type_guid: label}` for every relation type resolved to
+    `PLAN_TIME_PENDING`. Recorded right at resolution, BEFORE the structural
+    guards below, because Move's create leg also runs before them: Move
+    creates the type even when the relation is then dropped, so Preview must
+    announce the type CREATE in that case too.
     """
     if __package__:
         from . import references as _references
@@ -7785,6 +7797,9 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False):
         target, type_guid, source_type=source_type, ctx=ctx,
         plan_time=plan_time, allow_create=not plan_time, dropped=dropped,
     )
+    if (plan_time and pending_types is not None
+            and target_type is PLAN_TIME_PENDING and type_guid):
+        pending_types.setdefault(type_guid, _lex_ref_type_label(source_type))
     if target_type is None:
         # THE RECORD USED TO NAME THE WRONG OBJECT (038 T123, 2026-08-28).
         # `owner_kind` says `LexRefType` while `owner_guid` carried
@@ -8067,8 +8082,9 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
     planned = resolver_cache.setdefault(_LEXREL_PLANNED_KEY, {})
     rel_guid = _guid_str_from(src_relation)
 
-    evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped,
-                                           plan_time=True)
+    evaluated = _evaluate_lexical_relation(
+        src_relation, ctx, dropped, plan_time=True,
+        pending_types=resolver_cache.setdefault(_LEXREF_TYPE_PENDING_KEY, {}))
     if evaluated is None:
         return None
     rel_guid, _target_type, _copied_members = evaluated
@@ -8076,12 +8092,17 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
     if rel_guid and rel_guid in planned:
         return planned[rel_guid]
 
+    # Issue #141: name the relation so Preview can show it -- the relation
+    # type's label, the same one the drop records use.
+    src_type = getattr(src_relation, "Owner", None)
+    if src_type is not None:
+        src_type = _as_lex_ref_type(src_type) or src_type
     record = ReferenceDecisionRecord(
         owner_kind="LexReference",
         owner_guid=rel_guid,
         field_name="MembersOC",
         action=ReferenceAction.CREATE,
-        item_name="",
+        item_name=_lex_ref_type_label(src_type),
         item_guid=rel_guid,
     )
     if rel_guid:
@@ -8255,14 +8276,38 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
     (`Lib/preview.py` currently threads reference decisions per-action; this
     single pass is not owned by any one action, so its records are surfaced
     via `context._dropped`/a dedicated plan-level collector at the call
-    site rather than one action's `reference_decisions` tuple)."""
+    site rather than one action's `reference_decisions` tuple).
+
+    Issue #142: a relation type absent from the target (predicted
+    `PLAN_TIME_PENDING`, which Move will CREATE) also yields one
+    `ReferenceDecisionRecord(owner_kind="LexRefType", action=CREATE)`, once
+    per type, placed before the first record of that type's relations. It is
+    emitted even when every relation of that type is then dropped, because
+    Move creates the type before its structural guards run. Issue #141:
+    `Lib/preview.py.build_run_plan` folds the whole list into
+    `RunPlan.lexical_relation_decisions` and `render_lexical_relation_
+    decisions` shows it."""
     source = context.source_handle
     copy_set = getattr(context, "_copy_set", None) or {}
+    pending = resolver_cache.setdefault(_LEXREF_TYPE_PENDING_KEY, {})
+    announced = set()
     records = []
     for src_relation in _iter_relations_touching_copy_set(
             source, copy_set, dropped):
         record = plan_lexical_relation_decision(
             src_relation, context, resolver_cache, dropped)
+        src_type = getattr(src_relation, "Owner", None)
+        type_guid = _guid_str_from(src_type) if src_type is not None else ""
+        if type_guid in pending and type_guid not in announced:
+            announced.add(type_guid)
+            records.append(ReferenceDecisionRecord(
+                owner_kind="LexRefType",
+                owner_guid=type_guid,
+                field_name="PossibilitiesOS",
+                action=ReferenceAction.CREATE,
+                item_name=pending[type_guid],
+                item_guid=type_guid,
+            ))
         if record is not None:
             records.append(record)
     return records

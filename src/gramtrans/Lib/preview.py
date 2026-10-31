@@ -1492,7 +1492,10 @@ def build_run_plan(
         from .categories import plan_all_lexical_relations
     else:
         from categories import plan_all_lexical_relations  # type: ignore
-    plan_all_lexical_relations(context, _resolver_cache, _dropped)
+    # Issue #141: keep the CREATE records (relations + issue #142's new
+    # relation types) for the plan; they were discarded here before.
+    _lexical_relation_records = plan_all_lexical_relations(
+        context, _resolver_cache, _dropped)
 
     # Feature 025 (full reversals, US1 T018/T019): the reversal closure
     # walk -- SAME single-final-pass timing as `plan_all_lexical_relations`
@@ -1768,6 +1771,8 @@ def build_run_plan(
         process_rules=tuple(_process_rules),
         # Issue #84: how the selection was reinterpreted before dispatch.
         category_notes=tuple(_category_notes),
+        # Issues #141/#142: lexical-relation + new relation-type CREATEs.
+        lexical_relation_decisions=tuple(_lexical_relation_records or ()),
     )
 
 
@@ -2168,8 +2173,9 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
 # reference decisions
 # ============================================================================
 
-# Max rows per section before the rest collapse into one "+N more" line.
-_REF_DECISION_ROW_CAP = 25
+# Row cap: shares `SENSE_LIST_REF_ROW_CAP` (single source of truth). Rows past
+# it collapse into one "+N more" line. #147's `_capped_rows` is NOT reused
+# because it emits a different string ("... and N more ... not shown here").
 
 # Same vocabulary and order as `_SENSE_LIST_REF_LABELS`.
 _REF_DECISION_LABELS = (
@@ -2215,7 +2221,7 @@ def _ref_decision_rows(decisions) -> dict:
 def _render_ref_decision_section(title: str, rows: dict, unit: str,
                                  units: str) -> List[str]:
     """One titled block of Create/Update/Link/Not-transferred rows, capped at
-    `_REF_DECISION_ROW_CAP` rows."""
+    `SENSE_LIST_REF_ROW_CAP` rows."""
     if not rows:
         return []
     body: List[str] = []
@@ -2231,9 +2237,9 @@ def _render_ref_decision_section(title: str, rows: dict, unit: str,
             if act == "report_dropped":
                 line += " -- see dropped items for the reason"
             body.append(line)
-    if len(body) > _REF_DECISION_ROW_CAP:
-        extra = len(body) - _REF_DECISION_ROW_CAP
-        body = body[:_REF_DECISION_ROW_CAP] + [f"    +{extra} more"]
+    if len(body) > SENSE_LIST_REF_ROW_CAP:
+        extra = len(body) - SENSE_LIST_REF_ROW_CAP
+        body = body[:SENSE_LIST_REF_ROW_CAP] + [f"    +{extra} more"]
     lines = [f"  {title}:"] + body
     if any(k[0] == "create" and rows[k]["count"] > 1 for k in rows):
         lines.append("    (Created once; the other references link to it.)")
@@ -2296,6 +2302,34 @@ def render_reversal_and_text_decisions(plan: RunPlan) -> Tuple[str, ...]:
     return tuple(lines)
 
 
+def render_lexical_relation_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """Issues #141/#142 (Principle III): show the lexical relations Move will
+    create, and any relation type it must create first, BEFORE Move writes.
+
+    Reads `plan.lexical_relation_decisions`. One line per new relation type,
+    then one line per relation type with the number of relations of that
+    type to be created (grouped, so a large lexicon stays readable). Returns
+    `()` when the plan holds no such decision."""
+    decisions = tuple(getattr(plan, "lexical_relation_decisions", ()) or ())
+    if not decisions:
+        return ()
+    new_types = [d for d in decisions if d.owner_kind == "LexRefType"]
+    per_type: dict = {}
+    for d in decisions:
+        if d.owner_kind == "LexReference":
+            name = d.item_name or "(unnamed type)"
+            per_type[name] = per_type.get(name, 0) + 1
+    lines: List[str] = ["  Lexical relations:"]
+    for d in new_types:
+        lines.append(f"    Create relation type '{d.item_name or '(unnamed)'}'"
+                     f" {{{d.item_guid}}}")
+    for name in sorted(per_type):
+        n = per_type[name]
+        lines.append(f"    Create {n} relation{'s' if n != 1 else ''} of type "
+                     f"'{name}'")
+    return tuple(lines)
+
+
 def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
     """Compose the Preview-only extra lines -- the reversal Add/Link plan
     (`render_reversal_decisions`), the config-view Add/Overwrite/Skip
@@ -2321,6 +2355,7 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_struct_type_features_rs(plan))
         + tuple(render_sense_list_reference_decisions(plan))
         + tuple(render_reversal_and_text_decisions(plan))
+        + tuple(render_lexical_relation_decisions(plan))
     )
 
 

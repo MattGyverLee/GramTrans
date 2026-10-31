@@ -210,12 +210,12 @@ def test_all_three_sections_in_order():
 
 
 def test_rows_are_capped_per_section():
-    n = preview._REF_DECISION_ROW_CAP + 7
+    n = preview.SENSE_LIST_REF_ROW_CAP + 7
     decisions = [_rev("e%d" % i, _create(_poss("p%03d" % i, "N%d" % i)))
                  for i in range(n)]
     lines = render(_plan(reversal_decisions=decisions))
     rows = [ln for ln in lines if ln.startswith("    Create")]
-    assert len(rows) == preview._REF_DECISION_ROW_CAP
+    assert len(rows) == preview.SENSE_LIST_REF_ROW_CAP
     assert "    +7 more" in lines
 
 

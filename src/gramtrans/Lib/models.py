@@ -3662,6 +3662,13 @@ class RunPlan:
     # `categories._run_struct_type_features_rs_pass` and rendered by
     # `preview.render_struct_type_features_rs`. Ephemeral per run.
     struct_type_feature_refs: dict = field(default_factory=dict)
+    # Issues #141/#142: the `ReferenceDecisionRecord`s returned by
+    # `categories.plan_all_lexical_relations` -- one CREATE per lexical
+    # relation (`owner_kind="LexReference"`) Move will reproduce, plus one
+    # CREATE per relation type (`owner_kind="LexRefType"`) absent from the
+    # target that Move will create. Rendered by
+    # `preview.render_lexical_relation_decisions`.
+    lexical_relation_decisions: tuple = ()  # tuple[ReferenceDecisionRecord, ...]
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)
