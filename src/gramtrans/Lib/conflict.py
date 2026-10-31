@@ -25,6 +25,7 @@ _log = logging.getLogger(__name__)
 
 if __package__:
     from .residue import strip_residue_props
+    from .lcm_unwrap import unwrap as _shared_unwrap
     from .models import (
         ConflictPrompt,
         MergeDecision,
@@ -33,6 +34,7 @@ if __package__:
     )
 else:
     from residue import strip_residue_props  # type: ignore
+    from lcm_unwrap import unwrap as _shared_unwrap  # type: ignore
     from models import (
         ConflictPrompt,
         MergeDecision,
@@ -246,8 +248,8 @@ _OW_OPS = {
 def _unwrap(obj):
     """flexicon sometimes returns wrapper objects with a .concrete attr
     holding the underlying LCM interface; unwrap before any ICmObject cast.
-    Mirrors transfer.py._unwrap."""
-    return obj.concrete if hasattr(obj, "concrete") else obj
+    Delegates to lcm_unwrap.unwrap (.concrete -> _concrete -> _obj)."""
+    return _shared_unwrap(obj)
 
 
 def _find_target_entry_by_guid(target, guid):

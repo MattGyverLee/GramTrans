@@ -38,10 +38,12 @@ if __package__:
         WSMapping,
     )
     from .ws_mapping import to_ws_map_dict
+    from .lcm_unwrap import unwrap as _shared_unwrap
     from . import census as _census
     from . import matcher as _matcher
 else:
     from ws_mapping import to_ws_map_dict  # type: ignore
+    from lcm_unwrap import unwrap as _shared_unwrap  # type: ignore
     import census as _census  # type: ignore
     import matcher as _matcher  # type: ignore
     from models import (
@@ -4270,7 +4272,7 @@ def _guid_str(obj) -> str:
 
 def _unwrap(obj):
     """Strip a flexicon wrapper to the concrete LCM object if present."""
-    return obj.concrete if hasattr(obj, "concrete") else obj
+    return _shared_unwrap(obj)
 
 
 def _slot_name(slot) -> str:
