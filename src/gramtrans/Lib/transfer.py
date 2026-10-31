@@ -53,6 +53,7 @@ if __package__:
         _phoneme_env_field_diff_enabled,
     )
     from .ws_mapping import to_ws_map_dict
+    from .lcm_unwrap import unwrap as _shared_unwrap
     from . import report as _report_module  # registers RunReport.build_from_plan
 else:
     from models import (
@@ -87,6 +88,7 @@ else:
         _phoneme_env_field_diff_enabled,
     )
     from ws_mapping import to_ws_map_dict  # type: ignore
+    from lcm_unwrap import unwrap as _shared_unwrap  # type: ignore
     import report as _report_module  # registers RunReport.build_from_plan
 
 
@@ -2273,7 +2275,7 @@ def _guid_str(obj) -> str:
 
 
 def _unwrap(obj):
-    return obj.concrete if hasattr(obj, "concrete") else obj
+    return _shared_unwrap(obj)
 
 
 def _slot_name(slot) -> str:
@@ -4005,7 +4007,6 @@ def _lcm_slot(slot):
     fakes pass through unchanged.
     """
     inner = _unwrap(slot)
-    inner = getattr(inner, "_obj", None) or inner
     try:
         from .categories import _cast_lcm
     except ImportError:  # flat layout
@@ -4088,6 +4089,15 @@ def _overwrite_msa_slots(src_ia, new_ia, target_slots_by_guid, *, src_msa_guid,
             f"  IMoInflAffMsa {src_msa_guid[:8]} slot re-sync skipped: "
             f"slot(s) {', '.join(g[:8] for g in unresolved)} unresolved in "
             "target; existing slot membership kept")
+        return skips
+
+    # 2b. P2 (#130 follow-up): the target already holds exactly the source's
+    # slot set (the production case: `_msa_fingerprint` includes the slot
+    # GUIDs, so an OVERWRITE is only planned on a matching set). Clear+Add
+    # would be a pure no-op rewrite that can only lose membership if a write
+    # misbehaves, so write nothing. SlotsRC is a reference COLLECTION: compare
+    # as sets.
+    if {g for _, g in resolved} == {g for _, g in snapshot_pairs}:
         return skips
 
     # 3. guarded Clear + Add.
