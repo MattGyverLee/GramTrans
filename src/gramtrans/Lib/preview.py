@@ -1999,6 +1999,7 @@ def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
         getattr(plan, "actions", ()) or ())
     labels = {
         _cats.FEATURES_RS_REPAIR: "Repair",
+        _cats.FEATURES_RS_REORDERED: "SKIP (reordered in target, left as-is)",
         _cats.FEATURES_RS_COMPLETE: "SKIP (already complete)",
         _cats.FEATURES_RS_CREATE_WIRED: "Wire at create",
     }
@@ -2016,8 +2017,17 @@ def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
             continue
         if outcome == _cats.FEATURES_RS_TYPE_ABSENT:
             continue
+        # Never print a target sequence we do not write: Repair lists only
+        # the members it INSERTS (insert-only; existing members untouched);
+        # Wire-at-create shows source order; the rest name just the type.
+        if outcome == _cats.FEATURES_RS_REPAIR:
+            tail = f" insert {list(desired)}"
+        elif outcome == _cats.FEATURES_RS_CREATE_WIRED:
+            tail = f" -> {list(desired)} (source order)"
+        else:
+            tail = ""
         lines.append(f"    {labels.get(outcome, outcome)}  "
-                     f"[{ref['system']}] type {type_guid} -> {list(desired)}")
+                     f"[{ref['system']}] type {type_guid}{tail}")
         for g, _label in unresolved:
             lines.append(f"    REPORT (member feature unavailable)  "
                          f"type {type_guid} member {g}")

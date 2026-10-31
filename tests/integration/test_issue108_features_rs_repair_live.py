@@ -259,7 +259,9 @@ def test_features_rs_repaired_to_source_order_and_rerun_writes_nothing(monkeypat
     import flexicon
     print("[LIVE] gramtrans=%s" % gramtrans.__file__)
     print("[LIVE] flexicon=%s" % flexicon.__file__)
-    assert "GramTrans-fix-108" in gramtrans.__file__
+    # Worktree-agnostic provenance: the code under test is THIS checkout's src.
+    assert Path(gramtrans.__file__).resolve().is_relative_to(
+        (Path(__file__).resolve().parents[2] / "src").resolve()),         "gramtrans resolves outside this checkout: %s" % gramtrans.__file__
     src_sha = _sha(SOURCE_FWDATA)
     print("[LIVE] source sha256 before=%s" % src_sha)
 
@@ -283,6 +285,9 @@ def test_features_rs_repaired_to_source_order_and_rerun_writes_nothing(monkeypat
     assert len(expected_drops) == N_SLOTS
     assert _features_rs_drops(plan1.dropped_items) == expected_drops
     assert _features_rs_drops(report1.dropped_items) == expected_drops
+    for d in list(plan1.dropped_items) + list(report1.dropped_items):
+        if d.field_name == "FeaturesRS":
+            assert d.owner_label and d.item_name, d
 
     # ---- Fixture: one target-only member per feature system --------------
     _author_target_only_members()
@@ -316,15 +321,25 @@ def test_features_rs_repaired_to_source_order_and_rerun_writes_nothing(monkeypat
     assert {k: after3[k] for k in expected2} == expected2
     assert _target_only_skips(report3) == _target_only_skips(report2)
 
-    # ---- Run 4: out-of-order members are reordered, not appended ---------
+    # ---- Run 4: complete-but-reordered is a Skip, NOT a write -------------
     _swap_first_two("MsFeatureSystemOA", SUBJ_AGR)
     swapped = _target_members()[("MsFeatureSystemOA", SUBJ_AGR)]
     assert swapped == [CLASS, NUMBER, PERSON]
-    _p4, _r4, rep4, rows4 = _run(SEL_WITH_FEATURES, monkeypatch)
+    _p4, report4, rep4, rows4 = _run(SEL_WITH_FEATURES, monkeypatch)
     after4 = _target_members()
     print("[LIVE] run4 repaired=%d %s" % (len(rep4), after4[("MsFeatureSystemOA", SUBJ_AGR)]))
-    assert len(rep4) == 1 == len(_rows(rows4, "Repair"))
-    assert {k: after4[k] for k in expected2} == expected2
+    assert rep4 == [] and _rows(rows4, "Repair") == []
+    assert len(_rows(rows4, "SKIP (reordered")) == 1
+    assert SUBJ_AGR in _rows(rows4, "SKIP (reordered")[0]
+    reordered = [s for s in report4.skips
+                 if "reordered in target, left as-is" in (s.detail or "")]
+    assert [s.source_guid for s in reordered] == [SUBJ_AGR]
+    # The target's order is untouched: swapped stays swapped, rest unchanged.
+    assert after4[("MsFeatureSystemOA", SUBJ_AGR)] == swapped
+    assert {k: after4[k] for k in expected2
+            if k != ("MsFeatureSystemOA", SUBJ_AGR)} == {
+        k: v for k, v in expected2.items()
+        if k != ("MsFeatureSystemOA", SUBJ_AGR)}
 
     src_sha_after = _sha(SOURCE_FWDATA)
     print("[LIVE] source sha256 after=%s" % src_sha_after)

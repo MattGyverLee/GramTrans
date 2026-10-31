@@ -148,21 +148,21 @@ class TestClassifier:
         assert outcome == categories.FEATURES_RS_COMPLETE
         assert target_only == (X,) and unresolved == ()
 
-    def test_missing_member_is_repair_with_target_only_last(self) -> None:
+    def test_missing_member_is_repair_listing_only_inserts(self) -> None:
         a, b, x = _Defn(A), _Defn(B), _Defn(X)
         tgt = _Proj(ms_feats=[a, b, x], ms_types=[_Type(T1, [x])])
         outcome, _t, desired, _u, target_only = (
             categories._classify_struct_type_features_rs(
                 tgt, "ms", T1, _ref([A, B])["members"]))
         assert outcome == categories.FEATURES_RS_REPAIR
-        assert desired == (A, B, X) and target_only == (X,)
+        assert desired == (A, B) and target_only == (X,)  # inserts only
 
-    def test_out_of_order_is_repair(self) -> None:
+    def test_complete_but_reordered_is_reordered_not_repair(self) -> None:
         a, b = _Defn(A), _Defn(B)
         tgt = _Proj(ms_feats=[a, b], ms_types=[_Type(T1, [b, a])])
         outcome, _t, desired, _u, _o = categories._classify_struct_type_features_rs(
             tgt, "ms", T1, _ref([A, B])["members"])
-        assert outcome == categories.FEATURES_RS_REPAIR and desired == (A, B)
+        assert outcome == categories.FEATURES_RS_REORDERED and desired == ()
 
     def test_unresolved_member_reported_not_repair_when_rest_ordered(self) -> None:
         b = _Defn(B)
@@ -380,3 +380,142 @@ class TestPreview:
         plan = _NS(struct_type_feature_refs={}, actions=(),
                    context=_NS(target_handle=_Proj()))
         assert preview.render_struct_type_features_rs(plan) == ()
+
+
+# ============================================================================
+# Insert-only policy (domain Q1) and per-type isolation (QC P1)
+# ============================================================================
+
+class _FailingSeq(_Seq):
+    """Insert raises on the (fail_on)th call, 1-based."""
+
+    def __init__(self, items=(), fail_on=2) -> None:
+        super().__init__(items)
+        self.fail_on = fail_on
+        self.calls = 0
+
+    def Insert(self, i, obj) -> None:
+        self.calls += 1
+        if self.calls == self.fail_on:
+            raise RuntimeError("boom")
+        super().Insert(i, obj)
+
+
+class TestInsertOnly:
+
+    def _run(self, tgt, refs):
+        ctx = _ctx(_Proj(), tgt, refs)
+        return ctx, categories._run_struct_type_features_rs_pass(ctx, tgt)
+
+    def test_missing_inserted_without_moving_existing(self) -> None:
+        a, b, c, d = _Defn(A), _Defn(B), _Defn(C), _Defn("d-guid")
+        t1 = _Type(T1, [b, d])           # existing order kept; A, C missing
+        tgt = _Proj(ms_feats=[a, b, c, d], ms_types=[t1])
+        ctx, skips = self._run(tgt, {T1: _ref([A, B, C, "d-guid"])})
+        assert _guids(t1.FeaturesRS) == [A, B, C, "d-guid"]
+        assert t1.FeaturesRS.mutations == 2          # two Inserts, nothing else
+        assert ctx._struct_type_features_rs_writes == 1
+
+    def test_missing_inserted_beside_reordered_shared_members(self) -> None:
+        # shared members already swapped: [B, A]; C missing goes after B
+        # (its nearest source predecessor) and neither B nor A moves.
+        a, b, c = _Defn(A), _Defn(B), _Defn(C)
+        t1 = _Type(T1, [b, a])
+        tgt = _Proj(ms_feats=[a, b, c], ms_types=[t1])
+        self._run(tgt, {T1: _ref([A, B, C])})
+        assert _guids(t1.FeaturesRS) == [B, C, A]
+
+    def test_never_calls_remove_at(self) -> None:
+        a, b, x = _Defn(A), _Defn(B), _Defn(X)
+        t1 = _Type(T1, [x, b])
+        removed = []
+        t1.FeaturesRS.RemoveAt = lambda i: removed.append(i)
+        tgt = _Proj(ms_feats=[a, b, x], ms_types=[t1])
+        self._run(tgt, {T1: _ref([A, B])})
+        assert removed == [] and _guids(t1.FeaturesRS) == [X, A, B]
+
+    def test_complete_but_reordered_is_skip_with_zero_writes(self) -> None:
+        a, b = _Defn(A), _Defn(B)
+        t1 = _Type(T1, [b, a])
+        tgt = _Proj(ms_feats=[a, b], ms_types=[t1])
+        ctx, skips = self._run(tgt, {T1: _ref([A, B])})
+        assert _guids(t1.FeaturesRS) == [B, A]
+        assert t1.FeaturesRS.mutations == 0
+        assert ctx._struct_type_features_rs_writes == 0
+        assert len(skips) == 1 and skips[0].source_guid == T1
+        assert "reordered in target, left as-is" in skips[0].detail
+
+    def test_preview_row_for_reordered_matches_move(self) -> None:
+        a, b = _Defn(A), _Defn(B)
+        tgt = _Proj(ms_feats=[a, b], ms_types=[_Type(T1, [b, a])])
+        refs = {T1: _ref([A, B])}
+        plan = _NS(struct_type_feature_refs=refs, actions=(),
+                   context=_NS(target_handle=tgt))
+        rows = preview.render_struct_type_features_rs(plan)
+        assert any("SKIP (reordered in target, left as-is)" in r and T1 in r
+                   for r in rows)
+        assert not any(r.strip().startswith("Repair") for r in rows)
+
+    def test_preview_repair_row_lists_inserts_not_a_sequence(self) -> None:
+        a, b, x = _Defn(A), _Defn(B), _Defn(X)
+        tgt = _Proj(ms_feats=[a, b, x], ms_types=[_Type(T1, [x, b])])
+        plan = _NS(struct_type_feature_refs={T1: _ref([A, B])}, actions=(),
+                   context=_NS(target_handle=tgt))
+        row = [r for r in preview.render_struct_type_features_rs(plan)
+               if r.strip().startswith("Repair")][0]
+        assert "insert %s" % [A] in row and X not in row
+
+    def test_insert_failure_mid_repair_loses_nothing_and_detail_accurate(self) -> None:
+        a, b, c, x = _Defn(A), _Defn(B), _Defn(C), _Defn(X)
+        t1 = _Type(T1, [x])
+        t1.FeaturesRS = _FailingSeq([x], fail_on=2)   # A lands, B raises
+        tgt = _Proj(ms_feats=[a, b, c, x], ms_types=[t1])
+        ctx, skips = self._run(tgt, {T1: _ref([A, B, C])})
+        assert _guids(t1.FeaturesRS) == [A, X]       # nothing lost or moved
+        fail = [s for s in skips if s.reason == SkipReason.DEPENDENCY_UNRESOLVED]
+        assert len(fail) == 1
+        assert "inserted before the failure: ['a-guid']" in fail[0].detail
+        assert "left as it was" not in fail[0].detail
+        assert ctx._struct_type_features_rs_writes == 0
+
+    def test_insert_failure_on_first_insert_says_nothing_inserted(self) -> None:
+        a, b = _Defn(A), _Defn(B)
+        t1 = _Type(T1)
+        t1.FeaturesRS = _FailingSeq([], fail_on=1)
+        tgt = _Proj(ms_feats=[a, b], ms_types=[t1])
+        ctx, skips = self._run(tgt, {T1: _ref([A, B])})
+        assert _guids(t1.FeaturesRS) == []
+        assert "inserted before the failure: nothing" in skips[0].detail
+
+    def test_one_bad_type_does_not_abort_others_or_lose_drops(self) -> None:
+        a, b = _Defn(A), _Defn(B)
+        bad = _Type(T1)
+        bad.FeaturesRS = _FailingSeq([], fail_on=1)
+        good = _Type(T2)
+        tgt = _Proj(ms_feats=[b], ms_types=[bad, good])
+        ctx, skips = self._run(
+            tgt, {T1: _ref([B]), T2: _ref([A, B], label="Good")})
+        assert _guids(good.FeaturesRS) == [B]
+        assert ctx._struct_type_features_rs_writes == 1
+        assert [d.item_guid for d in ctx._dropped] == [A]       # survives
+        assert [s.source_guid for s in skips
+                if s.reason == SkipReason.DEPENDENCY_UNRESOLVED] == [T1]
+
+    def test_classifier_raising_on_one_type_does_not_abort_others(
+            self, monkeypatch) -> None:
+        a = _Defn(A)
+        t2 = _Type(T2)
+        tgt = _Proj(ms_feats=[a], ms_types=[_Type(T1), t2])
+        real = categories._classify_struct_type_features_rs
+
+        def _flaky(target, system, type_guid, members, **kw):
+            if type_guid == T1:
+                raise ValueError("classifier boom")
+            return real(target, system, type_guid, members, **kw)
+
+        monkeypatch.setattr(categories, "_classify_struct_type_features_rs", _flaky)
+        ctx, skips = self._run(tgt, {T1: _ref([A]), T2: _ref([A])})
+        assert _guids(t2.FeaturesRS) == [A]
+        assert ctx._struct_type_features_rs_writes == 1
+        assert [s.source_guid for s in skips
+                if s.reason == SkipReason.DEPENDENCY_UNRESOLVED] == [T1]
