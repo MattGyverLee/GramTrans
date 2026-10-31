@@ -3554,7 +3554,9 @@ class RunPlan:
     #        "primaries":  [src_lex_guid, ...],
     #        "variant_entry_types":   [src ILexEntryType obj, ...],  # RefType 0
     #        "complex_entry_types":   [src ILexEntryType obj, ...],  # RefType 1
-    #        "show_complex_forms_in": [src_lex_guid, ...]},  # #32: lexemes
+    #        "show_complex_forms_in": [src_lex_guid, ...],  # #32: lexemes
+    #        "hide_minor_entry": int | None,                # #114
+    #        "summary": {src_ws_id: text}},                 # #114
     #       ...
     #   ]}
     # Ephemeral per run; not serialised into the run snapshot. See

@@ -63,9 +63,10 @@ def make_ctx(run_id: str = "GT-20260713-000000",
 
 def ref_record(ref_guid, ref_type=0, components=(), primaries=(),
                variant_entry_types=(), complex_entry_types=(),
-               show_complex_forms_in=()):
+               show_complex_forms_in=(), hide_minor_entry=None, summary=None):
     """One `plan.entryref_create_bindings` per-ref record (data-model.md);
-    `show_complex_forms_in` holds lexeme GUIDs (issue #32)."""
+    `show_complex_forms_in` holds lexeme GUIDs (issue #32);
+    `hide_minor_entry` / `summary` are the #114 value fields."""
     return {
         "ref_guid": ref_guid,
         "ref_type": ref_type,
@@ -74,6 +75,8 @@ def ref_record(ref_guid, ref_type=0, components=(), primaries=(),
         "variant_entry_types": list(variant_entry_types),
         "complex_entry_types": list(complex_entry_types),
         "show_complex_forms_in": list(show_complex_forms_in),
+        "hide_minor_entry": hide_minor_entry,
+        "summary": dict(summary or {}),
     }
 
 
