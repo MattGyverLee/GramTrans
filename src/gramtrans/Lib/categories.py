@@ -4566,6 +4566,12 @@ def semantic_domains_plan_action(piece, context, ws_mapping):
     )
 
 
+#: Issue #131: the text a created CmSemanticDomain must carry. All three are
+#: declared on `ICmPossibility`; the extra `ICmSemanticDomain`-only fields
+#: (OcmCodes, Questions, ...) are deliberately out of scope here.
+_SEMANTIC_DOMAIN_MULTISTRINGS = ("Name", "Abbreviation", "Description")
+
+
 def semantic_domains_execute_action(action, context, ws_mapping, tag):
     """Create custom semantic domain with GUID preserved.
 
@@ -4664,6 +4670,10 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
                 new_sd, ICmPossibilityList(target_list).PossibilitiesOS,
                 "ICmSemanticDomainFactory", src_guid,
             )
+            _copy_multistrings_ws_mapped(  # issue #131
+                src_obj, new_sd, _SEMANTIC_DOMAIN_MULTISTRINGS,
+                source=source, target=target, ws_map=ws_mapping,
+            )
             apply_carrier_b(new_sd, ws, tag)
             return new_sd
         _safe_add_to_owner(
@@ -4676,6 +4686,13 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
             "ICmSemanticDomainFactory", src_guid,
         )
 
+    # Issue #131: same gap as #114/T127 -- create + owner-add + carrier B
+    # copied NO text, so a created domain arrived nameless. Copy BEFORE
+    # `apply_carrier_b` (the tag line must stay last in Description).
+    _copy_multistrings_ws_mapped(
+        src_obj, new_sd, _SEMANTIC_DOMAIN_MULTISTRINGS,
+        source=source, target=target, ws_map=ws_mapping,
+    )
     apply_carrier_b(new_sd, ws, tag)
     return new_sd
 
