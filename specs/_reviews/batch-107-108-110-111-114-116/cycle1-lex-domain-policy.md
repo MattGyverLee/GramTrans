@@ -1,0 +1,18 @@
+# Cycle 1 - LEX domain/constitution policy review (batch 107-108-110-111-114-116)
+
+> Saved by the main session: lex-domain has no Write tool and returned this text verbatim.
+> Basis: constitution Principle III (lines 234-246), impl-108 "Ordering policy" (lines 72-79), greps of impl-107/114/116. No FLEx project opened.
+
+Verdicts: Q1 CHANGE (small); Q2 CHANGE (limitation acceptable); Q3 PASS with mandatory follow-up issues (hold #114 if Principle III is read literally); Q4 PASS.
+
+## Q1 (#108, FeaturesRS order): CHANGE (small, doc/test only)
+FeaturesRS order is user-visible in FLEx: it drives the order features appear in the feature-structure editor and in the displayed feature string for a type. Users do reorder it deliberately. Note the premise is partly off: impl-108 "Ordering policy" already treats a sequence as COMPLETE (no write) when every resolvable source member is present and C restricted to S equals S; target-only members may sit anywhere. A rewrite fires only when a source member is missing or the relative order of shared members differs from source. Caveat: a deliberate user reorder of the shared members IS overwritten on every in-scope run. Recommendation: keep "source wins" only for missing members; for a complete-but-relatively-reordered sequence, do not write, and emit Skip (reordered, left as-is) in Preview and Move. If the implementer prefers to keep the repair, it must appear as an explicit Overwrite row in Preview and the banner/PR must say so. Either way, correct the premise in the PR description. Target-only members stay appended and are never removed.
+
+## Q2 (#114, HideMinorEntry): CHANGE (document + test); STEMS-only limitation acceptable
+HideMinorEntry is a user curation choice. 0 is the FLEx default, so it is indistinguishable from unset; letting source 0 overwrite target 1 un-hides what the target owner hid. Recommendation: on the overwrite-existing path treat source 0 as unset (only 1 over 0 may merge); keep 0 as data when the ref is CREATED (it rides on the create). Add a test: target 1 / source 0 stays 1. The ">=1 STEMS action" trigger for the INV-1 merge is acceptable as a documented limitation (the unmerged state is a no-op, not corruption) provided it is stated in the PR and tracked in a follow-up issue.
+
+## Q3 (Principle III, missing Preview rows): PASS with mandatory follow-up issues; not a merge blocker
+Constitution III: "Preview output MUST list, per item: source GUID, target match (by GUID then fingerprint), proposed action (Add / Link / Update / Overwrite / Skip / Ignore), and the dependency closure that will be pulled along." #107's owned children of a created POS fall under the closure of an Add row that Preview already shows, so the user is not misled about what is created. #114's INV-1 merge is an unpreviewed Update to existing target data, the weaker case. Both are literal MUST gaps but neither is a regression (C2 had the same gap, and both impl reports disclose them). Recommendation: merge only if (a) each gap is filed as its own GitHub issue labelled Principle III before merge, and (b) the #114 PR text names the unpreviewed Update. If NON-NEGOTIABLE is read literally, hold #114, not #107.
+
+## Q4 (#116, CREATE vs LINK in Preview): PASS
+Net effect is identical (one item created). Preview CREATE is the conservative, correct statement of what the run does to the target, and the first CREATE row carries the dependency closure. Principle III requires listing actions, not modelling Move's in-run resolver cache. The live test already bounds the divergence to exactly one row (s2, C). Recommendation: do not prime the cache; add one line to the renderer/docs: "later references to an item created earlier in this run show as create; Move links them."
