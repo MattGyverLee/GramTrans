@@ -28,10 +28,10 @@ What it pins, against SOURCE truth walked independently of the plan:
   * Move 2 (no restore between): the pair set is identical, no SlotsRC holds
     a slot twice, and no SlotsRC count changed.
 
-Deliberately NOT asserted: "zero new objects" on Move 2.  A known, separate
-defect re-creates MoInflAffixSlot / MoInflAffixTemplate objects on a 0-action
-re-run (see test_issue87_residue_idempotent_live.py); #31's idempotency claim
-is about SlotsRC membership only.
+Also asserted (test_move2_creates_no_slot_or_template_objects): Move 2 creates
+no MoInflAffixSlot / MoInflAffixTemplate objects on a 0-action re-run (the
+defect tracked in #107 and fixed by creating a POS's owned collections in the
+same run; see test_issue87_residue_idempotent_live.py).
 """
 from __future__ import annotations
 
@@ -258,3 +258,29 @@ def test_move2_is_idempotent_on_slot_membership(live):
 
 def test_source_is_unchanged(live):
     assert live["sha_after"] == live["sha_before"]
+
+
+#: Issue #107: the owned collections a 0-action re-run used to fill.
+_ISSUE107_FIELDS = ("AffixSlotsOC", "AffixTemplatesOS", "ReferenceFormsOC")
+
+
+def _issue107_additions(records):
+    return [(e.label, c.canonical_field_name, c.added)
+            for e in records for c in e.collections
+            if c.canonical_field_name in _ISSUE107_FIELDS and c.added]
+
+
+def test_move2_creates_no_slot_or_template_objects(live):
+    """Issue #107 (supersedes the "Deliberately NOT asserted" note above).
+
+    A POS that Move 1 CREATED used to arrive without its owned collections;
+    Move 2 -- planning 0 actions -- then found it present by GUID and its
+    UPDATE enrichment created the missing MoInflAffixSlot /
+    MoInflAffixTemplate / FsFeatStruc objects. The create path now fills them
+    in Move 1, so Move 2 must neither PLAN nor PERFORM any addition there.
+    """
+    planned = [ow.enrichment for ow in live["plan2"].overwrites
+               if getattr(ow, "enrichment", None) is not None]
+    assert _issue107_additions(planned) == [], "Move 2 planned additions"
+    assert _issue107_additions(live["report2"].enrichments) == [], (
+        "Move 2 created slot/template/feature-structure objects")
