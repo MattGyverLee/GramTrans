@@ -4172,6 +4172,14 @@ class ReferenceDecisionRecord:
     action      : ReferenceAction (LINK/CREATE/UPDATE/REPORT_DROPPED).
     item_name   : source item's best-effort display name (may be "").
     item_guid   : source item's GUID (may be "" when unresolvable).
+    new_ancestors : issue #116 -- for a CREATE of a nested possibility item,
+                  the ancestors (root -> leaf, excluding the item itself) the
+                  CREATE will ALSO create because the target lacks them, as
+                  `(item_name, item_guid)` pairs. Lets Preview say "creates P,
+                  then C under it" instead of only "creates C". Empty for every
+                  other decision, and for a CREATE whose ancestors already
+                  exist in the target. Currently populated by the 030
+                  `ThesaurusItemsRC` resolver only.
     """
     owner_kind: str
     owner_guid: str
@@ -4179,6 +4187,7 @@ class ReferenceDecisionRecord:
     action: ReferenceAction
     item_name: str = ""
     item_guid: str = ""
+    new_ancestors: tuple = ()  # tuple[tuple[str, str], ...]
 
 
 # ============================================================================

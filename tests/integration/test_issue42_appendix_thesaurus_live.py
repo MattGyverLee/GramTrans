@@ -37,7 +37,10 @@ Scenario (STEMS only, so nothing else moves; STEMS transfers EVERY source
 stem -- `Selection.stem_picks` does not filter it -- which is why entry 2 is
 authored only after Move 1):
 
-* Preview  -- writes nothing; its 030 drop set equals Move 1's.
+* Preview  -- writes nothing; its 030 drop set equals Move 1's, and (issue
+  #116) its CREATE / LINK decisions on `PlannedAction.reference_decisions`
+  equal the decisions Move 1's resolvers reach and the objects Move 1
+  actually creates / links.
 * Move 1   -- A-PRESENT linked, A-ABSENT dropped-and-reported (never created);
   P, C, C2, D created with source GUIDs, classes and hierarchy; E linked; the
   item C shared by s1 and s2 created exactly once.
@@ -75,7 +78,9 @@ if os.environ.get("FLEXLIBS_REQUIRE_LIVE") != "1":
                 allow_module_level=True)
 
 SOURCE_NAME = "GT-Src-42"        # private fixture source (written only while authoring)
-TARGET_NAME = "GT-Sandbox-42"    # private fixture target
+# Private fixture target. Overridable (issue #116) so concurrent work can use
+# its own sandbox without touching GT-Sandbox-42.
+TARGET_NAME = os.environ.get("GT42_TARGET_NAME", "GT-Sandbox-42")
 PROJECTS_ROOT = Path("C:/ProgramData/SIL/FieldWorks/Projects")
 TARGET_PATH = str(PROJECTS_ROOT / TARGET_NAME / ("%s.fwdata" % TARGET_NAME))
 BACKUP_NAME = "Target 2026-07-06 0218.fwbackup"
@@ -328,6 +333,58 @@ def _ref_drops(items):
                   for d in items if d.field_name in _FIELDS)
 
 
+def _plan_ref_decisions(plan):
+    """The 030-field `ReferenceDecisionRecord`s a plan carries (issue #116)."""
+    return [d for a in plan.actions
+            for d in (getattr(a, "reference_decisions", ()) or ())
+            if d.field_name in _FIELDS]
+
+
+def _ref_rows(records):
+    """Comparable rows, in walk order: (owner, field, action, item, ancestors)."""
+    return [(d.owner_guid, d.field_name, d.action.value, d.item_guid,
+             tuple(g for _n, g in d.new_ancestors)) for d in records]
+
+
+def _first_decision_per_item(records):
+    """{(field, item): (action, ancestors)} -- the FIRST decision reached for
+    each referenced item, in walk order. This is the item-level decision: an
+    item a run creates is created once, by its first reference."""
+    out = {}
+    for _owner, field, action, item, anc in _ref_rows(records):
+        out.setdefault((field, item), (action, anc))
+    return out
+
+
+class _capture_move_decisions:
+    """Wrap the two 030 resolvers for one Move and collect the records they
+    return when called in Move mode (`new_sense` -- 2nd positional -- set).
+    Move discards them; this only observes. Restores the originals on exit."""
+
+    def __enter__(self):
+        from gramtrans.Lib import categories as cats
+        self._cats, self.rows = cats, []
+        self._orig = {n: getattr(cats, n) for n in (
+            "_resolve_sense_appendixes", "_resolve_sense_thesaurus_items")}
+
+        def wrap(fn):
+            def inner(*args, **kwargs):
+                recs = fn(*args, **kwargs)
+                if len(args) > 1 and args[1] is not None:
+                    self.rows.extend(recs)
+                return recs
+            return inner
+
+        for n, fn in self._orig.items():
+            setattr(cats, n, wrap(fn))
+        return self.rows
+
+    def __exit__(self, *exc):
+        for n, fn in self._orig.items():
+            setattr(self._cats, n, fn)
+        return False
+
+
 # --------------------------------------------------------------------------
 # the run
 # --------------------------------------------------------------------------
@@ -365,7 +422,11 @@ def live():
         for i in (1, 2, 3):
             if i == 2:
                 _author_second_entry(fx)
-            plan, report = move()
+            # Issue #116: capture the decisions the Move-mode resolvers reach
+            # (new_sense set), to compare with the plan's Preview decisions.
+            with _capture_move_decisions() as move_rows:
+                plan, report = move()
+            res["move%d_decisions" % i] = list(move_rows)
             snap = os.path.join(snapdir, "move%d.fwdata" % i)
             shutil.copyfile(TARGET_PATH, snap)
             res["move%d" % i] = {"plan": plan, "report": report,
@@ -374,7 +435,13 @@ def live():
             print("[LIVE] move%d actions=%d drops=%s" % (
                 i, len(plan.actions), _ref_drops(report.dropped_items)))
         import gramtrans
+        import flexicon
         print("[LIVE] gramtrans=%s" % gramtrans.__file__)
+        print("[LIVE] flexicon=%s" % flexicon.__file__)
+        print("[LIVE] source=%s target=%s" % (SOURCE_NAME, TARGET_NAME))
+        print("[LIVE] preview 030 decisions=%s" % _ref_rows(
+            _plan_ref_decisions(res["preview_plan"])))
+        print("[LIVE] move1 030 decisions=%s" % _ref_rows(res["move1_decisions"]))
         print("[LIVE] fixture=%s" % fx)
         yield res
     finally:
@@ -405,6 +472,108 @@ def test_preview_writes_nothing_and_drops_match_move(live):
     preview = _ref_drops(live["preview_plan"].dropped_items)
     move1 = _ref_drops(live["move1"]["report"].dropped_items)
     assert preview == move1, "Preview drop set != Move drop set (FR-008)"
+
+
+def test_preview_create_link_decisions_match_move(live):
+    """Issue #116: Preview lists the CREATE / LINK decisions, not just drops,
+    and they are the decisions Move reaches and the objects Move writes."""
+    fx, pre, st = live["fx"], live["pre"], live["move1"]["state"]
+    P, C, C2, E, D = (fx[k] for k in ("P", "C", "C2", "E", "D"))
+    present, absent = fx["appendix_present"], fx["appendix_absent"]
+    s1, s2 = fx["s1"], fx["s2"]
+    TH, AP = "ThesaurusItemsRC", "AppendixesRC"
+
+    preview = _ref_rows(_plan_ref_decisions(live["preview_plan"]))
+    move = _ref_rows(live["move1_decisions"])
+    assert preview, "Preview recorded no 030 decisions (issue #116 regression)"
+
+    # 1. The rows the issue asks Preview to show, exactly.
+    assert sorted(preview) == sorted([
+        (s1, AP, "link", present, ()),
+        (s1, AP, "report_dropped", absent, ()),
+        (s1, TH, "create", C, (P,)),          # new child under a NEW parent P
+        (s2, AP, "link", present, ()),
+        (s2, TH, "create", C, (P,)),          # shared C: see 3 below
+        (s2, TH, "create", C2, ()),           # new child under EXISTING E
+        (s2, TH, "link", E, ()),
+        (s2, TH, "create", D, ()),            # new semantic domain under SDP
+    ]), preview
+
+    # 2. Item level, Preview == Move: every referenced item gets the same
+    #    first decision (and the same set of ancestors to create).
+    assert _first_decision_per_item(_plan_ref_decisions(live["preview_plan"])) \
+        == _first_decision_per_item(live["move1_decisions"])
+
+    # 3. Row level, Preview == Move, except the one documented cache
+    #    divergence: Move's resolver cache turns a SECOND reference to an item
+    #    Move created earlier in the run into a LINK; Preview never writes, so
+    #    it reports that reference as the same CREATE (one item either way).
+    assert [r[:2] + r[3:4] for r in preview] == [r[:2] + r[3:4] for r in move], \
+        "Preview and Move decided different (owner, field, item) sets"
+    created_by_move = {r[3] for r in move if r[2] == "create"}
+    diverged = [(p, m) for p, m in zip(preview, move) if p != m]
+    assert all(p[2] == "create" and m[2] == "link" and m[3] in created_by_move
+               for p, m in diverged), diverged
+    assert [(p[0], p[3]) for p, _m in diverged] == [(s2, C)], diverged
+
+    # 4. Ground truth: Preview's CREATE items + their new ancestors are
+    #    exactly the objects Move 1 brought into existence; its LINK items
+    #    existed before Move and are what the senses now reference.
+    preview_creates = {r[3] for r in preview if r[2] == "create"} | {
+        a for r in preview if r[2] == "create" for a in r[4]}
+    assert preview_creates == {P, C, C2, D}
+    key = {P: "P", C: "C", C2: "C2", E: "E", D: "D"}
+    assert all(pre[key[g]] is None and st[key[g]] is not None for g in preview_creates)
+    assert pre["E"] is not None and E in st["s2"]["thesaurus"]
+    assert present in pre["appendixes"] and st["s1"]["appendixes"] == [present]
+
+    # 5. Move 2: its plan's Preview decisions equal the decisions its
+    #    resolvers reach, row for row (no shared CREATE in this run). s3's
+    #    references are to items Move 1 created: nothing is created again and
+    #    nothing drops. (They decide UPDATE, not LINK -- a pre-existing CREATE
+    #    fidelity defect this Preview now makes visible; see the strict xfail
+    #    `test_items_created_by_move1_link_on_the_next_run`.)
+    s3 = fx["s3"]
+    preview2 = [r for r in _ref_rows(_plan_ref_decisions(live["move2"]["plan"]))
+                if r[0] == s3]
+    move2 = [r for r in _ref_rows(live["move2_decisions"]) if r[0] == s3]
+    assert preview2 == move2, (preview2, move2)
+    assert (s3, AP, "link", present, ()) in preview2
+    s3_th = {r[3]: r[2] for r in preview2 if r[1] == TH}
+    assert set(s3_th) == {C, D}
+    assert not {a for a in s3_th.values()} & {"create", "report_dropped"}, s3_th
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "pre-existing, found by the #116 live proof: references.apply_reference's "
+    "CREATE arm passes an empty source Description as a plain '' that "
+    "ApplySyncableProperties rejects (TypeError: property is read-only, "
+    "swallowed), and the next run decides UPDATE for items this run created. "
+    "See specs/_reviews/batch-107-108-110-111-114-116/impl-116.md section 6."))
+def test_items_created_by_move1_link_on_the_next_run(live):
+    """An item a run created from the source must be identical to the source,
+    so a later run that references it again decides LINK, not UPDATE."""
+    fx = live["fx"]
+    s3_th = {r[3]: r[2] for r in _ref_rows(_plan_ref_decisions(live["move2"]["plan"]))
+             if r[0] == fx["s3"] and r[1] == "ThesaurusItemsRC"}
+    assert s3_th == {fx["C"]: "link", fx["D"]: "link"}, s3_th
+
+
+def test_preview_pane_renders_create_and_link_rows(live):
+    """Issue #116: the Preview pane's extra lines carry the decisions."""
+    from gramtrans.Lib.preview import render_preview_extra_lines
+    fx = live["fx"]
+    text = "\n".join(render_preview_extra_lines(live["preview_plan"]))
+    print("[LIVE] preview pane 030 lines:\n" + text)
+    assert "Sense appendix / thesaurus references:" in text
+    assert ("Create  ThesaurusItemsRC 'GT42 child' {%s}  (2 senses) -- also "
+            "creates ancestor(s) 'GT42 parent' {%s}" % (fx["C"], fx["P"])) in text
+    assert "Create  ThesaurusItemsRC 'GT42 child of existing' {%s}" % fx["C2"] in text
+    assert "Create  ThesaurusItemsRC 'GT42 semdom child' {%s}" % fx["D"] in text
+    assert "Link  ThesaurusItemsRC" in text and "{%s}" % fx["E"] in text
+    assert ("Link  AppendixesRC 'Appendix 42-PRESENT" in text
+            and "{%s}  (2 senses)" % fx["appendix_present"] in text)
+    assert "Not transferred  AppendixesRC 'Appendix 42-ABSENT" in text
 
 
 def test_appendix_link_arm_and_absent_drop(live):

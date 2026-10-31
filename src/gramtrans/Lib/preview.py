@@ -1958,6 +1958,69 @@ def render_complex_feature_type_refs(plan: RunPlan) -> Tuple[str, ...]:
     return tuple(lines)
 
 
+# Issue #116: the sense fields whose resolver decisions the Preview pane
+# itemizes. Feature 030's two fields only -- they are the ones that can CREATE
+# new possibility-list items (thesaurus) or LINK project-level appendixes the
+# user may not know are shared. The 024 reference-field rows on the same
+# `PlannedAction.reference_decisions` tuple are deliberately not rendered here
+# (they include one owned-object CREATE row per example/pronunciation and
+# would swamp the pane); see the #116 implementation report.
+_SENSE_LIST_REF_FIELDS = ("AppendixesRC", "ThesaurusItemsRC")
+
+_SENSE_LIST_REF_LABELS = (
+    ("create", "Create"),
+    ("update", "Update"),
+    ("link", "Link"),
+    ("report_dropped", "Not transferred"),
+)
+
+
+def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #116 (030 FR-008, Principle III): render the CREATE / LINK /
+    UPDATE / not-transferred decisions the 030 sense resolvers
+    (`categories._resolve_sense_appendixes` /
+    `_resolve_sense_thesaurus_items`) recorded on
+    `PlannedAction.reference_decisions`, so the user sees BEFORE Move that
+    new possibility-list items will be created in their project.
+
+    One row per distinct (field, action, item), with the number of source
+    senses that reference it; a CREATE row names any ancestors the CREATE
+    also creates (`ReferenceDecisionRecord.new_ancestors`). Not-transferred
+    rows point at the dropped-items list, which carries the reason. Returns
+    `()` when no action carries a decision for these fields."""
+    rows: dict = {}
+    for action in getattr(plan, "actions", ()) or ():
+        for d in getattr(action, "reference_decisions", ()) or ():
+            if getattr(d, "field_name", "") not in _SENSE_LIST_REF_FIELDS:
+                continue
+            act = getattr(getattr(d, "action", None), "value", "")
+            key = (d.field_name, act, d.item_guid)
+            row = rows.get(key)
+            if row is None:
+                rows[key] = row = {
+                    "name": d.item_name,
+                    "ancestors": tuple(getattr(d, "new_ancestors", ()) or ()),
+                    "owners": set(),
+                }
+            row["owners"].add(d.owner_guid)
+    if not rows:
+        return ()
+    lines: List[str] = ["  Sense appendix / thesaurus references:"]
+    for act, label in _SENSE_LIST_REF_LABELS:
+        for (field, a, guid) in sorted(k for k in rows if k[1] == act):
+            row = rows[(field, a, guid)]
+            n = len(row["owners"])
+            line = (f"    {label}  {field} '{row['name']}' {{{guid}}}"
+                    f"  ({n} sense{'s' if n != 1 else ''})")
+            if row["ancestors"]:
+                line += " -- also creates ancestor(s) " + ", ".join(
+                    f"'{name}' {{{g}}}" for name, g in row["ancestors"])
+            if act == "report_dropped":
+                line += " -- see dropped items for the reason"
+            lines.append(line)
+    return tuple(lines)
+
+
 def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
     """Compose the Preview-only extra lines -- the reversal Add/Link plan
     (`render_reversal_decisions`), the config-view Add/Overwrite/Skip
@@ -1980,6 +2043,7 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_config_view_records(plan))
         + tuple(render_feature_category_links(plan))
         + tuple(render_complex_feature_type_refs(plan))
+        + tuple(render_sense_list_reference_decisions(plan))
     )
 
 
