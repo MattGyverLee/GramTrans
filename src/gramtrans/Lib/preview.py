@@ -1629,6 +1629,10 @@ def build_run_plan(
         _text_plans = list(_plan_texts(
             selection, source, target, context, _resolver_cache, _dropped
         ))
+        # WARNING (#167): `origin` is provenance that lives ONLY on these in-memory
+        # records. Any future plan serialisation round-trip (save/load of a
+        # RunPlan) MUST carry `origin`, or `move_blind_plan_drops` finds nothing
+        # and #167 silently regresses to Moves reporting 0 planned drops.
         # Issue #167: Move applies these decisions without re-deciding them,
         # so it never re-emits their drops. Stamp the walk's records (in
         # place: `context._dropped` is this same list) so `transfer.execute`
