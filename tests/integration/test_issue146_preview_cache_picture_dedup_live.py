@@ -411,8 +411,14 @@ def live_texts():
 
 
 def test_texts_preview_genre_create_then_link(live_texts):
-    assert _genre_rows(live_texts["preview"], live_texts["fx"]) == [
-        (1, "create"), (2, "link"), (3, "create")]
+    # Texts are planned in the source's TextsOC order (an unordered
+    # collection), so WHICH of texts 1/2 is planned first varies run to run:
+    # exactly one of them creates G and the other links it.
+    rows = _genre_rows(live_texts["preview"], live_texts["fx"])
+    by_text = dict(rows)
+    assert len(rows) == 3 and len(by_text) == 3, rows
+    assert sorted([by_text[1], by_text[2]]) == ["create", "link"], rows
+    assert by_text[3] == "create", rows
 
 
 def test_texts_move_links_shared_genre_on_both_texts(live_texts):
