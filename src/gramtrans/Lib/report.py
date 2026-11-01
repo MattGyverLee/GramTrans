@@ -45,6 +45,7 @@ if __package__:
         SkipReason,
         dropped_identity,
         is_blocked_skip,
+        is_relocated_record,
         merge_dropped_records,
     )
 else:
@@ -72,6 +73,7 @@ else:
         SkipReason,
         dropped_identity,
         is_blocked_skip,
+        is_relocated_record,
         merge_dropped_records,
     )
 
@@ -376,8 +378,18 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     # on the published `(owner_guid, field_name, item_guid)` identity so a
     # record the executor already appended to `extra_dropped_items` is not
     # reported twice.
+    #
+    # Issue #169 (cycle-4 domain ruling c): `relocated:` records (#158) are
+    # not losses -- the text was written, into the target default analysis
+    # WS. Partition them out BEFORE the merge so they land in their own
+    # `relocated_items` section and never share (or skew) the dropped bucket.
+    # Done here, the one build point every Preview/Move/UI caller goes
+    # through, so no executor build site has to change.
+    relocated_items_all = tuple(
+        d for d in extra_dropped_items if is_relocated_record(d))
     dropped_items_all = merge_dropped_records(
-        extra_dropped_items, _enrichment_dropped_records(enrichments_all))
+        tuple(d for d in extra_dropped_items if not is_relocated_record(d)),
+        _enrichment_dropped_records(enrichments_all))
 
     per_category_final = {
         cat: CategoryReport(
@@ -420,6 +432,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         empty_categories=empty_cats,
         excluded_lossy=tuple(excluded_lossy_all),
         dropped_items=tuple(dropped_items_all),
+        relocated_items=relocated_items_all,
         fidelity_by_guid=dict(fidelity_by_guid) if fidelity_by_guid else {},
         leaf_execution_failures=tuple(extra_leaf_execution_failures),
         outcome_counted=not_added is not None,
@@ -735,6 +748,7 @@ def disposition_totals(report) -> dict:
         if getattr(s, "reason", None) in _NO_DELTA_SKIP_REASONS
     )
     dropped = len(getattr(report, "dropped_items", ()))
+    relocated = len(getattr(report, "relocated_items", ()))
     # T080: the fifth-outcome check, derived ONCE here so the console panel
     # and the JSON artifact cannot disagree about it -- the same rule the
     # docstring states for every other bucket. Read from the property, never
@@ -787,6 +801,10 @@ def disposition_totals(report) -> dict:
             1 for s in getattr(report, "skips", ()) if is_blocked_skip(s)
         ),
         "dropped_with_reason": dropped,
+        # Issue #169: kept-but-relocated text (a different writing system).
+        # Additive and omit-when-zero, like the "Relocated" panel row, so a
+        # run with no relocation serialises byte-identically to before.
+        **({"relocated": relocated} if relocated else {}),
         # T080: SC-010's claim, as a value rather than as prose. `True` means
         # every item this run KNOWS it did not reproduce also reached one of
         # the four buckets above. `False` names the ones that did not, and is
@@ -818,6 +836,7 @@ _DISPOSITION_OUTCOME_KEYS = (
     "update_overwritten",
     "skip",
     "dropped_with_reason",
+    "relocated",
 )
 
 
@@ -850,6 +869,11 @@ def _has_038_data(report) -> bool:
     # byte-identical to a pre-038 snapshot in the first place. A report with
     # ZERO failures is unaffected and stays byte-identical.
     if getattr(report, "leaf_execution_failures", ()):
+        return True
+    # Issue #169: a relocation-only run needs the disposition block so the
+    # relocated count is machine-readable. Such a report already emits the
+    # additive `relocated_items` key, so it was never byte-identical anyway.
+    if getattr(report, "relocated_items", ()):
         return True
     per_cat = getattr(report, "per_category", {}) or {}
     return any(
@@ -949,6 +973,12 @@ def _affix_slot_link_block(links) -> dict:
     }
 
 
+def _origin_suffix(d) -> str:
+    """Issue #167: console/text marker for a drop decided at Preview (the
+    JSON carries `origin`; the rendered report must not hide it)."""
+    return " [planned in Preview]" if getattr(d, "origin", "") else ""
+
+
 def _dropped_item_json(d) -> dict:
     """One `DroppedItemRecord`, in the shape `to_snapshot_json`'s
     `dropped_items` list has always used. Extracted so the enrichment
@@ -966,6 +996,8 @@ def _dropped_item_json(d) -> dict:
         # serialises exactly as it did before severity existed.
         **({"severity": d.severity}
            if getattr(d, "severity", "info") != "info" else {}),
+        # Issue #167: same omit-when-default rule for the provenance stamp.
+        **({"origin": d.origin} if getattr(d, "origin", "") else {}),
     }
 
 
@@ -1695,6 +1727,14 @@ def _to_snapshot_json(self) -> str:
             for guid, status in sorted(self.fidelity_by_guid.items())
         },
     }
+    # Issue #169: relocations on their own key, apart from `dropped_items`.
+    # Additive and omit-when-empty, so a run with no relocation serialises
+    # byte-identically to before.
+    relocated_items = tuple(getattr(self, "relocated_items", ()))
+    if relocated_items:
+        payload["relocated_items"] = [
+            _dropped_item_json(d) for d in relocated_items
+        ]
 
     # ---- Feature 038 (transfer fidelity gaps) --------------------------
     # ADDITIVE and OMIT-WHEN-EMPTY (see the module comment above
@@ -1900,6 +1940,7 @@ def _to_snapshot_json(self) -> str:
                     "update_enriched",
                 "skip": "Skip (skips)",
                 "dropped_with_reason": "DroppedItemRecord (dropped_items)",
+                "relocated": "DroppedItemRecord (relocated_items); omitted when 0",
                 "no_fifth_outcome":
                     "RunReport.unreported_not_reproduced -- every "
                     "ProcessRuleTransferRecord with reproduced=False, minus "
@@ -2133,6 +2174,20 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
             yield (
                 f"    - {_flag}{d.owner_label} [{d.owner_kind} {d.owner_guid[:8]}] . "
                 f"{d.field_name} -> \"{d.item_name}\" ({d.item_guid[:8]}) - {d.reason}"
+                f"{_origin_suffix(d)}"
+            )
+    # Issue #169 (cycle-4 domain ruling c): relocations get their own section,
+    # so a reader triaging losses above does not wade through text that was
+    # kept. Each line still names the field and source/target WS (ruling a).
+    _relocated = tuple(getattr(report, "relocated_items", ()))
+    if _relocated:
+        yield (f"  Written in a different writing system - review "
+               f"-- {len(_relocated)} total:")
+        for d in _relocated:
+            yield (
+                f"    - {d.owner_label} [{d.owner_kind} {d.owner_guid[:8]}] . "
+                f"{d.field_name} -> \"{d.item_name}\" ({d.item_guid[:8]}) - {d.reason}"
+                f"{_origin_suffix(d)}"
             )
     if report.identity_remap:
         yield "  Identity remap (LCM denied GUID-on-create):"
@@ -2266,6 +2321,11 @@ def _render_disposition_lines(report) -> Iterable[str]:
     yield _row(
         "DROPPED", "reported with a reason", d["dropped_with_reason"],
     )
+    if d.get("relocated"):
+        yield _row(
+            "RELOC", "written in a different writing system - review",
+            d["relocated"],
+        )
     if d["update_enriched"]:
         yield (
             f"    Enriched children: {d['enriched_children_added']} added, "

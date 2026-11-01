@@ -58,6 +58,7 @@ from typing import Iterable, Tuple
 if __package__:
     from .models import (
         dropped_identity as _dropped_identity,
+        dropped_dedup_key as _dropped_dedup_key,
         ActionOutcome,
         AffixSlotLinkOutcome,
         AffixSlotLinkRecord,
@@ -91,6 +92,7 @@ if __package__:
 else:
     from models import (  # type: ignore
         dropped_identity as _dropped_identity,
+        dropped_dedup_key as _dropped_dedup_key,
         ActionOutcome,
         AffixSlotLinkOutcome,
         AffixSlotLinkRecord,
@@ -6619,9 +6621,16 @@ def _owner_label_for(owner_class: str, obj) -> str:
 def _dropped_key(record) -> tuple:
     """The contract's identity key for a `DroppedItemRecord`
     (contracts/dropped-item-report.md: "emitted exactly once per (owner,
-    field, item) triple") -- deliberately excludes `reason` so two records
-    for the same triple with different reason text still collapse to one."""
-    return _dropped_identity(record)
+    field, item) triple") -- deliberately excludes `reason` so two LOSSES
+    for the same triple with different reason text still collapse to one.
+
+    Issue #169: a `relocated:` record (#158) is not a loss and is keyed in its
+    own namespace (`models.dropped_dedup_key`). Before this, every record from
+    the possibility CREATE arm shared `field_name="ThesaurusItemsRC"`, so the
+    FIRST one won: a Name relocation hid a later Description LOSS (or an
+    ApplySyncableProperties failure), and Abbreviation/Description
+    relocations collapsed into the Name one."""
+    return _dropped_dedup_key(record)
 
 
 def _append_dropped_once(dropped: list, record) -> None:

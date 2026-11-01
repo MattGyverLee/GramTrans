@@ -191,6 +191,13 @@ REPORT_FIELD_ROLES = {
     # The item ADDED, knowingly incomplete, and said so -- an outcome with a
     # caveat, not a fifth outcome.
     "incompleteness": ANNOTATION,
+    # Issue #169: a relocation WROTE the text, in a different writing system,
+    # and lost no data -- a caveat on an ADD/UPDATE (like `incompleteness`),
+    # not a fifth outcome and not BUCKET_DROPPED.
+    "relocated_items": ANNOTATION,
+    # Issue #84 (pre-existing): human-readable notes about how the lexicon
+    # category selection was expanded. Text about the selection, not an item.
+    "category_notes": NOT_AN_ITEM,
     # THE ONE THAT NEEDED WORK. `reproduced=True` is an ADD; `reproduced=False`
     # must be named by a Skip or a dropped record, and until T080 nothing
     # checked that it was. See `TestTheFifthOutcomeWasReal`.
@@ -517,6 +524,33 @@ class TestTheInvariantCoversAllFour:
         outage."""
         totals = report_module.disposition_totals(_all_four_buckets())
         assert all(totals[k] >= 1 for k in FOUR_BUCKET_KEYS)
+
+    def test_a_relocated_record_is_an_annotation_outside_the_four_buckets(self):
+        """Issue #169: `relocated` rides in `disposition_totals` but is NOT a
+        fifth bucket -- the four keys are unchanged by it, it never lands in
+        `dropped_items`, and it is counted exactly once."""
+        base = report_module.disposition_totals(_all_four_buckets())
+        assert "relocated" not in base
+        record = _enrichment()
+        relocated = DroppedItemRecord(
+            owner_kind="LexEntry", owner_guid="entry-4", owner_label="-PL",
+            field_name="Gloss", item_name="Sense", item_guid="sense-1",
+            reason="relocated: text written to default analysis WS",
+            relocated=True,
+        )
+        report = RunReport.build_from_plan(
+            _plan(actions=(_action(),), skips=(_skip(),),
+                  overwrites=(_overwrite(record),), enrichments=(record,)),
+            RunMode.MOVE,
+            extra_dropped_items=(_dropped(), relocated),
+        )
+        totals = report_module.disposition_totals(report)
+        assert totals["relocated"] == 1
+        assert len(report.relocated_items) == 1
+        assert relocated not in report.dropped_items
+        for key in FOUR_BUCKET_KEYS:
+            assert totals[key] == base[key], key
+        assert "relocated" not in FOUR_BUCKET_KEYS
 
 
 # ---------------------------------------------------------------------------

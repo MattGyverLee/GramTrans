@@ -13,6 +13,7 @@ this builder with the full FR-004 category set.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 from typing import Iterable, List, Optional, Tuple
 
@@ -1624,9 +1625,27 @@ def build_run_plan(
             from .texts import plan_texts as _plan_texts
         else:
             from texts import plan_texts as _plan_texts  # type: ignore
+        _n_before_texts = len(_dropped)
         _text_plans = list(_plan_texts(
             selection, source, target, context, _resolver_cache, _dropped
         ))
+        # WARNING (#167): `origin` is provenance that lives ONLY on these in-memory
+        # records. Any future plan serialisation round-trip (save/load of a
+        # RunPlan) MUST carry `origin`, or `move_blind_plan_drops` finds nothing
+        # and #167 silently regresses to Moves reporting 0 planned drops.
+        # Issue #167: Move applies these decisions without re-deciding them,
+        # so it never re-emits their drops. Stamp the walk's records (in
+        # place: `context._dropped` is this same list) so `transfer.execute`
+        # folds exactly these -- and no other leg's -- into the Move report.
+        if __package__:
+            from .models import DROP_ORIGIN_PREVIEW_TEXTS as _ORIGIN_TEXTS
+        else:
+            from models import DROP_ORIGIN_PREVIEW_TEXTS as _ORIGIN_TEXTS  # type: ignore
+        _dropped[_n_before_texts:] = [
+            dataclasses.replace(d, origin=_ORIGIN_TEXTS)
+            if dataclasses.is_dataclass(d) else d
+            for d in _dropped[_n_before_texts:]
+        ]
         _log.debug("build_run_plan: TEXTS on; plan_texts produced %d text plan(s)",
                    len(_text_plans))
 
