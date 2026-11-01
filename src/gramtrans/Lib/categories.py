@@ -7286,6 +7286,14 @@ _LEXREL_PLANNED_KEY = "__categories_lexrel_planned__"
 # `_LEXREL_PLANNED_KEY`.
 _LEXREF_TYPE_PENDING_KEY = "__categories_lexreftype_pending__"
 
+# Move-mode bookkeeping (issue #163, QC cycle 1): `{type_guid: ILexRefType}`
+# for every relation type `_evaluate_lexical_relation` lazily CREATED during
+# THIS run. Only a type in this dict may be deleted by
+# `_discard_empty_lazy_lex_ref_type` -- a type that existed before the run
+# never enters it, so it can never be deleted. Its own key, like
+# `_LEXREF_TYPE_PENDING_KEY`, so it never collides with the relation caches.
+_LEXREF_TYPE_CREATED_KEY = "__categories_lexreftype_created__"
+
 
 def _lex_ref_type_label(lex_ref_type) -> str:
     """A human-readable name for a `LexRefType` (`Specific`, `Synonyms`,
@@ -7753,7 +7761,7 @@ def _append_type_not_found(dropped, source_type, type_guid, rel_guid):
 
 
 def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
-                               pending_types=None):
+                               pending_types=None, created_types=None):
     """Shared decision core for both `reproduce_lexical_relation` (Move) and
     `plan_lexical_relation_decision` (Preview): resolves the target
     `ILexRefType`, classifies every `TargetsRS` member against
@@ -7788,6 +7796,11 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
     `{type_guid: label}` for every relation type resolved to
     `PLAN_TIME_PENDING` whose relation SURVIVES the structural guards.
 
+    `created_types` (issue #163 QC cycle 1, Move only): a dict that receives
+    `{type_guid: target_type}` for every type this call lazily CREATED, so
+    `reproduce_lexical_relation` can tell a type minted this run from one
+    that already existed if the relation create then fails.
+
     **THE TYPE CREATE IS LAZY (issue #163).** Resolution runs in predict mode
     in BOTH modes (`plan_time=True` to `_resolve_target_lex_ref_type`, so leg
     4 answers `PLAN_TIME_PENDING` instead of creating), the pair/tree/zero-
@@ -7798,7 +7811,9 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
     (domain ruling, batch 141-147 C). Preview records `pending_types` at the
     same post-guard point, so it announces exactly the types Move creates.
     The GUID-preserving create makes the next relation of the same type hit
-    leg 1 (identity), so a type is still created at most once per run.
+    leg 1 (identity), so a type is still created at most once per run --
+    except after `_discard_empty_lazy_lex_ref_type` deleted it because its
+    relation's create failed, when the next relation re-creates it.
     """
     if __package__:
         from . import references as _references
@@ -7938,9 +7953,21 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
             target_type = _create_target_lex_ref_type(
                 source_type, ctx, dropped)
             if target_type is None:
+                # KNOWN P2 (issue #163 QC cycle 1; comment only, behaviour
+                # deliberately unchanged): when the type create ITSELF fails
+                # here, Move emits TWO records for one loss --
+                # `_create_target_lex_ref_type`'s LexRefType "could not be
+                # created" record (keyed by type_guid) AND
+                # `_append_type_not_found`'s per-relation record (keyed by
+                # rel_guid) -- while Preview, which only records
+                # `pending_types` and never attempts the create, emits NONE
+                # for the same relation. The two modes' drop lists therefore
+                # differ on this (unpredictable, factory-failure) path.
                 _append_type_not_found(dropped, source_type, type_guid,
                                        rel_guid)
                 return None
+            if created_types is not None and type_guid:
+                created_types[type_guid] = target_type
 
     # Report every member NOT in the copy set (FR-008: never silently
     # include or drop) -- the relation itself IS still reproduced, just
@@ -7991,6 +8018,47 @@ def _rebuild_targets_rs_in_source_order(existing, copied_members) -> None:
         pass
 
 
+def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
+    """Issue #163 (QC cycle 1): undo a lazy type create whose relation then
+    failed to be created, so the failure leaves no EMPTY relation type behind.
+
+    Deletes `target_type` ONLY when both hold: it was lazily created
+    during THIS run (its GUID is in `created_types` -- a pre-existing type
+    never is), and it still has zero `MembersOC` (an earlier relation of the
+    same new type that DID succeed keeps it alive). Unreadable members count
+    as "not empty" -- when in doubt, keep the type.
+
+    On a successful delete the GUID is popped from `created_types`, so Move's
+    bookkeeping records no create for the type, and a later relation of the
+    same type resolves it as absent again and lazily re-creates it.
+
+    Uses flexicon's `LexReferenceOperations.DeleteType` (`target.LexReferences`).
+    Fail-soft like `_discard_partial_process_rule`: a delete that raised must
+    not replace the relation's reported loss with a crash; it is logged and
+    the type is left as it was. Returns True only when the type was deleted.
+    """
+    type_guid = _guid_str_from(target_type)
+    if not type_guid or created_types.get(type_guid) is None:
+        return False
+    try:
+        if len(list(getattr(target_type, "MembersOC", None) or [])) != 0:
+            return False
+    except Exception:  # noqa: BLE001 -- unreadable: keep the type
+        return False
+    try:
+        target.LexReferences.DeleteType(target_type)
+    except Exception as exc:  # noqa: BLE001 -- logged, never raised
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_discard_empty_lazy_lex_ref_type: could not delete empty "
+            "lexical relation type %s created this run: %s",
+            type_guid, exc, exc_info=True,
+        )
+        return False
+    created_types.pop(type_guid, None)
+    return True
+
+
 def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
     """T031 (US3, FR-008) -- reproduce one lexical relation (`ILexReference`)
     for COPIED members only.
@@ -8032,7 +8100,9 @@ def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
     reproduced = resolver_cache.setdefault(_LEXREL_REPRODUCED_KEY, {})
     rel_guid = _guid_str_from(src_relation)
 
-    evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped)
+    created_types = resolver_cache.setdefault(_LEXREF_TYPE_CREATED_KEY, {})
+    evaluated = _evaluate_lexical_relation(
+        src_relation, ctx, dropped, created_types=created_types)
     if evaluated is None:
         return None
     rel_guid, target_type, copied_members = evaluated
@@ -8069,6 +8139,7 @@ def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
             item_guid=rel_guid,
             reason=f"create failed: {exc}",
         ))
+        _discard_empty_lazy_lex_ref_type(target, target_type, created_types)
         return None
 
     for member in copied_members:

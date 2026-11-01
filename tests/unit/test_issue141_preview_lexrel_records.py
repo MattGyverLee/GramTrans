@@ -335,6 +335,144 @@ def test_move_type_create_failure_drops_relation_without_member_records(
 
 
 # ===========================================================================
+# Issue #163 QC cycle 1: relation create fails AFTER a lazy type create
+# ===========================================================================
+
+class _FlakyRelFactory(_RelFactory):
+    """Relation factory whose `Create` raises on the call numbers in
+    `fail_on` (1-based) and behaves like `_RelFactory` otherwise."""
+
+    def __init__(self, fail_on=(1,)):
+        super().__init__()
+        self.calls = 0
+        self.fail_on = set(fail_on)
+
+    def Create(self, guid, owner):
+        self.calls += 1
+        if self.calls in self.fail_on:
+            raise RuntimeError("relation create failed")
+        return super().Create(guid, owner)
+
+
+class _LexRefOps:
+    """Stand-in for flexicon's `project.LexReferences` -- only `DeleteType`,
+    which removes the type from the target's relation-type list."""
+
+    def __init__(self, project):
+        self._project = project
+        self.deleted = []
+
+    def DeleteType(self, ref_type):
+        ref_list = self._project.Cache.LangProject.LexDbOA.ReferencesOA
+        ref_list.PossibilitiesOS._items.remove(ref_type)
+        self.deleted.append(ref_type.Guid)
+
+
+def _target_with_ops(ref_types, factory):
+    target = _Project(ref_types, rel_factory=factory)
+    target.LexReferences = _LexRefOps(target)
+    return target
+
+
+def _tgt_types(target):
+    return list(target.Cache.LangProject.LexDbOA.ReferencesOA.PossibilitiesOS)
+
+
+def test_relation_create_failure_after_lazy_type_create_leaves_no_type(
+        fake_type_create):
+    """(a) The type was created lazily for this relation; the relation create
+    then fails -> the now-empty type is deleted, no create is left in Move's
+    bookkeeping, and the relation's own failure record is kept."""
+    new_t = _RefType("type-new", "GT163 New", _COLLECTION)
+    rel = _SrcRel("rel-1", new_t, [_Member("e1"), _Member("e2")])
+    new_t.MembersOC.Add(rel)
+    factory = _FlakyRelFactory(fail_on=(1,))
+    target = _target_with_ops([], factory)
+    ctx = _Ctx(_Project([new_t]), target,
+               {g: _Member(g) for g in ("e1", "e2")})
+    cache: dict = {}
+    dropped: list = []
+    categories.reproduce_all_lexical_relations(ctx, _TAG, cache, dropped)
+
+    assert fake_type_create == ["type-new"]               # it WAS created ...
+    assert target.LexReferences.deleted == ["type-new"]   # ... then undone
+    assert _tgt_types(target) == []
+    assert cache[categories._LEXREF_TYPE_CREATED_KEY] == {}
+    assert any(d.owner_kind == "LexReference" and d.owner_guid == "rel-1"
+               and d.reason.startswith("create failed") for d in dropped)
+
+
+def test_existing_type_is_never_deleted_on_relation_failure(fake_type_create):
+    """(b) The type existed before the run (identity match) and has no
+    members; a relation create failure must still leave it in place."""
+    src_t = _RefType("type-old", "Synonyms", _COLLECTION)
+    rel = _SrcRel("rel-1", src_t, [_Member("e1"), _Member("e2")])
+    src_t.MembersOC.Add(rel)
+    tgt_t = _RefType("type-old", "Synonyms", _COLLECTION)
+    factory = _FlakyRelFactory(fail_on=(1,))
+    target = _target_with_ops([tgt_t], factory)
+    ctx = _Ctx(_Project([src_t]), target,
+               {g: _Member(g) for g in ("e1", "e2")})
+    dropped: list = []
+    categories.reproduce_all_lexical_relations(ctx, _TAG, {}, dropped)
+
+    assert fake_type_create == []
+    assert target.LexReferences.deleted == []
+    assert _tgt_types(target) == [tgt_t]
+    assert any(d.owner_guid == "rel-1" and d.reason.startswith("create failed")
+               for d in dropped)
+
+
+def test_failed_then_successful_relation_of_one_new_type_gives_one_type(
+        fake_type_create):
+    """(c) Two relations of one NEW type: the first relation create fails
+    (its lazily created type is cleaned up), the second succeeds and lazily
+    re-creates the type -> exactly one type, holding exactly one relation."""
+    new_t = _RefType("type-new", "GT163 New", _COLLECTION)
+    r1 = _SrcRel("rel-1", new_t, [_Member("e1"), _Member("e2")])
+    r2 = _SrcRel("rel-2", new_t, [_Member("e2"), _Member("e3")])
+    new_t.MembersOC.Add(r1)
+    new_t.MembersOC.Add(r2)
+    factory = _FlakyRelFactory(fail_on=(1,))
+    target = _target_with_ops([], factory)
+    ctx = _Ctx(_Project([new_t]), target,
+               {g: _Member(g) for g in ("e1", "e2", "e3")})
+    cache: dict = {}
+    dropped: list = []
+    categories.reproduce_all_lexical_relations(ctx, _TAG, cache, dropped)
+
+    assert fake_type_create.count("type-new") == 2  # created, undone, re-created
+    assert target.LexReferences.deleted == ["type-new"]
+    types = _tgt_types(target)
+    assert [t.Guid for t in types] == ["type-new"]
+    assert len(factory.created) == 1
+    assert [r.Guid for r in types[0].MembersOC] == factory.created
+    assert set(cache[categories._LEXREF_TYPE_CREATED_KEY]) == {"type-new"}
+
+
+def test_later_relation_failure_keeps_type_holding_earlier_relation(
+        fake_type_create):
+    """A lazily created type that already holds a successful relation is not
+    deleted when a LATER relation of the same type fails."""
+    new_t = _RefType("type-new", "GT163 New", _COLLECTION)
+    r1 = _SrcRel("rel-1", new_t, [_Member("e1"), _Member("e2")])
+    r2 = _SrcRel("rel-2", new_t, [_Member("e2"), _Member("e3")])
+    new_t.MembersOC.Add(r1)
+    new_t.MembersOC.Add(r2)
+    factory = _FlakyRelFactory(fail_on=(2,))
+    target = _target_with_ops([], factory)
+    ctx = _Ctx(_Project([new_t]), target,
+               {g: _Member(g) for g in ("e1", "e2", "e3")})
+    categories.reproduce_all_lexical_relations(ctx, _TAG, {}, [])
+
+    assert fake_type_create == ["type-new"]
+    assert target.LexReferences.deleted == []
+    types = _tgt_types(target)
+    assert [t.Guid for t in types] == ["type-new"]
+    assert len(list(types[0].MembersOC)) == 1
+
+
+# ===========================================================================
 # Plumbing + rendering (#141)
 # ===========================================================================
 
