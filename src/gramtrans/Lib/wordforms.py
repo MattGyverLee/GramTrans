@@ -18,9 +18,9 @@ reported + needs-review, never fabricated).
 flexicon accessors (grounded live via FLExTools MCP static surface, 2026-07-12):
 `WfiAnalyses` (`GetAll`, `GetHumanEvaluation`, `GetCategory`, `GetMorphBundles`,
 `GetGlosses`, `Create`, `ApproveAnalysis`, `RejectAnalysis`, `SetCategory`),
-`WfiMorphBundles` (`GetAll`, `GetForm`, `GetSense`, `GetMSA`, `GetMorphType`,
+`WfiMorphBundles` (`GetAll`, `GetForm`, `GetSense`, `GetMSA`, `GetMorph`,
 `GetInflType`, `GetInflectionClass`, `Create`, `SetForm`, `SetSense`, `SetMSA`,
-`SetMorphType`, `SetInflType`, `SetInflectionClass`), `Wordforms`
+`SetMorph`, `SetInflType`, `SetInflectionClass`), `Wordforms`
 (`Find`, `Create`, `GetSpellingStatus`, `SetSpellingStatus`, `ApproveSpelling`),
 `Segments.GetAnalyses`, `Agents` (`GetHumanAgents`, `FindByType`, `Create`,
 `SetHuman`, `IsHuman`). Imported lazily so this module stays import-safe
@@ -49,6 +49,7 @@ if __package__:
     )
     from . import references as _references
     from . import texts as _texts
+    from .lcm_unwrap import unwrap as _unwrap
 else:  # pragma: no cover
     from models import (  # type: ignore
         AlignmentToken,
@@ -67,6 +68,7 @@ else:  # pragma: no cover
     )
     import references as _references  # type: ignore
     import texts as _texts  # type: ignore
+    from lcm_unwrap import unwrap as _unwrap  # type: ignore
 
 _log = logging.getLogger("gramtrans.Lib.wordforms")
 
@@ -1097,8 +1099,53 @@ def _apply_category(plan, target, analysis_obj, wa_ops, resolver_cache, tag, ws_
             reason="category LINK had no target item (unresolved planned link)",
         ))
         return
-    if target_item is not None:
-        _texts._safe(lambda: wa_ops.SetCategory(analysis_obj, target_item))
+    if target_item is None:
+        return
+    # Issue #168: the resolver hands back a `PartsOfSpeechOA.PossibilitiesOS`
+    # element, statically typed `ICmPossibility`. flexicon's SetCategory guards
+    # with `isinstance(category, IPartOfSpeech)` -- False for that proxy -- so
+    # the uncast call raised FP_ParameterError, `_texts._safe` swallowed it and
+    # every legitimate LINK left CategoryRA None, unreported. Cast first; if
+    # the set still fails, report it at Move time instead of swallowing it.
+    category = _as_part_of_speech(target_item)
+    try:
+        wa_ops.SetCategory(analysis_obj, category)
+    except Exception as exc:  # noqa: BLE001 -- reported, never swallowed
+        src = getattr(decision, "source_item", None)
+        _log.warning(
+            "apply_analyses: SetCategory failed for analysis %s (%s: %s) -- "
+            "category left unset", plan.source_guid, type(exc).__name__, exc)
+        dropped.append(DroppedItemRecord(
+            owner_kind="WfiAnalysis",
+            owner_guid=plan.source_guid or "?",
+            owner_label="",
+            field_name="CategoryRA",
+            item_name=_references._item_label(src) if src is not None else "",
+            item_guid=(_guid_str(src) if src is not None else "")
+            or _guid_str(target_item) or "",
+            reason=CATEGORY_SET_FAILED_REASON,
+        ))
+
+
+# Issue #168: fixed reason for a Move-time CategoryRA set failure (the
+# exception text goes to the log, so the record's identity stays stable).
+CATEGORY_SET_FAILED_REASON = "category set failed in target"
+
+
+def _as_part_of_speech(item):
+    """Unwrap a flexicon wrapper and cast to `IPartOfSpeech` (issue #168).
+
+    Live, a POS pulled from `PossibilitiesOS` is an `ICmPossibility` proxy that
+    flexicon's `SetCategory` type guard rejects; `IPartOfSpeech(raw)` gives the
+    view it accepts (confirmed via FLExTools MCP). Host-free -- or when the
+    cast does not apply (an offline fake) -- the unwrapped object passes
+    through unchanged, so the caller's own failure handling still sees it."""
+    raw = _unwrap(item)
+    try:
+        from SIL.LCModel import IPartOfSpeech  # lazy -- absent offline
+        return IPartOfSpeech(raw)
+    except Exception:  # noqa: BLE001 -- no host, or not castable
+        return raw
 
 
 def _apply_spelling(plan, wf_ops, wordform):
@@ -1260,19 +1307,45 @@ def apply_morph_bundles(analysis_obj, plans, target, ctx, dropped) -> None:
             if text and (h is not None or not tgt_id2h):
                 _texts._safe(lambda t=text, hh=h: mb_ops.SetForm(bundle, t, hh))
         # Wire each RESOLVED reference; unresolved stay unset (reported at plan).
-        _wire_ref(mb_ops, "SetSense", bundle, plan.sense_ref)
-        _wire_ref(mb_ops, "SetMSA", bundle, plan.msa_ref)
-        _wire_ref(mb_ops, "SetMorphType", bundle, plan.morph_ref)
-        _wire_ref(mb_ops, "SetInflType", bundle, plan.infl_type_ref)
+        # Issue #168 sweep: MorphRA is the bundle's ALLOMORPH (IMoForm) and is
+        # wired by `SetMorph`. It used to go through `SetMorphType`, which
+        # flexicon retired (it always raises), so no bundle ever got its
+        # allomorph link and `_safe` hid that.
+        _wire_ref(mb_ops, "SetSense", bundle, plan.sense_ref, plan, dropped)
+        _wire_ref(mb_ops, "SetMSA", bundle, plan.msa_ref, plan, dropped)
+        _wire_ref(mb_ops, "SetMorph", bundle, plan.morph_ref, plan, dropped)
+        _wire_ref(mb_ops, "SetInflType", bundle, plan.infl_type_ref, plan, dropped)
     return None
 
 
-def _wire_ref(mb_ops, setter_name, bundle, ref):
+# Issue #168: fixed reason for a Move-time morph-bundle reference set failure.
+BUNDLE_REF_SET_FAILED_REASON = "reference set failed in target"
+
+
+def _wire_ref(mb_ops, setter_name, bundle, ref, plan=None, dropped=None):
+    """Wire one RESOLVED bundle reference. A setter that raises is reported
+    as a Move-time drop (issue #168), never swallowed."""
     if ref is None or not ref.resolved or ref.target_obj is None:
         return
     fn = getattr(mb_ops, setter_name, None)
-    if fn is not None:
-        _texts._safe(lambda: fn(bundle, ref.target_obj))
+    if fn is None:
+        return
+    try:
+        fn(bundle, _unwrap(ref.target_obj))
+    except Exception as exc:  # noqa: BLE001 -- reported, never swallowed
+        owner_guid = getattr(plan, "source_guid", "") or "?"
+        _log.warning(
+            "apply_morph_bundles: %s failed for bundle %s (%s: %s) -- %s left "
+            "unset", setter_name, owner_guid, type(exc).__name__, exc,
+            ref.field_name)
+        if dropped is not None:
+            dropped.append(DroppedItemRecord(
+                owner_kind="WfiMorphBundle", owner_guid=owner_guid,
+                owner_label="", field_name=ref.field_name,
+                item_name=_first_text(getattr(plan, "form", None) or {}),
+                item_guid=ref.source_guid or "",
+                reason=BUNDLE_REF_SET_FAILED_REASON,
+            ))
 
 
 # ===========================================================================

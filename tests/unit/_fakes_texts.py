@@ -476,7 +476,7 @@ class FakeMorphBundleOps:
     def SetMSA(self, b, msa):
         b.wired["msa"] = msa
 
-    def SetMorphType(self, b, morph):
+    def SetMorph(self, b, morph):
         b.wired["morph"] = morph
 
     def SetInflType(self, b, it):
