@@ -3912,7 +3912,9 @@ class DroppedItemRecord:
     ``(owner_guid, field_name, item_guid)`` — deliberately EXCLUDES `reason`,
     so two records for the same (owner, field, item) triple with different
     reason text still collapse to one (see `categories._dropped_key` /
-    `_append_dropped_once`, the enforcement point).
+    `_append_dropped_once`, the enforcement point). Issue #169: that contract
+    is a LOSS contract -- a `relocated=True` record is keyed apart from losses
+    (`dropped_dedup_key`), so it can never mask or be masked by one.
 
     Feature 025 (full reversals) `owner_kind` note: `owner_kind` is a
     free-form non-empty string (see `__post_init__` below) — there is no
@@ -3957,6 +3959,14 @@ class DroppedItemRecord:
     "warning" -- a drop that loses a whole class of content (a target
     writing system that cannot be created, a whole reversal index skipped).
     Renderers flag warnings so they stand out in Preview and the run report.
+
+    relocated (issue #169): True for a `relocated:` record (#158) -- text that
+    was NOT lost but written into the target default analysis writing system
+    because none of its source writing systems exists in the target. It is a
+    fidelity note, not a loss: `RunReport.build_from_plan` routes it to
+    `RunReport.relocated_items`, never `dropped_items`, and
+    `dropped_dedup_key` keeps it from colliding with (and so masking, or being
+    masked by) a loss on the same `(owner, field, item)` triple.
     """
     owner_kind: str
     owner_guid: str
@@ -3966,6 +3976,7 @@ class DroppedItemRecord:
     item_guid: str
     reason: str
     severity: str = "info"
+    relocated: bool = False
 
     def __post_init__(self) -> None:
         if not self.owner_kind:
@@ -3996,6 +4007,29 @@ def dropped_identity(record) -> tuple:
     return (owner, getattr(record, "field_name", ""), item)
 
 
+def is_relocated_record(record) -> bool:
+    """Issue #169: True for a `relocated:` record (see
+    `DroppedItemRecord.relocated`). Duck-typed, so a stand-in without the
+    field reads as an ordinary loss."""
+    return bool(getattr(record, "relocated", False))
+
+
+def dropped_dedup_key(record) -> tuple:
+    """Issue #169: the collector-level dedup key.
+
+    A LOSS keeps the published `dropped_identity` contract unchanged (first
+    loss per `(owner, field, item)` wins). A RELOCATION is keyed in its own
+    namespace and includes `reason`, which names the inner field (Name /
+    Abbreviation / Description) and the source/target WS: so a relocation
+    never collides with a loss on the same item (in either direction), sibling
+    relocations of different fields are all kept, and only an identical
+    relocation repeated by a closure re-visit is suppressed."""
+    identity = dropped_identity(record)
+    if is_relocated_record(record):
+        return ("relocated",) + identity + (getattr(record, "reason", ""),)
+    return identity
+
+
 def merge_dropped_records(existing, incoming) -> list:
     """Append `incoming` to `existing` (both iterables of `DroppedItemRecord`),
     de-duplicated on `dropped_identity`. On a collision the FIRST record is
@@ -4005,9 +4039,9 @@ def merge_dropped_records(existing, incoming) -> list:
     merged = list(existing)
     index = {}
     for i, d in enumerate(merged):
-        index.setdefault(dropped_identity(d), i)
+        index.setdefault(dropped_dedup_key(d), i)
     for rec in incoming:
-        key = dropped_identity(rec)
+        key = dropped_dedup_key(rec)
         if key not in index:
             index[key] = len(merged)
             merged.append(rec)
@@ -4639,6 +4673,12 @@ class RunReport:
     # pass these get the empty defaults below (snapshot compatibility).
     dropped_items: tuple = ()  # tuple[DroppedItemRecord, ...]
     fidelity_by_guid: dict = field(default_factory=dict)  # owner_guid -> FidelityStatus
+    # Issue #169 (cycle-4 domain ruling c): `relocated:` records (#158) -- text
+    # kept but moved into the target default analysis WS. Reported in their
+    # own section, apart from losses, so a reader triaging `dropped_items`
+    # sees only what was actually lost. NOT lossless: the owner is still
+    # PARTIAL in `fidelity_by_guid`. Additive, empty default.
+    relocated_items: tuple = ()  # tuple[DroppedItemRecord, ...] (relocated=True)
     # Feature 037 (defect C): leaf-dispatch execute_action failures that were
     # caught and logged (swallow-and-continue is intentional -- see
     # LeafExecutionFailure's docstring) rather than aborting the run. Additive

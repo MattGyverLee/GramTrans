@@ -45,6 +45,7 @@ if __package__:
         SkipReason,
         dropped_identity,
         is_blocked_skip,
+        is_relocated_record,
         merge_dropped_records,
     )
 else:
@@ -72,6 +73,7 @@ else:
         SkipReason,
         dropped_identity,
         is_blocked_skip,
+        is_relocated_record,
         merge_dropped_records,
     )
 
@@ -376,8 +378,18 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     # on the published `(owner_guid, field_name, item_guid)` identity so a
     # record the executor already appended to `extra_dropped_items` is not
     # reported twice.
+    #
+    # Issue #169 (cycle-4 domain ruling c): `relocated:` records (#158) are
+    # not losses -- the text was written, into the target default analysis
+    # WS. Partition them out BEFORE the merge so they land in their own
+    # `relocated_items` section and never share (or skew) the dropped bucket.
+    # Done here, the one build point every Preview/Move/UI caller goes
+    # through, so no executor build site has to change.
+    relocated_items_all = tuple(
+        d for d in extra_dropped_items if is_relocated_record(d))
     dropped_items_all = merge_dropped_records(
-        extra_dropped_items, _enrichment_dropped_records(enrichments_all))
+        tuple(d for d in extra_dropped_items if not is_relocated_record(d)),
+        _enrichment_dropped_records(enrichments_all))
 
     per_category_final = {
         cat: CategoryReport(
@@ -420,6 +432,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         empty_categories=empty_cats,
         excluded_lossy=tuple(excluded_lossy_all),
         dropped_items=tuple(dropped_items_all),
+        relocated_items=relocated_items_all,
         fidelity_by_guid=dict(fidelity_by_guid) if fidelity_by_guid else {},
         leaf_execution_failures=tuple(extra_leaf_execution_failures),
         outcome_counted=not_added is not None,
@@ -1695,6 +1708,14 @@ def _to_snapshot_json(self) -> str:
             for guid, status in sorted(self.fidelity_by_guid.items())
         },
     }
+    # Issue #169: relocations on their own key, apart from `dropped_items`.
+    # Additive and omit-when-empty, so a run with no relocation serialises
+    # byte-identically to before.
+    relocated_items = tuple(getattr(self, "relocated_items", ()))
+    if relocated_items:
+        payload["relocated_items"] = [
+            _dropped_item_json(d) for d in relocated_items
+        ]
 
     # ---- Feature 038 (transfer fidelity gaps) --------------------------
     # ADDITIVE and OMIT-WHEN-EMPTY (see the module comment above
@@ -2132,6 +2153,18 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
             _flag = "[WARN] " if getattr(d, "severity", "info") == "warning" else ""
             yield (
                 f"    - {_flag}{d.owner_label} [{d.owner_kind} {d.owner_guid[:8]}] . "
+                f"{d.field_name} -> \"{d.item_name}\" ({d.item_guid[:8]}) - {d.reason}"
+            )
+    # Issue #169 (cycle-4 domain ruling c): relocations get their own section,
+    # so a reader triaging losses above does not wade through text that was
+    # kept. Each line still names the field and source/target WS (ruling a).
+    _relocated = tuple(getattr(report, "relocated_items", ()))
+    if _relocated:
+        yield (f"  Relocated text (kept, written into the target default "
+               f"analysis writing system) -- {len(_relocated)} total:")
+        for d in _relocated:
+            yield (
+                f"    - {d.owner_label} [{d.owner_kind} {d.owner_guid[:8]}] . "
                 f"{d.field_name} -> \"{d.item_name}\" ({d.item_guid[:8]}) - {d.reason}"
             )
     if report.identity_remap:

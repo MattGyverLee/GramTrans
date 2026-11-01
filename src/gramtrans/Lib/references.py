@@ -1358,6 +1358,13 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                     _project_handle_to_id(source) if source is not None else {}
                 )
                 create_props = {}
+                # Issue #169: records for THIS item are buffered and emitted
+                # only once the outcome of `ApplySyncableProperties` is known
+                # -- a `relocated:` record claims text WAS written, so it may
+                # only be reported if the write succeeded.
+                item_losses = []          # real losses (plain drops)
+                item_relocations = []     # relocated=True records
+                relocation_fallback = []  # the per-WS drops each relocation replaced
                 owner_guid, owner_label = _owner_ids(owner_obj)
                 source_vern_ids = (
                     _source_vernacular_ids(source) if source_handle_to_id else None
@@ -1405,7 +1412,7 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                                     and source_vern_ids is not None
                                     and best_src_id not in source_vern_ids):
                                 field_props = {dest_id: best_text}
-                                pending_drops = [DroppedItemRecord(
+                                item_relocations.append(DroppedItemRecord(
                                     owner_kind=spec.owner_class,
                                     owner_guid=owner_guid,
                                     owner_label=owner_label,
@@ -1419,9 +1426,11 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                                         f"{dest_id!r} (no source writing system "
                                         "present in target)"
                                     ),
-                                )]
-                        if dropped is not None:
-                            dropped.extend(pending_drops)
+                                    relocated=True,
+                                ))
+                                relocation_fallback.extend(pending_drops)
+                                pending_drops = []
+                        item_losses.extend(pending_drops)
                         if field_props:
                             create_props[field_name] = field_props
                     else:
@@ -1441,6 +1450,7 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                             _best_text(field_ms), ops, target_ws_by_id)
                         if id_keyed:
                             create_props[field_name] = id_keyed
+                apply_failure = None
                 try:
                     # `ws_map` was already applied above (source-resolver
                     # branch) to build target-id-keyed `create_props`
@@ -1455,19 +1465,30 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                     _log.warning(
                         "apply_reference CREATE: ApplySyncableProperties failed "
                         "for %s: %r", _guid_str(anc), exc)
-                    if dropped is not None:
-                        dropped.append(DroppedItemRecord(
-                            owner_kind=spec.owner_class,
-                            owner_guid=owner_guid,
-                            owner_label=owner_label,
-                            field_name=spec.field_name,
-                            item_name=_item_label(anc),
-                            item_guid=_guid_str(anc),
-                            reason=(
-                                "created item's Name/Abbreviation/Description "
-                                f"could not be copied: {exc!r}"
-                            ),
-                        ))
+                    apply_failure = DroppedItemRecord(
+                        owner_kind=spec.owner_class,
+                        owner_guid=owner_guid,
+                        owner_label=owner_label,
+                        field_name=spec.field_name,
+                        item_name=_item_label(anc),
+                        item_guid=_guid_str(anc),
+                        reason=(
+                            "created item's Name/Abbreviation/Description "
+                            f"could not be copied: {exc!r}"
+                        ),
+                    )
+                if dropped is not None:
+                    if apply_failure is not None:
+                        # Nothing was written: no relocation happened. The
+                        # failure goes FIRST so it is the loss the
+                        # collector's first-in dedup keeps; the per-WS drops
+                        # the relocations had replaced are losses again.
+                        dropped.append(apply_failure)
+                        dropped.extend(item_losses)
+                        dropped.extend(relocation_fallback)
+                    else:
+                        dropped.extend(item_losses)
+                        dropped.extend(item_relocations)
                 apply_residue(new_obj, ws, tag, class_name=getattr(anc, "ClassName", None))
                 cache[anc_guid] = new_obj
                 created_item = new_obj
