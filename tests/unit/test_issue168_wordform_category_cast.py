@@ -173,3 +173,57 @@ def test_bundle_ref_set_failure_is_reported():
             for d in dropped] == [(
                 "WfiMorphBundle", "mb-guid", "SenseRA", "SenseRA-g",
                 wordforms.BUNDLE_REF_SET_FAILED_REASON)]
+
+
+# --- cast failure + Preview/Move drop identity ------------------------------
+
+def test_cast_failure_still_records_move_time_drop_and_never_raises(monkeypatch):
+    """The IPartOfSpeech cast inside `_as_part_of_speech` itself fails."""
+    import sys
+    import types
+
+    class _Boom:
+        def __call__(self, raw):
+            raise TypeError("cannot cast to IPartOfSpeech")
+
+    fake_lcm = types.ModuleType("SIL.LCModel")
+    fake_lcm.IPartOfSpeech = _Boom()
+    fake_sil = types.ModuleType("SIL")
+    fake_sil.LCModel = fake_lcm
+    monkeypatch.setitem(sys.modules, "SIL", fake_sil)
+    monkeypatch.setitem(sys.modules, "SIL.LCModel", fake_lcm)
+
+    pos = SimpleNamespace(guid="tgt-pos-guid")
+    assert wordforms._as_part_of_speech(pos) is pos  # falls back, no raise
+    analysis = SimpleNamespace(CategoryRA=None)
+    dropped = []
+    # The uncast object is rejected by the (strict) setter -> reported drop.
+    _apply(_link_plan(pos), _RecordingAnalysisOps(fail=True), analysis, dropped)
+    assert analysis.CategoryRA is None
+    assert len(dropped) == 1
+    d = dropped[0]
+    assert (d.owner_kind, d.field_name) == ("WfiAnalysis", "CategoryRA")
+    assert d.reason == wordforms.CATEGORY_SET_FAILED_REASON
+
+
+def test_preview_and_move_category_drops_share_dropped_identity(monkeypatch):
+    from gramtrans.Lib.models import dropped_identity
+
+    src_pos = SimpleNamespace(guid="src-pos-guid", Name="Noun")
+    analysis = SimpleNamespace(guid="an-guid", CategoryRA=src_pos)
+
+    monkeypatch.setattr(
+        wordforms._references, "decide_reference",
+        lambda *a, **k: ReferenceDecision(
+            action=ReferenceAction.CREATE, source_item=src_pos))
+    preview_dropped = []
+    wordforms.resolve_or_report_category(analysis, None, {}, preview_dropped)
+    assert len(preview_dropped) == 1
+
+    move_dropped = []
+    plan = _link_plan(SimpleNamespace(guid="tgt-pos-guid"), source_item=src_pos)
+    plan.source_guid = "an-guid"
+    _apply(plan, _RecordingAnalysisOps(fail=True), analysis, move_dropped)
+    assert len(move_dropped) == 1
+
+    assert dropped_identity(preview_dropped[0]) == dropped_identity(move_dropped[0])
