@@ -1327,7 +1327,7 @@ TEXTS_WORDFORMS_CLASSIFICATION: dict[tuple[str, str], Classification] = {
     # ---- WfiMorphBundle --------------------------------------------------
     ("WfiMorphBundle", "MorphRA"): Classification(
         Bucket.COPIED,
-        "wordforms.apply_morph_bundles _wire_ref('SetMorphType') -- GUID "
+        "wordforms.apply_morph_bundles _wire_ref('SetMorph') -- GUID "
         "identity lookup against the per-run target index (R4)",
     ),
     ("WfiMorphBundle", "MsaRA"): Classification(
