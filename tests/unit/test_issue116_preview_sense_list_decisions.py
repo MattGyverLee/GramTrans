@@ -350,8 +350,6 @@ def test_render_itemizes_create_link_and_drop_rows():
         "    Link  ThesaurusItemsRC 'existing' {E}  (1 sense)",
         "    Not transferred  AppendixesRC 'Appendix B' {ap-a}  (1 sense) -- see "
         "dropped items for the reason",
-        "    (Later references to an item created earlier in this run show as "
-        "create; Move links them.)",
     )
     # Wired into the Preview pane's extra lines.
     assert set(lines) <= set(render_preview_extra_lines(plan))

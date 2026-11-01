@@ -517,13 +517,33 @@ def resolve_or_report_category(analysis, target, resolver_cache, dropped):
     if category is None:
         return None
     spec = _pos_spec()
+    # Issue #146: on Preview's planning cache a CREATE verdict primes
+    # PlannedCreate placeholders. This function never creates, so it must not
+    # leave behind any it added itself (that would turn later lookups of the
+    # same POS, here or in another consumer, into phantom LINKs). Remember
+    # which chain GUIDs were absent beforehand; touches only the chain.
+    absent_before = []
+    try:
+        for anc in _references._ancestor_chain(category):
+            g = _guid_str(anc)
+            if g and resolver_cache.get(g) is None:
+                absent_before.append(g)
+    except Exception:
+        absent_before = []
     try:
         decision = _references.decide_reference(category, target, spec, resolver_cache)
     except Exception:
         decision = None
+    finally:
+        for g in absent_before:
+            if _references.is_planned_create(resolver_cache.get(g)):
+                del resolver_cache[g]
     if decision is None:
         return None
-    if decision.action == ReferenceAction.CREATE:
+    if (decision.action == ReferenceAction.CREATE
+            or getattr(decision, "planned", False)
+            or (decision.action == ReferenceAction.LINK
+                and decision.target_item is None)):
         drop = DroppedItemRecord(
             owner_kind="WfiAnalysis",
             owner_guid=_guid_str(analysis) or "?",
@@ -1058,6 +1078,24 @@ def _apply_category(plan, target, analysis_obj, wa_ops, resolver_cache, tag, ws_
     target_item = getattr(decision, "target_item", None)
     if target_item is None and decision.action == ReferenceAction.CREATE:
         # Should not happen (resolve_or_report suppresses CREATE); defensive.
+        return
+    if target_item is None and decision.action == ReferenceAction.LINK:
+        # Issue #146: a planned/placeholder LINK has nothing to set. Loud, never
+        # silent: warn and report the category as dropped.
+        src = getattr(decision, "source_item", None)
+        _log.warning(
+            "apply_analyses: category LINK has no target_item for analysis %s "
+            "(planned=%s) -- category left unset",
+            plan.source_guid, getattr(decision, "planned", False))
+        dropped.append(DroppedItemRecord(
+            owner_kind="WfiAnalysis",
+            owner_guid=plan.source_guid or "?",
+            owner_label="",
+            field_name="CategoryRA",
+            item_name=_references._item_label(src) if src is not None else "",
+            item_guid=_guid_str(src) if src is not None else "",
+            reason="category LINK had no target item (unresolved planned link)",
+        ))
         return
     if target_item is not None:
         _texts._safe(lambda: wa_ops.SetCategory(analysis_obj, target_item))
