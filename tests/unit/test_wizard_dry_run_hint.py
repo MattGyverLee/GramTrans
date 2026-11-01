@@ -131,8 +131,11 @@ def test_both_callers_use_the_shared_helper():
 def _succeed(monkeypatch):
     monkeypatch.setattr(sw, "_safe_compute_wizard_plan",
                         lambda wizard: (object(), None))
-    # StatsPanel.set_report(None) is not the subject here.
-    monkeypatch.setattr(sw.StatsPanel, "set_report", lambda self, report: None)
+    # StatsPanel.set_report(None) is not the subject here, nor (issue #162)
+    # the Preview-only extra lines rendered off the plan.
+    monkeypatch.setattr(sw, "render_preview_extra_lines", lambda plan: ())
+    monkeypatch.setattr(sw.StatsPanel, "set_report",
+                        lambda self, report, extra_lines=(): None)
 
 
 def test_first_entry_shows_plain_label(qapp):

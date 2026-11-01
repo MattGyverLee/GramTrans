@@ -120,8 +120,11 @@ def wired(qapp, monkeypatch):
 
     monkeypatch.setattr(sw.gt_api, "execute_move", _fake_execute_move)
     monkeypatch.setattr(sw.gt_api, "compute_preview", _fake_compute_preview)
-    # StatsPanel.set_report would try to render a fake report object.
-    monkeypatch.setattr(sw.StatsPanel, "set_report", lambda self, report: None)
+    # StatsPanel.set_report would try to render a fake report object, and
+    # (issue #162) the dry run renders extra lines off a fake plan.
+    monkeypatch.setattr(sw, "render_preview_extra_lines", lambda plan: ())
+    monkeypatch.setattr(sw.StatsPanel, "set_report",
+                        lambda self, report, extra_lines=(): None)
 
     return sw, calls
 
