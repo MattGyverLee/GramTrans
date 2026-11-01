@@ -88,6 +88,7 @@ if __package__:
     from .page_header import PageHeader
     from ..merge_preview import MergePreviewService, OVERWRITE, NEW
     from ..models import SimilarResolution
+    from ..preview import render_preview_extra_lines
     from ..report import RunReport
     from ..ws_mapping import closest_ws_defaults
 else:
@@ -136,6 +137,7 @@ else:
     from page_header import PageHeader  # type: ignore
     from merge_preview import MergePreviewService, OVERWRITE, NEW  # type: ignore  # noqa: F401
     from models import SimilarResolution  # type: ignore  (already imported above but needs bare-name alias)  # noqa: F401
+    from preview import render_preview_extra_lines  # type: ignore
     from report import RunReport  # type: ignore
     from ws_mapping import closest_ws_defaults  # type: ignore  # noqa: F401
 
@@ -479,7 +481,8 @@ class _PagePreview(QtWidgets.QWizardPage):
             # DR-5: wrapper owns QMessageBox dialogs.
             _warn_plan_failure(self, wizard)
             return
-        self._stats.set_report(report)
+        # Issue #162: Preview-only extra lines, shown before any Move.
+        self._stats.set_report(report, render_preview_extra_lines(plan))
 
 
 # ---------------------------------------------------------------------------
@@ -1055,7 +1058,8 @@ class _PageFinish(_FlowPage):
             _warn_plan_failure(self, wizard)
             return
         self._cached_plan = plan
-        self._stats.set_report(report)
+        # Issue #162: this dry run is the wizard's real Preview -- extra lines.
+        self._stats.set_report(report, render_preview_extra_lines(plan))
         # Issue #11: a fresh plan exists again, so the "cleared" hint is over.
         self._dry_run_btn.setText(self._DRY_RUN_TEXT)
         # FR-043/FR-044 live here too: a successful dry run is necessary for

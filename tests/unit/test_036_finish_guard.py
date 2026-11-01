@@ -251,6 +251,9 @@ def _succeed_dry_run(monkeypatch, plan=None, report=None):
     plan = _PlanDouble() if plan is None else plan
     report = _report() if report is None else report
     monkeypatch.setattr(sw, "_compute_wizard_plan", lambda wizard: (plan, report))
+    # Issue #162: the dry run renders the Preview-only extra lines off the plan;
+    # `_PlanDouble` carries none of the RunPlan fields that reads.
+    monkeypatch.setattr(sw, "render_preview_extra_lines", lambda plan: ())
     return plan, report
 
 
