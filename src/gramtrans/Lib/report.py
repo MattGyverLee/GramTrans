@@ -966,6 +966,8 @@ def _dropped_item_json(d) -> dict:
         # serialises exactly as it did before severity existed.
         **({"severity": d.severity}
            if getattr(d, "severity", "info") != "info" else {}),
+        # Issue #167: same omit-when-default rule for the provenance stamp.
+        **({"origin": d.origin} if getattr(d, "origin", "") else {}),
     }
 
 

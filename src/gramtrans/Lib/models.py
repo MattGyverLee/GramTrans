@@ -3887,6 +3887,19 @@ class ReferenceCardinality(enum.Enum):
 #: Valid `DroppedItemRecord.severity` values (issue #78).
 DROP_SEVERITIES = ("info", "warning")
 
+#: Issue #167: `DroppedItemRecord.origin` of a drop the text walk decided at
+#: Preview time and Move applies without re-deciding (see the class docstring).
+DROP_ORIGIN_PREVIEW_TEXTS = "preview:texts"
+
+
+def move_blind_plan_drops(plan) -> tuple:
+    """Issue #167: the `plan.dropped_items` a Move never re-emits itself --
+    the Preview-decided text-walk drops (`origin == DROP_ORIGIN_PREVIEW_TEXTS`).
+    Every other plan drop is re-decided at Move, so folding it would report a
+    drop Move may have resolved."""
+    return tuple(d for d in (getattr(plan, "dropped_items", ()) or ())
+                 if getattr(d, "origin", "") == DROP_ORIGIN_PREVIEW_TEXTS)
+
 
 @dataclass(frozen=True)
 class DroppedItemRecord:
@@ -3957,6 +3970,17 @@ class DroppedItemRecord:
     "warning" -- a drop that loses a whole class of content (a target
     writing system that cannot be created, a whole reversal index skipped).
     Renderers flag warnings so they stand out in Preview and the run report.
+
+    origin (issue #167): which path DECIDED the drop. "" (the default) for
+    every drop a Move re-decides or re-emits on its own; `DROP_ORIGIN_
+    PREVIEW_TEXTS` for a drop the text walk (`texts.plan_texts`: texts,
+    analyses, glosses, morph bundles, alignment, segment notes/tags, genres,
+    wordform categories) decided at Preview time. Move applies those stored
+    decisions without re-deciding them, so it never re-emits the drop --
+    `transfer.execute` folds exactly these records from `plan.dropped_items`
+    into the Move report. Provenance only: excluded from `dropped_identity`
+    and from equality, so a stamped record still equals (and de-duplicates
+    against) the same drop without a stamp.
     """
     owner_kind: str
     owner_guid: str
@@ -3966,6 +3990,7 @@ class DroppedItemRecord:
     item_guid: str
     reason: str
     severity: str = "info"
+    origin: str = field(default="", compare=False)
 
     def __post_init__(self) -> None:
         if not self.owner_kind:

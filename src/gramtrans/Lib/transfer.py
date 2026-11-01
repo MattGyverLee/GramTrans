@@ -1219,8 +1219,16 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # absence convention.
     if __package__:
         from .categories import compute_fidelity_by_guid as _compute_fidelity_by_guid
+        from .models import merge_dropped_records, move_blind_plan_drops
     else:
         from categories import compute_fidelity_by_guid as _compute_fidelity_by_guid  # type: ignore
+        from models import merge_dropped_records, move_blind_plan_drops  # type: ignore
+    # Issue #167: the text walk decided its drops at Preview and Move applied
+    # those decisions as stored, so they are in `plan.dropped_items` only.
+    # Fold exactly those (never another leg's projection, which Move re-decides
+    # and may resolve). Move's own records go first: on an identity collision
+    # the Move-time record and its reason win, and the drop appears once.
+    _report_dropped = merge_dropped_records(_dropped, move_blind_plan_drops(plan))
     # Feature 038 T045: hand the report the MEASURED enrichment records in
     # place of the plan's PROJECTION, so a Move report says what the writes
     # achieved. Substitution, never addition: `report._build_from_plan` UNIONs
@@ -1254,8 +1262,8 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         # of T016 -- `_apply_reference_fields` appends a DroppedItemRecord for
         # every REPORT_DROPPED reference decision made during the AFFIXES/
         # STEMS closure write.
-        extra_dropped_items=tuple(_dropped),
-        fidelity_by_guid=_compute_fidelity_by_guid(_dropped),
+        extra_dropped_items=tuple(_report_dropped),
+        fidelity_by_guid=_compute_fidelity_by_guid(_report_dropped),
         # Feature 037 (defect C): makes RunReport.leaf_failed truthful --
         # previously a swallowed execute_action exception left no trace on
         # the report at all (per_category[*].added is computed from the
