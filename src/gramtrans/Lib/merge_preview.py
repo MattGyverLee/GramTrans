@@ -44,9 +44,11 @@ from typing import Any, Callable
 if __package__:
     from .ws_fonts import WsFont, WsFontRegistry, WsRole  # noqa: F401
     from .residue import strip_residue_props
+    from .lcm_unwrap import unwrap as _shared_unwrap
 else:
     from ws_fonts import WsFont, WsFontRegistry, WsRole  # type: ignore  # noqa: F401
     from residue import strip_residue_props  # type: ignore
+    from lcm_unwrap import unwrap as _shared_unwrap  # type: ignore
 
 
 # ============================================================================
@@ -949,8 +951,8 @@ def _safe_ws_id(ws: Any) -> str:
 
 
 def _unwrap(obj: Any) -> Any:
-    """Unwrap flexicon wrapper objects (mirrors conflict.py._unwrap)."""
-    return obj.concrete if hasattr(obj, "concrete") else obj
+    """Unwrap flexicon wrapper objects (see lcm_unwrap.unwrap)."""
+    return _shared_unwrap(obj)
 
 
 def _guid_eq(a: str, b: str) -> bool:
