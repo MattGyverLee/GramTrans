@@ -184,7 +184,7 @@ def test_build_routes_relocations_to_their_own_collection():
 def test_render_has_separate_relocated_section():
     lines = list(render_text_summary(_report()))
     drop_hdr = next(i for i, l in enumerate(lines) if "Dropped references" in l)
-    reloc_hdr = next(i for i, l in enumerate(lines) if "Relocated text" in l)
+    reloc_hdr = next(i for i, l in enumerate(lines) if "Written in a different writing system - review" in l)
     assert "-- 1 total" in lines[drop_hdr]
     assert "-- 2 total" in lines[reloc_hdr]
     reloc_lines = lines[reloc_hdr + 1:reloc_hdr + 3]
@@ -199,4 +199,64 @@ def test_snapshot_json_relocated_key_is_additive_and_omitted_when_empty():
     plain = RunReport.build_from_plan(
         _plan(), RunMode.MOVE, extra_dropped_items=(_rec(LOSS),))
     assert "relocated_items" not in json.loads(plain.to_snapshot_json())
-    assert not any("Relocated text" in l for l in render_text_summary(plain))
+    assert not any("Written in a different writing system - review" in l for l in render_text_summary(plain))
+
+
+# --- #169 follow-up: section label, stats line, census ------------------------
+
+def test_relocated_heading_is_review_not_loss():
+    lines = list(render_text_summary(_report()))
+    head = next(l for l in lines if "Written in a different writing system" in l)
+    assert "review" in head and "-- 2 total" in head
+    low = head.lower()
+    assert "loss" not in low and "dropped" not in low
+
+
+def test_stats_panel_counts_relocations_when_nonzero():
+    lines = list(render_text_summary(_report()))
+    row = next(l for l in lines if "RELOC" in l)
+    assert row.rstrip().endswith(": 2")
+    assert "different writing system - review" in row
+    drop = next(l for l in lines if "DROPPED" in l and "reported with a reason" in l)
+    assert drop.rstrip().endswith(": 1")
+
+
+def test_stats_panel_has_no_relocated_row_when_zero():
+    plain = RunReport.build_from_plan(
+        _plan(), RunMode.MOVE, extra_dropped_items=(_rec(LOSS),))
+    assert not any("RELOC" in l for l in render_text_summary(plain))
+    assert "relocated" not in report_disposition(plain)
+
+
+def report_disposition(report):
+    from gramtrans.Lib.report import disposition_totals
+    return disposition_totals(report)
+
+
+def test_json_summary_carries_relocated_count():
+    data = json.loads(_report().to_snapshot_json())
+    assert data["disposition"]["relocated"] == 2
+    assert data["disposition"]["dropped_with_reason"] == 1
+
+
+def test_census_never_credits_a_relocation(tmp_path):
+    # A relocation was never an accounted shortfall: its `item_name` is a
+    # text label (not an object class) and its reason matches no
+    # DROP_REASON_TOKENS needle. Even a record naming a census class with a
+    # `relocated:` reason (in either key) must yield no accounting line.
+    from gramtrans import census_cli
+    reloc = _reloc("Name")
+    rec = {
+        "owner_kind": "LexSense", "owner_guid": OWNER, "owner_label": "o",
+        "field_name": "ThesaurusItemsRC", "item_name": "LexSense",
+        "item_guid": ITEM, "reason": reloc.reason,
+    }
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps({
+        "dropped_items": [], "relocated_items": [rec]}), encoding="utf-8")
+    assert census_cli.dropped_by_class_from_report(
+        path, classes=("LexSense",)) == {}
+    path.write_text(json.dumps({
+        "dropped_items": [rec], "relocated_items": []}), encoding="utf-8")
+    assert census_cli.dropped_by_class_from_report(
+        path, classes=("LexSense",)) == {}

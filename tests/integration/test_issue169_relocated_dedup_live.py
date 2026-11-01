@@ -230,4 +230,4 @@ def test_relocations_live_apart_from_losses(live):
     assert owner in report.fidelity_by_guid
     from gramtrans.Lib.report import render_text_summary
     text = "\n".join(render_text_summary(report))
-    assert "Relocated text" in text
+    assert "Written in a different writing system - review" in text
