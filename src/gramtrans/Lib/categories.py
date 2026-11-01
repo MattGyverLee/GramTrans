@@ -7280,7 +7280,10 @@ _LEXREL_REPRODUCED_KEY = "__categories_lexrel_reproduced__"
 _LEXREL_PLANNED_KEY = "__categories_lexrel_planned__"
 # Issue #142: `{source type guid: label}` of every relation type Preview
 # predicted as `PLAN_TIME_PENDING` (absent from the target, Move will create
-# it). Its own key so it never collides with `_LEXREL_PLANNED_KEY`.
+# it) AND that owns at least one relation surviving the structural guards --
+# issue #163: Move creates the type lazily, so a type whose relations all drop
+# is neither created nor recorded. Its own key so it never collides with
+# `_LEXREL_PLANNED_KEY`.
 _LEXREF_TYPE_PENDING_KEY = "__categories_lexreftype_pending__"
 
 
@@ -7610,9 +7613,12 @@ def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
          exactly as `_resolve_scoped_referent` treats an ambiguous roster key.
       4. **CREATE** (`_create_target_lex_ref_type`), and ONLY when leg 3 found
          nothing -- i.e. a source type genuinely absent from the destination.
-         Reachable in Move only (`allow_create`); at plan time it is predicted
+         Reachable only with `allow_create`; at plan time it is predicted
          as `PLAN_TIME_PENDING` instead, so Preview neither writes nor
-         over-reports a loss Move will not take.
+         over-reports a loss Move will not take. Issue #163:
+         `_evaluate_lexical_relation` calls this in predict mode in BOTH
+         modes and creates the type itself, after the structural guards, so
+         a type whose relations all drop is never created.
 
     **WHY 3 BEFORE 4 IS THE LOAD-BEARING HALF.** Create-first would mint a
     second copy of all 7 FLEx default relation types on every pair, every run.
@@ -7709,6 +7715,43 @@ def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
     return _create_target_lex_ref_type(source_type, ctx, dropped)
 
 
+def _append_type_not_found(dropped, source_type, type_guid, rel_guid):
+    """Report one relation lost because its `LexRefType` is absent from the
+    target and could not be resolved or created. Shared by the resolution
+    miss and (issue #163) the lazy post-guard create failing in Move."""
+    # THE RECORD USED TO NAME THE WRONG OBJECT (038 T123, 2026-08-28).
+    # `owner_kind` says `LexRefType` while `owner_guid` carried
+    # `rel_guid` -- the RELATION's guid, not the TYPE's -- so the one
+    # field that names the missing type was discarded, and the record
+    # said "a LexRefType whose guid is actually a LexReference".
+    # `owner_label` and `item_name` were both empty, so the report could
+    # not tell a reader WHICH relation type is absent (`Specific`,
+    # `Synonyms`, `Calendar`) -- which is precisely the question the next
+    # investigation had to ask, and had to re-derive live because the
+    # report would not say.
+    #
+    # DEDUP GRANULARITY IS PER-RELATION, BY DESIGN (038 QC carry-forward,
+    # cycle 3): `item_guid=rel_guid` varies per relation, so this reports
+    # once per RELATION of the absent type -- the mirror-image choice
+    # from the ambiguous-key record above (`item_guid=""`, per-TYPE).
+    # Both are intentional: a type genuinely absent from the target loses
+    # every relation of that type individually and each is worth its own
+    # record, whereas an ambiguous type is one unresolved fact, not N.
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind="LexRefType",
+        owner_guid=type_guid,
+        owner_label=_lex_ref_type_label(source_type),
+        field_name="MembersOC",
+        item_name=_lex_ref_type_label(source_type),
+        item_guid=rel_guid,
+        reason=(
+            "lexical relation type not found in target by identity, by "
+            "identity_remap or by (Name, MappingType), and could not be "
+            "created; no relation of this type can be reproduced"
+        ),
+    ))
+
+
 def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
                                pending_types=None):
     """Shared decision core for both `reproduce_lexical_relation` (Move) and
@@ -7743,10 +7786,19 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
 
     `pending_types` (issue #142, plan time only): a dict that receives
     `{type_guid: label}` for every relation type resolved to
-    `PLAN_TIME_PENDING`. Recorded right at resolution, BEFORE the structural
-    guards below, because Move's create leg also runs before them: Move
-    creates the type even when the relation is then dropped, so Preview must
-    announce the type CREATE in that case too.
+    `PLAN_TIME_PENDING` whose relation SURVIVES the structural guards.
+
+    **THE TYPE CREATE IS LAZY (issue #163).** Resolution runs in predict mode
+    in BOTH modes (`plan_time=True` to `_resolve_target_lex_ref_type`, so leg
+    4 answers `PLAN_TIME_PENDING` instead of creating), the pair/tree/zero-
+    member guards run against the source mapping type, and only a relation
+    that clears every guard makes Move call `_create_target_lex_ref_type`.
+    Create-before-guards left an EMPTY relation type in the target whenever
+    every relation of a missing type was dropped -- a defect in its own right
+    (domain ruling, batch 141-147 C). Preview records `pending_types` at the
+    same post-guard point, so it announces exactly the types Move creates.
+    The GUID-preserving create makes the next relation of the same type hit
+    leg 1 (identity), so a type is still created at most once per run.
     """
     if __package__:
         from . import references as _references
@@ -7788,45 +7840,15 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
         # shipped two dead structural guards.
         source_type = _as_lex_ref_type(source_type) or source_type
     type_guid = _guid_str_from(source_type) if source_type is not None else ""
+    # Issue #163: predict mode in BOTH modes -- an absent-but-creatable type
+    # comes back as PLAN_TIME_PENDING and is created (Move) or recorded
+    # (Preview) only after the structural guards below have passed.
     target_type = _resolve_target_lex_ref_type(
         target, type_guid, source_type=source_type, ctx=ctx,
-        plan_time=plan_time, allow_create=not plan_time, dropped=dropped,
+        plan_time=True, allow_create=False, dropped=dropped,
     )
-    if (plan_time and pending_types is not None
-            and target_type is PLAN_TIME_PENDING and type_guid):
-        pending_types.setdefault(type_guid, _lex_ref_type_label(source_type))
     if target_type is None:
-        # THE RECORD USED TO NAME THE WRONG OBJECT (038 T123, 2026-08-28).
-        # `owner_kind` says `LexRefType` while `owner_guid` carried
-        # `rel_guid` -- the RELATION's guid, not the TYPE's -- so the one
-        # field that names the missing type was discarded, and the record
-        # said "a LexRefType whose guid is actually a LexReference".
-        # `owner_label` and `item_name` were both empty, so the report could
-        # not tell a reader WHICH relation type is absent (`Specific`,
-        # `Synonyms`, `Calendar`) -- which is precisely the question the next
-        # investigation had to ask, and had to re-derive live because the
-        # report would not say.
-        #
-        # DEDUP GRANULARITY IS PER-RELATION, BY DESIGN (038 QC carry-forward,
-        # cycle 3): `item_guid=rel_guid` varies per relation, so this reports
-        # once per RELATION of the absent type -- the mirror-image choice
-        # from the ambiguous-key record above (`item_guid=""`, per-TYPE).
-        # Both are intentional: a type genuinely absent from the target loses
-        # every relation of that type individually and each is worth its own
-        # record, whereas an ambiguous type is one unresolved fact, not N.
-        _append_dropped_once(dropped, DroppedItemRecord(
-            owner_kind="LexRefType",
-            owner_guid=type_guid,
-            owner_label=_lex_ref_type_label(source_type),
-            field_name="MembersOC",
-            item_name=_lex_ref_type_label(source_type),
-            item_guid=rel_guid,
-            reason=(
-                "lexical relation type not found in target by identity, by "
-                "identity_remap or by (Name, MappingType), and could not be "
-                "created; no relation of this type can be reproduced"
-            ),
-        ))
+        _append_type_not_found(dropped, source_type, type_guid, rel_guid)
         return None
 
     mapping_type = _lex_ref_type_mapping_type(target_type)
@@ -7902,6 +7924,23 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
     # Any stale relation-level "not reproduced" record from an earlier,
     # less-complete call was already wiped by the upfront clear at the top
     # of this function, so there is nothing further to retract here.
+
+    # Issue #163: the lazy type create. Only now -- with a relation known to
+    # survive -- does an absent type get created (Move) or announced
+    # (Preview). Before the member-loss records below, so a create failure
+    # never leaves per-member records for a relation that will not exist.
+    if target_type is PLAN_TIME_PENDING:
+        if plan_time:
+            if pending_types is not None and type_guid:
+                pending_types.setdefault(
+                    type_guid, _lex_ref_type_label(source_type))
+        else:
+            target_type = _create_target_lex_ref_type(
+                source_type, ctx, dropped)
+            if target_type is None:
+                _append_type_not_found(dropped, source_type, type_guid,
+                                       rel_guid)
+                return None
 
     # Report every member NOT in the copy set (FR-008: never silently
     # include or drop) -- the relation itself IS still reproduced, just
@@ -8276,9 +8315,10 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
     Issue #142: a relation type absent from the target (predicted
     `PLAN_TIME_PENDING`, which Move will CREATE) also yields one
     `ReferenceDecisionRecord(owner_kind="LexRefType", action=CREATE)`, once
-    per type, placed before the first record of that type's relations. It is
-    emitted even when every relation of that type is then dropped, because
-    Move creates the type before its structural guards run. Issue #141:
+    per type, placed before the first record of that type's relations. Issue
+    #163: it is emitted ONLY when at least one relation of that type survives
+    the structural guards, because Move creates the type lazily at that same
+    point -- a type whose relations all drop is not created. Issue #141:
     `Lib/preview.py.build_run_plan` folds the whole list into
     `RunPlan.lexical_relation_decisions` and `render_lexical_relation_
     decisions` shows it."""

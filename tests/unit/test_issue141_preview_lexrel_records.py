@@ -8,8 +8,9 @@ only lexical-relation DROPS, never the relations Move creates (Principle III).
 at plan time; Move then CREATES it. Preview never said so.
 
 These tests pin: the producer emits one LexRefType CREATE per pending type
-(even when every relation of that type is dropped, because Move creates the
-type before its structural guards run); the records reach
+that owns at least one SURVIVING relation (issue #163: Move creates the type
+lazily, after the structural guards, so a type whose relations all drop is
+neither created nor announced); the records reach
 `RunPlan.lexical_relation_decisions` and `render_preview_extra_lines`; and
 Preview's CREATE set equals what Move actually creates.
 """
@@ -211,7 +212,7 @@ def test_pending_type_create_is_recorded_once_before_its_relations():
     records, _ = _preview(source, copied)
     kinds = [(r.owner_kind, r.item_guid) for r in records]
     type_rows = [r for r in records if r.owner_kind == "LexRefType"]
-    assert [r.item_guid for r in type_rows] == ["type-new", "type-pair"]
+    assert [r.item_guid for r in type_rows] == ["type-new"]
     assert all(r.action is ReferenceAction.CREATE for r in type_rows)
     assert type_rows[0].item_name == "GT141 New"
     # The type record precedes the first relation of that type.
@@ -226,12 +227,13 @@ def test_existing_type_is_not_announced_as_create():
                               if r.owner_kind == "LexRefType"}
 
 
-def test_type_create_announced_even_when_its_only_relation_drops():
-    """Move creates the type before the pair guard drops the relation, so
-    Preview must still say the type will be created."""
+def test_type_create_not_announced_when_its_only_relation_drops():
+    """Issue #163 (flipped from #142's "announced even when ... drops"): Move
+    creates the type only once a relation of it survives the guards, so
+    Preview must NOT announce a type whose only relation is dropped."""
     source, copied = _fixture()
     records, dropped = _preview(source, copied)
-    assert ("LexRefType", "type-pair") in {
+    assert ("LexRefType", "type-pair") not in {
         (r.owner_kind, r.item_guid) for r in records}
     assert "rel-4" not in {r.item_guid for r in records}
     assert any(d.owner_guid == "rel-4" and "pair relation" in d.reason
@@ -256,7 +258,7 @@ def test_repeat_pass_with_same_cache_still_announces_type():
     categories.plan_all_lexical_relations(ctx, cache, [])
     again = categories.plan_all_lexical_relations(ctx, cache, [])
     assert [r.item_guid for r in again if r.owner_kind == "LexRefType"] == [
-        "type-new", "type-pair"]
+        "type-new"]
 
 
 # ===========================================================================
@@ -271,10 +273,65 @@ def test_preview_creates_equal_move_creates(fake_type_create):
     preview_types = [r.item_guid for r in records if r.owner_kind == "LexRefType"]
     preview_rels = sorted(r.item_guid for r in records
                           if r.owner_kind == "LexReference")
-    assert preview_types == fake_type_create == ["type-new", "type-pair"]
+    assert preview_types == fake_type_create == ["type-new"]
     assert preview_rels == sorted(factory.created) == ["rel-1", "rel-2", "rel-3"]
     assert sorted((d.owner_guid, d.reason) for d in p_dropped) == sorted(
         (d.owner_guid, d.reason) for d in m_dropped)
+
+
+def test_move_does_not_create_a_type_whose_only_relation_drops(
+        fake_type_create):
+    """Issue #163: the pair type's only relation is reduced below its minimum,
+    so Move must leave no empty `type-pair` in the target."""
+    source, copied = _fixture()
+    factory = _RelFactory()
+    target = _Project(_target_types(), rel_factory=factory)
+    ctx = _Ctx(source, target, {g: _Member(g) for g in copied})
+    dropped: list = []
+    categories.reproduce_all_lexical_relations(ctx, _TAG, {}, dropped)
+    assert "type-pair" not in fake_type_create
+    tgt_guids = [t.Guid for t in
+                 target.Cache.LangProject.LexDbOA.ReferencesOA.PossibilitiesOS]
+    assert tgt_guids == ["type-old", "type-new"]
+    assert any(d.owner_guid == "rel-4" and "pair relation" in d.reason
+               for d in dropped)
+
+
+def test_move_creates_a_pending_type_once_for_two_surviving_relations(
+        fake_type_create):
+    """The second relation of a lazily created type resolves it by identity
+    (GUID-preserving create), so the type is created exactly once."""
+    source, copied = _fixture()
+    factory, _ = _move(source, copied)
+    assert fake_type_create.count("type-new") == 1
+    assert {"rel-1", "rel-2"} <= set(factory.created)
+
+
+def test_move_type_create_failure_drops_relation_without_member_records(
+        monkeypatch):
+    """A lazy create that fails reports the relation as type-not-found and
+    writes nothing -- no relation, no per-member "not in copy set" records."""
+    def _boom(*_a, **_k):
+        raise RuntimeError("create failed")
+
+    monkeypatch.setattr(categories, "_create_with_guid", _boom)
+    monkeypatch.setattr(categories, "ILexRefTypeFactory_ref", lambda: object())
+    new_t = _RefType("type-new", "GT141 New", _COLLECTION)
+    m = {g: _Member(g) for g in ("e1", "x")}
+    rel = _SrcRel("rel-1", new_t, [m["e1"], m["x"]])   # x not copied
+    new_t.MembersOC.Add(rel)
+    source = _Project([new_t])
+    factory = _RelFactory()
+    target = _Project([], rel_factory=factory)
+    ctx = _Ctx(source, target, {"e1": _Member("e1")})
+    dropped: list = []
+    categories.reproduce_all_lexical_relations(ctx, _TAG, {}, dropped)
+    assert factory.created == []
+    assert len(target.Cache.LangProject.LexDbOA.ReferencesOA.PossibilitiesOS) == 0
+    assert any(d.owner_kind == "LexRefType" and d.item_guid == "rel-1"
+               and "could not be created" in d.reason for d in dropped)
+    assert not any(d.reason == "lexical-relation member not in copy set"
+                   for d in dropped)
 
 
 # ===========================================================================
