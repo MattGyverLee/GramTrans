@@ -7812,8 +7812,8 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
     same post-guard point, so it announces exactly the types Move creates.
     The GUID-preserving create makes the next relation of the same type hit
     leg 1 (identity), so a type is still created at most once per run --
-    except after `_discard_empty_lazy_lex_ref_type` deleted it because its
-    relation's create failed, when the next relation re-creates it.
+    except that the end-of-run sweep may delete it again if every relation
+    create of that type failed.
     """
     if __package__:
         from . import references as _references
@@ -8029,8 +8029,10 @@ def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
     as "not empty" -- when in doubt, keep the type.
 
     On a successful delete the GUID is popped from `created_types`, so Move's
-    bookkeeping records no create for the type, and a later relation of the
-    same type resolves it as absent again and lazily re-creates it.
+    bookkeeping records no create for the type. Called ONLY from the
+    end-of-run `_sweep_empty_lazy_lex_ref_types` (never inline mid-walk: a
+    delete followed by a same-GUID re-create in one run left a zombie type in
+    the live LCM).
 
     Uses flexicon's `LexReferenceOperations.DeleteType` (`target.LexReferences`).
     Fail-soft like `_discard_partial_process_rule`: a delete that raised must
@@ -8057,6 +8059,14 @@ def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
         return False
     created_types.pop(type_guid, None)
     return True
+
+
+def _sweep_empty_lazy_lex_ref_types(target, created_types) -> None:
+    """Issue #163: after the relation walk, delete every relation type
+    lazily created this run that STILL has no relations (all its relation
+    creates failed). Pre-existing types are never in `created_types`."""
+    for type_guid, target_type in list(created_types.items()):
+        _discard_empty_lazy_lex_ref_type(target, target_type, created_types)
 
 
 def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
@@ -8139,7 +8149,10 @@ def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
             item_guid=rel_guid,
             reason=f"create failed: {exc}",
         ))
-        _discard_empty_lazy_lex_ref_type(target, target_type, created_types)
+        # No inline delete: a same-GUID delete-then-recreate inside one run
+        # leaves a zombie in LCM (live gate, issue #163). The still-empty
+        # type is swept ONCE after the whole relation walk instead
+        # (`_sweep_empty_lazy_lex_ref_types`).
         return None
 
     for member in copied_members:
@@ -8364,6 +8377,9 @@ def reproduce_all_lexical_relations(context, tag, resolver_cache, dropped):
     for src_relation in _iter_relations_touching_copy_set(
             source, copy_set, dropped):
         reproduce_lexical_relation(src_relation, context, tag, resolver_cache, dropped)
+    _sweep_empty_lazy_lex_ref_types(
+        context.target_handle,
+        resolver_cache.setdefault(_LEXREF_TYPE_CREATED_KEY, {}))
 
 
 def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:

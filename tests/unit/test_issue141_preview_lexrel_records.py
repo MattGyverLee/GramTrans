@@ -425,9 +425,9 @@ def test_existing_type_is_never_deleted_on_relation_failure(fake_type_create):
 
 def test_failed_then_successful_relation_of_one_new_type_gives_one_type(
         fake_type_create):
-    """(c) Two relations of one NEW type: the first relation create fails
-    (its lazily created type is cleaned up), the second succeeds and lazily
-    re-creates the type -> exactly one type, holding exactly one relation."""
+    """(c) Two relations of one NEW type: the first relation create fails,
+    the second succeeds -> exactly one type (created once, never deleted --
+    the sweep finds it non-empty), holding exactly one relation."""
     new_t = _RefType("type-new", "GT163 New", _COLLECTION)
     r1 = _SrcRel("rel-1", new_t, [_Member("e1"), _Member("e2")])
     r2 = _SrcRel("rel-2", new_t, [_Member("e2"), _Member("e3")])
@@ -441,8 +441,8 @@ def test_failed_then_successful_relation_of_one_new_type_gives_one_type(
     dropped: list = []
     categories.reproduce_all_lexical_relations(ctx, _TAG, cache, dropped)
 
-    assert fake_type_create.count("type-new") == 2  # created, undone, re-created
-    assert target.LexReferences.deleted == ["type-new"]
+    assert fake_type_create.count("type-new") == 1  # created once, no recreate
+    assert target.LexReferences.deleted == []
     types = _tgt_types(target)
     assert [t.Guid for t in types] == ["type-new"]
     assert len(factory.created) == 1
@@ -521,3 +521,26 @@ def test_renderer_is_empty_for_a_plan_without_lexrel_decisions():
     plan = RunPlan(context=_ctx(), selection=Selection(categories={}),
                    ws_mapping=WSMapping(entries=()))
     assert preview.render_lexical_relation_decisions(plan) == ()
+
+
+def test_all_relations_of_new_type_fail_type_swept_once_at_end(
+        fake_type_create):
+    """Both relations of one NEW type fail: the type is created once and
+    deleted exactly once by the end-of-run sweep (no inline delete, so no
+    same-GUID recreate)."""
+    new_t = _RefType("type-new", "GT163 New", _COLLECTION)
+    r1 = _SrcRel("rel-1", new_t, [_Member("e1"), _Member("e2")])
+    r2 = _SrcRel("rel-2", new_t, [_Member("e2"), _Member("e3")])
+    new_t.MembersOC.Add(r1)
+    new_t.MembersOC.Add(r2)
+    factory = _FlakyRelFactory(fail_on=(1, 2))
+    target = _target_with_ops([], factory)
+    ctx = _Ctx(_Project([new_t]), target,
+               {g: _Member(g) for g in ("e1", "e2", "e3")})
+    cache: dict = {}
+    categories.reproduce_all_lexical_relations(ctx, _TAG, cache, [])
+
+    assert fake_type_create == ["type-new"]
+    assert target.LexReferences.deleted == ["type-new"]
+    assert _tgt_types(target) == []
+    assert cache[categories._LEXREF_TYPE_CREATED_KEY] == {}
