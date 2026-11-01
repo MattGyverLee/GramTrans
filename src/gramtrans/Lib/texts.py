@@ -1037,6 +1037,9 @@ def _apply_genres(plan, target, target_text, resolver_cache, tag, source, ws_map
                 rebound, target, None, spec, resolver_cache, tag,
                 ws_map=ws_map or None, source=source, dropped=dropped,
             )
+        except _references.UnmappedItemClassError as exc:
+            dropped.append(exc.dropped)  # its own, more specific record
+            continue
         except Exception as e:
             _log.warning("texts.apply: genre apply failed for text %s: %s: %s",
                          text_guid, type(e).__name__, e)

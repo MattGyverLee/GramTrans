@@ -263,3 +263,20 @@ def test_apply_texts_attaches_shared_genre_to_created_text():
     created = target.Texts._texts[-1]
     assert list(created.GenresRC) == [tgt_genre]
     assert not [d for d in dropped if d.field_name == "GenresRC"]
+
+
+def test_unmapped_item_class_keeps_its_own_drop_record(monkeypatch):
+    rec = DroppedItemRecord(owner_kind="Text", owner_guid="", owner_label="",
+                            field_name="GenresRC", item_name="G", item_guid="g",
+                            reason="unmapped item class")
+
+    def boom(*a, **k):
+        raise texts._references.UnmappedItemClassError(rec)
+
+    monkeypatch.setattr(texts._references, "apply_reference", boom)
+    src = FakePossibility("g", "G")
+    plan = SimpleNamespace(genre_decisions=(_link(src, FakePossibility("g")),),
+                           source_guid="t1")
+    dropped: list = []
+    texts._apply_genres(plan, _target(), FakeText("tt", "T"), {}, None, None, None, dropped)
+    assert dropped == [rec]
