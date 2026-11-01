@@ -19,8 +19,8 @@ shape with fakes; the offline suite runs without flexicon on the path).
 
 flexicon accessors (grounded live via FLExTools MCP static surface, 2026-07-12):
 `source.Texts` (TextOperations: `GetAll`, `GetName`, `GetAbbreviation`,
-`GetGenre`, `GetIsTranslated`, `GetContents`, `GetParagraphs`, `Create`,
-`Find`, `SetName`, `SetAbbreviation`, `SetGenre`, `SetIsTranslated`),
+`GetGenres`, `GetIsTranslated`, `GetContents`, `GetParagraphs`, `Create`,
+`Find`, `SetName`, `SetAbbreviation`, `SetIsTranslated`),
 `source.Paragraphs` (ParagraphOperations: `GetAll`, `GetText`, `Create`),
 `source.Segments` (SegmentOperations: `GetAll`, `GetBaselineText`,
 `GetFreeTranslation`, `GetLiteralTranslation`, `GetNotes`, `AppendSentence`,
@@ -492,32 +492,65 @@ def _text_fingerprint(project, text) -> Optional[tuple]:
     return (len(paras), hashlib.sha1(first_text.encode("utf-8")).hexdigest())
 
 
+def _source_genres(source, source_text) -> list:
+    """Every genre on a source text's `GenresRC`, as a list. Raises on failure.
+
+    Issue #161: uses flexicon `Texts.GetGenres` (4.9.0+), which reads the whole
+    reference collection. `Texts.GetGenre` must NOT be used: it calls the LINQ
+    extension `FirstOrDefault()`, which pythonnet does not expose, so it raises
+    `AttributeError` live on every text that has a genre (and it returned only
+    the first genre anyway). On a flexicon older than 4.9.0, where `GetGenres`
+    is absent, the raw `IText.GenresRC` collection is read instead -- the same
+    data `GetGenres` returns."""
+    text_ops = getattr(source, "Texts", None)
+    get_genres = getattr(text_ops, "GetGenres", None)
+    if callable(get_genres):
+        return list(get_genres(source_text) or [])
+    coll = getattr(source_text, "GenresRC", None)
+    if coll is None:
+        from SIL.LCModel import IText  # lazy -- absent offline
+        coll = IText(source_text).GenresRC
+    return list(coll)
+
+
 def _decide_genres(source_text, source, target, resolver_cache, dropped):
     """Resolve `GenresRC` via the shared resolver → tuple[ReferenceDecision].
 
     Each source genre possibility is decided (LINK/CREATE/UPDATE/REPORT_DROPPED)
     against `LangProject.GenreListOA`; a shared cache dedups genres reused across
-    texts (FR-005). Never raises — a genre the source cannot enumerate is
-    skipped (no throw), a genre that cannot resolve is a REPORT_DROPPED decision
+    texts (FR-005). Never raises. Never silent (issue #161): a text whose genres
+    cannot be read, or a genre the resolver cannot decide, appends a
+    DroppedItemRecord; a genre that cannot resolve is a REPORT_DROPPED decision
     carrying its own DroppedItemRecord.
     """
     spec = _genre_spec()
     decisions = []
-    genres = []
+    text_guid = _guid_str(source_text) or "?"
     try:
-        genres = list(source.Texts.GetGenre(source_text) or [])
-    except Exception:
-        # GetGenre may return a single possibility or raise; tolerate both.
-        try:
-            one = source.Texts.GetGenre(source_text)
-            genres = [one] if one is not None else []
-        except Exception:
-            genres = []
+        genres = _source_genres(source, source_text)
+    except Exception as e:
+        _log.warning("texts.plan: genres of text %s could not be read: %s: %s",
+                     text_guid, type(e).__name__, e)
+        dropped.append(DroppedItemRecord(
+            owner_kind="Text", owner_guid=text_guid, owner_label="",
+            field_name=spec.field_name, item_name="", item_guid="",
+            reason=f"text genres could not be read from the source: {type(e).__name__}: {e}",
+        ))
+        return ()
     for g in genres:
         try:
             decision = _references.decide_reference(g, target, spec, resolver_cache, source=source)
-        except Exception:
-            decision = None
+        except Exception as e:
+            _log.warning("texts.plan: genre %s of text %s could not be decided: %s: %s",
+                         _guid_str(g), text_guid, type(e).__name__, e)
+            dropped.append(DroppedItemRecord(
+                owner_kind="Text", owner_guid=text_guid, owner_label="",
+                field_name=spec.field_name, item_name=_references._item_label(g),
+                item_guid=_guid_str(g),
+                reason=("text genre could not be resolved against the target: "
+                        f"{type(e).__name__}: {e}"),
+            ))
+            continue
         if decision is None:
             continue
         decisions.append(decision)
@@ -947,19 +980,84 @@ def _rebind_or_drop(decision, target, spec, resolver_cache, source, dropped,
     return rebound
 
 
+def _text_genres_rc(target_text):
+    """The target text's `GenresRC` reference collection. Raises on failure.
+
+    `GenresRC` is defined on `IText` only; a proxy typed as a base interface
+    hides it, so fall back to an explicit `IText` cast (lazy import)."""
+    coll = getattr(target_text, "GenresRC", None)
+    if coll is None:
+        from SIL.LCModel import IText  # lazy -- absent offline
+        coll = IText(target_text).GenresRC
+    return coll
+
+
 def _apply_genres(plan, target, target_text, resolver_cache, tag, source, ws_map, dropped):
+    """Move-mode: attach each planned genre to the target text's `GenresRC`.
+
+    Issue #161: `GenresRC` is a reference COLLECTION, so `apply_reference` is
+    called with `owner_obj=None` (its arms would otherwise `setattr` a single
+    item onto the collection, which fails) and the resolved possibility is
+    `.Add()`-ed here unless a member with the same GUID is already present
+    (re-runs stay idempotent; existing target genres are never removed --
+    flexicon `SetGenre` is deliberately NOT used, it clears the collection).
+    Every failure appends a DroppedItemRecord; a REPORT_DROPPED decision with
+    no target item was already reported at plan time and is skipped."""
     spec = _genre_spec()
+    text_guid = getattr(plan, "source_guid", "") or "?"
+
+    def _drop(src, reason):
+        dropped.append(DroppedItemRecord(
+            owner_kind="Text", owner_guid=text_guid, owner_label="",
+            field_name=spec.field_name,
+            item_name=_references._item_label(src) if src is not None else "",
+            item_guid=_guid_str(src) if src is not None else "",
+            reason=reason,
+        ))
+
+    coll = None
     for decision in plan.genre_decisions:
+        if (getattr(decision, "action", None) == ReferenceAction.REPORT_DROPPED
+                and getattr(decision, "target_item", None) is None):
+            continue  # unresolvable -- already reported at plan time
         # Issue #146: a Preview-planned LINK is re-decided against Move's cache.
         rebound = _rebind_or_drop(
             decision, target, spec, resolver_cache, source, dropped,
-            "StText", getattr(plan, "source_guid", "") or "", spec.field_name)
+            "Text", text_guid, spec.field_name)
         if rebound is None:
             continue
-        _safe(lambda d=rebound: _references.apply_reference(
-            d, target, target_text, spec, resolver_cache, tag,
-            ws_map=ws_map or None, source=source, dropped=dropped,
-        ))
+        if rebound is not decision and getattr(rebound, "dropped", None) is not None:
+            # A rebind that re-decided to REPORT_DROPPED carries its own record.
+            dropped.append(rebound.dropped)
+            if getattr(rebound, "target_item", None) is None:
+                continue
+        src = getattr(rebound, "source_item", None)
+        try:
+            genre = _references.apply_reference(
+                rebound, target, None, spec, resolver_cache, tag,
+                ws_map=ws_map or None, source=source, dropped=dropped,
+            )
+        except Exception as e:
+            _log.warning("texts.apply: genre apply failed for text %s: %s: %s",
+                         text_guid, type(e).__name__, e)
+            _drop(src, "text genre could not be linked or created in the target: "
+                       f"{type(e).__name__}: {e}")
+            continue
+        if genre is None:
+            _drop(src, "text genre could not be linked or created in the target")
+            continue
+        try:
+            if coll is None:
+                coll = _text_genres_rc(target_text)
+            genre_guid = _guid_str(genre)
+            if genre_guid and any(_guid_str(g) == genre_guid for g in coll):
+                continue  # already attached -- idempotent
+            coll.Add(genre)
+        except Exception as e:
+            _log.warning("texts.apply: adding genre %s to text %s failed: %s: %s",
+                         _guid_str(genre), text_guid, type(e).__name__, e)
+            _drop(src, "text genre could not be added to the target text's "
+                       f"GenresRC: {type(e).__name__}: {e}")
 
 
 def _apply_segment_notes(seg_plan, tgt_seg, dropped):
