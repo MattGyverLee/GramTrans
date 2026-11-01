@@ -56,7 +56,9 @@ The domain review raised nothing that blocks merge and nothing that needs a huma
 - Remove the probe and sandbox projects: GT-Probe-158-Src, GT-Probe-158-Tgt, GT-Sandbox-129, GT-Sandbox-130.
 - Open PRs #153, #155, #157, #159 and #160 are not part of this batch.
 
-## Follow-up issue proposals (for user approval; not filed)
+## Follow-up issue proposals
+
+> Filed 2026-11-01 after user approval: F1 #169, F2 #170, F3 #171, F4 #172, F5 #173, F6 #174, F7 #175, F8 #176, F9 #177, F10 #178.
 
 | # | Source | Proposal |
 |---|---|---|
