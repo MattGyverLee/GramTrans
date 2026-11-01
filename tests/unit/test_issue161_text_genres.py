@@ -133,6 +133,37 @@ def test_older_flexicon_without_getgenres_reads_raw_collection():
     assert dropped == []
 
 
+def test_fallback_casts_to_itext_when_raw_proxy_hides_genres_rc(monkeypatch):
+    """GetGenres absent AND `GenresRC` invisible on the raw (base-typed pythonnet)
+    proxy: the `IText(text).GenresRC` cast branch must supply the collection."""
+    import sys
+    import types
+
+    genre = FakePossibility("g", "G")
+    cast_calls = []
+
+    class _RawText:                     # no GenresRC attribute at all
+        pass
+
+    class _Cast:
+        def __init__(self, obj):
+            cast_calls.append(obj)
+            self.GenresRC = [genre]
+
+    lcm = types.ModuleType("SIL.LCModel")
+    lcm.IText = _Cast
+    monkeypatch.setitem(sys.modules, "SIL", sys.modules.get("SIL") or types.ModuleType("SIL"))
+    monkeypatch.setitem(sys.modules, "SIL.LCModel", lcm)
+
+    class _NoGetGenres:
+        GetGenres = None
+
+    raw = _RawText()
+    src = SimpleNamespace(Texts=_NoGetGenres())
+    assert texts._source_genres(src, raw) == [genre]
+    assert cast_calls == [raw]
+
+
 def test_undecidable_genre_records_a_drop(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("resolver failed")
