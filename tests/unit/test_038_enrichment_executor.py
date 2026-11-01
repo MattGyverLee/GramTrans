@@ -615,7 +615,10 @@ def test_the_measured_record_is_an_enrichment_never_a_creation():
 # InflectableFeatsRC -- a REFERENCE collection links, it never creates
 # ============================================================================
 
-def test_a_reference_collection_links_the_existing_target_feature():
+def test_a_reference_collection_is_left_to_the_single_writer():
+    """Issue #133: enrichment must not write InflectableFeatsRC. The missing
+    link is counted `deferred` (not `added`); the link pass owns the write and
+    the one count."""
     feature = _FakeChild("feat-1", name="Tense")
     target_feature = _FakeChild("feat-1", name="Tense")
     src_pos = _FakePOS("pos-1", InflectableFeatsRC=[feature])
@@ -627,18 +630,17 @@ def test_a_reference_collection_links_the_existing_target_feature():
         factories=factories, objects_by_guid={"feat-1": target_feature},
     )
 
-    linked = list(tgt_pos.collection("InflectableFeatsRC"))
-    assert linked == [target_feature], (
-        "a reference collection must link the object that is already in the "
-        "target, never create a second one"
-    )
-    assert _row(measured, "InflectableFeatsRC").added == 1
-    assert all(f.created_guids == [] for f in factories.values()), (
-        "no factory may be called for a reference collection"
-    )
+    assert list(tgt_pos.collection("InflectableFeatsRC")) == [], (
+        "enrichment is not a writer of InflectableFeatsRC (#133)")
+    row = _row(measured, "InflectableFeatsRC")
+    assert (row.added, row.dropped, row.deferred) == (0, 0, 1)
+    assert row.source_child_count == 1
+    assert all(f.created_guids == [] for f in factories.values())
 
 
-def test_an_unresolvable_reference_is_dropped_with_a_reason():
+def test_an_unresolvable_reference_is_also_left_to_the_single_writer():
+    """The link pass, not enrichment, reports a feature absent from the
+    target (as a dependency drop); enrichment neither writes nor counts it."""
     feature = _FakeChild("feat-1", name="Tense")
     src_pos = _FakePOS("pos-1", InflectableFeatsRC=[feature])
     tgt_pos = _FakePOS("pos-1")
@@ -648,8 +650,7 @@ def test_an_unresolvable_reference_is_dropped_with_a_reason():
     )
 
     row = _row(measured, "InflectableFeatsRC")
-    assert (row.added, row.dropped) == (0, 1)
-    assert "absent from the target" in row.dropped_records[0].reason
+    assert (row.added, row.dropped, row.deferred) == (0, 0, 1)
     assert list(tgt_pos.collection("InflectableFeatsRC")) == []
 
 
