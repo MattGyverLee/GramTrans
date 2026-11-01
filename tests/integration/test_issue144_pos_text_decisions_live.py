@@ -7,11 +7,10 @@ idempotent.
 decisions. This module runs a REAL Preview + Move and checks every rendered
 row against the target afterwards.
 
-Genres: on this flexicon/LCM the plan carries NO genre decision at all
-(`Texts.GetGenre` raises live, see the #144 report's follow-up), so Move
-writes no genre either. The genre assertions here are therefore AGREEMENT
-checks (Preview rows == genres Move attached), which hold today (both empty)
-and keep holding once the genre path is fixed.
+Genres: checked as AGREEMENT (Preview rows == genres Move attached) and,
+since issue #161 fixed the genre path (`Texts.GetGenres` + `GenresRC.Add`),
+as PRESENCE: text A gets the source-only genre (Create), text B the shared
+genre (Link), text C none. Before #161 both sides were silently empty.
 
 WRITE PATH: writes ONLY the two private throwaway projects below, both rebuilt
 from ``Target 2026-07-06 0218.fwbackup``:
@@ -335,9 +334,9 @@ def test_text_tag_rows_match_move(live):
 
 
 def test_text_genre_rows_agree_with_move(live):
-    """Agreement, not presence: every genre row Preview shows is a genre Move
-    attached, and vice versa (see the module docstring for why both sides are
-    empty on today's flexicon)."""
+    """Agreement: every genre row Preview shows is a genre Move attached, and
+    vice versa. Presence (issue #161): A -> new genre (Create), B -> shared
+    genre (Link), C -> none."""
     fx, r1 = live["fx"], live["r1"]
     rows = _rows(r1["lines"], "Text genres")
     attached = sorted({g for t in r1["post"]["texts"].values() for g in t["genres"]})
@@ -346,6 +345,12 @@ def test_text_genre_rows_agree_with_move(live):
     print("[LIVE] genre decisions in plan: %d (source texts carry %s)"
           % (len(plan_genres), fx["src_genres"]))
     assert r1["post"]["texts"]["C"]["genres"] == []
+    # Issue #161: genres are actually planned and transferred now.
+    assert sorted(rows) == sorted([("Create", fx["new_genre"]),
+                                   ("Link", fx["shared_genre"])]), rows
+    assert r1["post"]["texts"]["A"]["genres"] == [fx["new_genre"]]
+    assert r1["post"]["texts"]["B"]["genres"] == [fx["shared_genre"]]
+    assert fx["new_genre"] in r1["post"]["genre_list"]
 
 
 def test_rerun_is_idempotent_and_preview_says_so(live):

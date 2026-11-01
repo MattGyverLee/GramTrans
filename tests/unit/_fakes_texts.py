@@ -93,6 +93,22 @@ class FakeCache:
 # Texts / paragraphs / segments
 # --------------------------------------------------------------------------
 
+class FakeRefCollection(list):
+    """Duck-typed `ILcmReferenceCollection`: iterable, `.Count`, `.Add`,
+    `.Clear`. Deliberately has NO LINQ extensions (`FirstOrDefault`), which
+    pythonnet does not expose on the real collection either (issue #161)."""
+
+    @property
+    def Count(self):
+        return len(self)
+
+    def Add(self, item):
+        self.append(item)
+
+    def Clear(self):
+        self.clear()
+
+
 class FakeText:
     def __init__(self, guid, name, abbreviation="", is_translated=None,
                  genres=(), paragraphs=(), source_text="", tags=()):
@@ -101,7 +117,10 @@ class FakeText:
         self.name = name
         self.abbreviation = abbreviation
         self.is_translated = is_translated
-        self.genres = list(genres)
+        # `GenresRC` is the real reference collection; `genres` is an alias
+        # to the SAME object kept for older fixtures/assertions.
+        self.GenresRC = FakeRefCollection(genres)
+        self.genres = self.GenresRC
         self.paragraphs = list(paragraphs)
         self.source_text = source_text
         # Per-WS names {handle: str}. Empty -> `name` is the default-WS name.
@@ -249,8 +268,13 @@ class FakeTextOps:
     def GetSource(self, t):
         return t.source_text
 
+    # Real shapes (flexicon TextOperations): GetGenre -> first ICmPossibility
+    # or None (and raises live -- see issue #161); GetGenres -> list.
     def GetGenre(self, t):
-        return list(t.genres)
+        return t.GenresRC[0] if len(t.GenresRC) else None
+
+    def GetGenres(self, t):
+        return list(t.GenresRC)
 
     def GetParagraphs(self, t):
         return list(t.paragraphs)
@@ -284,7 +308,8 @@ class FakeTextOps:
         # (feature 033); the requested GUID wins so tests can assert identity.
         if self.Exists(name):
             raise ValueError(f"A text with the name '{name}' already exists.")
-        t = FakeText(guid=guid or ("tgt-" + name), name=name)
+        t = FakeText(guid=guid or ("tgt-" + name), name=name,
+                     genres=(genre,) if genre is not None else ())
         t.contents_guid = contents_guid
         self._texts.append(t)
         self.created.append(("text", name))
@@ -297,7 +322,10 @@ class FakeTextOps:
         t.is_translated = value
 
     def SetGenre(self, t, genre):
-        t.genres.append(genre)
+        # Mirrors flexicon: clears every existing genre, then sets this one.
+        t.GenresRC.Clear()
+        if genre is not None:
+            t.GenresRC.Add(genre)
 
 
 class FakeParagraphOps:

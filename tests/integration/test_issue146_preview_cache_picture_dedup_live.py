@@ -313,9 +313,9 @@ def test_preview_after_move_links_everything(live):
 # ============================================================================
 
 def _author_texts() -> dict:
+    proj = _open(SOURCE_NAME, write=True)  # initializes FLEx before the CLR imports
     from SIL.LCModel import (ILangProject, ICmPossibilityList, ICmPossibilityFactory)
     from System import Guid as DotNetGuid
-    proj = _open(SOURCE_NAME, write=True)
     try:
         lp = ILangProject(proj.Cache.LangProject)
         sl = proj.Cache.ServiceLocator
@@ -410,21 +410,17 @@ def live_texts():
                 print("[WARN] restore of %s failed: %s" % (name, exc))
 
 
-_GENRE_XFAIL = pytest.mark.xfail(
-    strict=True,
-    reason="#161 flexicon Texts.GetGenre raises AttributeError ('ILcmReferenceCollection' "
-           "has no 'FirstOrDefault') so no text genre is planned or transferred live; "
-           "the rebind path is unit-tested instead. A fix on either side XPASSes "
-           "(strict) and this test must be revisited.")
-
-
-@_GENRE_XFAIL
 def test_texts_preview_genre_create_then_link(live_texts):
-    assert _genre_rows(live_texts["preview"], live_texts["fx"]) == [
-        (1, "create"), (2, "link"), (3, "create")]
+    # Texts are planned in the source's TextsOC order (an unordered
+    # collection), so WHICH of texts 1/2 is planned first varies run to run:
+    # exactly one of them creates G and the other links it.
+    rows = _genre_rows(live_texts["preview"], live_texts["fx"])
+    by_text = dict(rows)
+    assert len(rows) == 3 and len(by_text) == 3, rows
+    assert sorted([by_text[1], by_text[2]]) == ["create", "link"], rows
+    assert by_text[3] == "create", rows
 
 
-@_GENRE_XFAIL
 def test_texts_move_links_shared_genre_on_both_texts(live_texts):
     fx, pre, post = live_texts["fx"], live_texts["pre"], live_texts["post"]
     assert pre["genres"] == [] and all(v is None for v in pre["texts"].values())
