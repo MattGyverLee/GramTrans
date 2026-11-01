@@ -1057,16 +1057,15 @@ class _PageFinish(_FlowPage):
             # DR-5: caller owns QMessageBox.
             _warn_plan_failure(self, wizard)
             return
-        self._cached_plan = plan
-        # Issue #162: this dry run is the wizard's real Preview -- extra lines.
-        self._stats.set_report(report, render_preview_extra_lines(plan))
+        # Issue #162: real Preview -- extra lines. Cache only once shown.
+        self._cached_plan = None
+        try:
+            self._stats.set_report(report, render_preview_extra_lines(plan))
+            self._cached_plan = plan
+        finally:
+            self._refresh_execute_state()
         # Issue #11: a fresh plan exists again, so the "cleared" hint is over.
         self._dry_run_btn.setText(self._DRY_RUN_TEXT)
-        # FR-043/FR-044 live here too: a successful dry run is necessary for
-        # Execute, never sufficient. `_refresh_execute_state` re-derives the whole
-        # conjunction, so read-only mode and an already-completed move both keep
-        # the button dead -- with the reason updated to match.
-        self._refresh_execute_state()
 
     def _on_move(self) -> None:
         wizard = self.wizard()

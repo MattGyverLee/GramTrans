@@ -254,3 +254,29 @@ def test_failed_plan_assembly_renders_nothing(qapp, monkeypatch,
 
     assert calls == []
     assert "SHOULD-NOT-APPEAR" not in _extra_text(page)
+
+
+def test_dry_run_render_failure_does_not_leave_execute_armed(qapp, monkeypatch):
+    """A raising render must not cache the new plan or leave Execute enabled."""
+    new_plan, old_plan = object(), object()
+    monkeypatch.setattr(sw, "_safe_compute_wizard_plan",
+                        lambda wizard: (new_plan, _report()))
+
+    def _boom(p):
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr(sw, "render_preview_extra_lines", _boom)
+
+    page = _finish_page(_Wizard(context=_ctx()))
+    page._cached_plan = old_plan  # a stale plan from an earlier dry run
+    page._modify_allowed = True
+    page._move_done = False
+    page._refresh_execute_state()
+    assert page._move_btn.isEnabled()
+
+    with pytest.raises(RuntimeError):
+        page._on_dry_run()
+
+    assert page._cached_plan is not new_plan
+    assert page._cached_plan is None
+    assert not page._move_btn.isEnabled()
