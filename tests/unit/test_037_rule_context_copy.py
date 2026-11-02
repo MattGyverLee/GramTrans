@@ -52,6 +52,13 @@ class _Coll:
         return len(self._items)
 
 
+class _RejectingColl(_Coll):
+    """Reference collection whose ``Add`` fails (pythonnet type mismatch)."""
+
+    def Add(self, item):
+        raise TypeError("No method matches given arguments for Add")
+
+
 class _PossibilityList:
     """`PhPhonData.PhonRuleFeatsOA` stand-in: ONE owned CmPossibilityList (an
     OA), not a sequence. Its rule features are ``PossibilitiesOS``.
@@ -84,13 +91,13 @@ class _Cell:
     """Any phonological context cell; `ClassName` drives the branch."""
 
     def __init__(self, class_name, guid, feature=None, members=(),
-                 member=None, minimum=0, maximum=0):
+                 member=None, minimum=0, maximum=0, plus=(), minus=()):
         self.ClassName = class_name
         self.guid = guid
         self.Guid = guid
         self.FeatureStructureRA = feature
-        self.PlusConstrRS = _Coll()
-        self.MinusConstrRS = _Coll()
+        self.PlusConstrRS = _Coll(plus)
+        self.MinusConstrRS = _Coll(minus)
         self.MembersRS = _Coll(members)
         self.MemberRA = member
         self.Minimum = minimum
@@ -460,3 +467,44 @@ def test_metathesis_rule_copies_switch_indices_and_struc_desc(lcm):
     assert len(cells) == 1
     assert cells[0].FeatureStructureRA is ph
     assert list(new_rule.RightHandSidesOS) == []
+
+
+def test_nc_plus_constr_rs_add_failure_emits_drop(lcm, monkeypatch):
+    """Issue #132: PlusConstrRS ``Add`` must not fail silently in NC wiring."""
+    nc = _Ref("nc-1", "PhNCFeatures")
+    constr = _Ref("fc-1", "PhFeatureConstraint")
+    target = _Project()
+    target.NaturalClasses = _Accessor([nc])
+    src = _Rule(struc_desc=[
+        _Cell("PhSimpleContextNC", "cell-nc", feature=nc, plus=[constr]),
+    ])
+    dropped = []
+
+    def _make(factory_iface, guid):
+        cls = _FACTORIES[factory_iface.__name__]
+        if cls == "PhSimpleContextNC":
+            cell = _Cell(cls, guid)
+            cell.PlusConstrRS = _RejectingColl()
+            return cell
+        return _RHS(guid) if cls is None else _Cell(cls, guid)
+
+    def _create_with_guid(factory_iface, owner_collection, guid, _target):
+        obj = _make(factory_iface, guid)
+        owner_collection.Add(obj)
+        return obj, True
+
+    def _reuse_or_create_with_guid(factory_iface, owner_collection, guid, _target):
+        obj = _make(factory_iface, guid)
+        owner_collection.Add(obj)
+        return obj, False
+
+    monkeypatch.setattr(categories, "_create_with_guid", _create_with_guid)
+    monkeypatch.setattr(categories, "_reuse_or_create_with_guid", _reuse_or_create_with_guid)
+
+    new_rule = _apply(src, target, dropped)
+
+    assert len(dropped) == 1
+    assert dropped[0].field_name == "PlusConstrRS"
+    assert dropped[0].item_guid == "fc-1"
+    assert "could not be wired" in dropped[0].reason
+    assert len(list(new_rule.StrucDescOS)) == 1
