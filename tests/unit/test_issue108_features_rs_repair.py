@@ -573,3 +573,32 @@ class TestIssue138:
                 i = src.index(f"        GrammarCategory.{feats},\n")
                 j = src.index(f"        GrammarCategory.{types},\n")
                 assert i < j, (mod.__name__, feats, types)
+
+    def test_preview_repair_row_notes_when_shared_members_already_reordered(
+            self) -> None:
+        a, b, c = _Defn(A), _Defn(B), _Defn(C)
+        tgt = _Proj(ms_feats=[a, b, c], ms_types=[_Type(T1, [b, a])])
+        plan = _NS(struct_type_feature_refs={T1: _ref([A, B, C])}, actions=(),
+                   context=_NS(target_handle=tgt))
+        row = [r for r in preview.render_struct_type_features_rs(plan)
+               if r.strip().startswith("Repair")][0]
+        assert f"insert {[C]}" in row
+        assert "shared members already" in row
+        assert categories.FEATURES_RS_REORDERED_NOTE in row
+        assert "SKIP" not in row
+
+    def test_move_repair_log_notes_when_shared_members_already_reordered(
+            self, caplog) -> None:
+        import logging
+        a, b, c = _Defn(A), _Defn(B), _Defn(C)
+        t1 = _Type(T1, [b, a])
+        tgt = _Proj(ms_feats=[a, b, c], ms_types=[t1])
+        ctx = _ctx(_Proj(), tgt, {T1: _ref([A, B, C])})
+        with caplog.at_level(logging.INFO,
+                             logger="gramtrans.Lib.categories"):
+            categories._run_struct_type_features_rs_pass(ctx, tgt)
+        assert _guids(t1.FeaturesRS) == [B, C, A]
+        assert any(
+            "shared members already" in r.message
+            and categories.FEATURES_RS_REORDERED_NOTE in r.message
+            for r in caplog.records)
