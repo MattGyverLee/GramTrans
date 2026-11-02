@@ -679,6 +679,9 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             f"  [{_cat.value}] {_n} planned merge(s) NOT applied: the UPDATE"
             " (Merge) executor is not wired for this category"
         )
+    # Issue #14 (NEW-3): one guid-keyed index per ops accessor, built lazily
+    # on first lookup and shared across the whole overwrite loop.
+    _guid_indexes = {}
     for ow in getattr(plan, "overwrites", ()):
         # identity_remap ENTRY overwrites are handled inside _execute_layer3
         # (where identity_remap, target_verb, target_slot_by_guid, env_guid_to_target
@@ -697,6 +700,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                 enrichments=_measured_enrichments,
                 planned_action_guids=_planned_action_guids,
                 deferred_pairs=_deferred_infl_pairs,
+                guid_indexes=_guid_indexes,
             )
             if _update_skips:
                 extra_skips.extend(_update_skips)
@@ -2046,7 +2050,7 @@ def _create_pos_with_guid(target, src_guid: str, src_props, tag: ImportResidueTa
         return None  # wrong-class object; skip
 
     factory = IPartOfSpeechFactory(target.GetFactory(IPartOfSpeechFactory))
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     pos_list = ICmPossibilityList(cache.LangProject.PartsOfSpeechOA)
     new_pos = factory.Create(DotNetGuid.Parse(src_guid), pos_list)
     target.POS.ApplySyncableProperties(new_pos, src_props)
@@ -2085,7 +2089,7 @@ def _create_template_with_guid(target, owner_pos, src_guid: str, src_props,
     new_template = factory.Create(DotNetGuid.Parse(src_guid))
     owner_pos.AffixTemplatesOS.Add(new_template)
     target.MorphRules.ApplySyncableProperties(new_template, src_props)
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     apply_carrier_b(new_template, cache.DefaultAnalWs, tag)
     report_sink.Info(f"  Template created  guid={src_guid}")
     return new_template
@@ -2121,7 +2125,7 @@ def _create_slot_with_guid(target, owner_pos, src_guid: str, slot_name: str,
     factory = IMoInflAffixSlotFactory(target.GetFactory(IMoInflAffixSlotFactory))
     new_slot = factory.Create(DotNetGuid.Parse(src_guid))
     owner_pos.AffixSlotsOC.Add(new_slot)
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     ws = cache.DefaultAnalWs
     IMoInflAffixSlot(new_slot).Name.set_String(ws, TsStringUtils.MakeString(slot_name, ws))
     apply_carrier_b(new_slot, ws, tag)
@@ -2575,7 +2579,7 @@ def _execute_overwrite_identity_remap(
         tgt_entry, src_props,
         fill_gaps=fill_gaps,
     )
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     apply_residue(tgt_entry, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
     report_sink.Info(f"  LexEntry identity-remap overwritten  guid={src_guid}")
 
@@ -2643,7 +2647,7 @@ def _find_target_morph_type_by_guid(target, morph_type_guid: str):
     GUID."""
     from SIL.LCModel import ICmObject
     try:
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         lex_db = cache.LangProject.LexDbOA
         morph_types_list = lex_db.MorphTypesOA
         for mt in morph_types_list.PossibilitiesOS:
@@ -2695,7 +2699,7 @@ def _create_environment_with_guid(target, src_guid: str, report_sink,
 
     factory = IPhEnvironmentFactory(target.GetFactory(IPhEnvironmentFactory))
     new_env = factory.Create(DotNetGuid.Parse(src_guid))
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     cache.LangProject.PhonologicalDataOA.EnvironmentsOS.Add(new_env)
     # Carrier B residue (PhEnvironment has Description).
     ws = cache.DefaultAnalWs
@@ -2732,7 +2736,7 @@ def _create_lexentry_with_guid(target, src_guid: str, src_entry, source,
         return None  # wrong-class object; skip
 
     factory = ILexEntryFactory(target.GetFactory(ILexEntryFactory))
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     lex_db = ILexDb(cache.LangProject.LexDbOA)
     new_entry = factory.Create(DotNetGuid.Parse(src_guid), lex_db)
     src_props = source.LexEntry.GetSyncableProperties(src_entry)
@@ -2863,7 +2867,7 @@ def _create_inflaff_msa_with_guid(target, new_entry, new_sense, src_guid: str, s
         identity_remap[src_guid] = new_guid
 
     new_ia = IMoInflAffMsa(new_msa)
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     apply_residue(new_msa, cache.DefaultAnalWs, tag)
     report_sink.Info(
         f"  IMoInflAffMsa created  src={src_guid[:8]}  new={new_guid[:8]}"
@@ -2949,7 +2953,7 @@ def _create_allomorph_with_guid(target, new_entry, src_guid: str, src_allo, sour
             report_sink.Warning(f"  [L3] Allomorph references env {env_guid[:8]} not in target")
             continue
         new_ia.PhoneEnvRC.Add(tgt_env)
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     apply_residue(new_allo, cache.DefaultAnalWs, tag)
     report_sink.Info(f"  IMoAffixAllomorph created  src={src_guid[:8]}  new={new_guid[:8]}")
     return new_allo
@@ -3678,7 +3682,7 @@ def _fill_created_pos_collections(action, created, source, target, report_sink,
 def _execute_update_semantic(overwrite, source, target, report_sink, tag: ImportResidueTag,
                              ws_map=None, dropped=None, enrichments=None,
                              planned_action_guids=frozenset(),
-                             deferred_pairs=None):
+                             deferred_pairs=None, guid_indexes=None):
     """Apply the non-destructive UPDATE write semantic (T012, FR-003) for a
     PlannedOverwrite whose category mode is ConflictMode.UPDATE.
 
@@ -3811,8 +3815,8 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             return []
 
         # Locate the source and target objects by GUID.
-        src_obj = _find_obj_by_guid(src_ops, src_guid)
-        tgt_obj = _find_obj_by_guid(tgt_ops, tgt_guid)
+        src_obj = _find_obj_by_guid(src_ops, src_guid, index_cache=guid_indexes)
+        tgt_obj = _find_obj_by_guid(tgt_ops, tgt_guid, index_cache=guid_indexes)
         if tgt_obj is None and dest.resolved:
             tgt_obj = dest.obj
         if src_obj is None or tgt_obj is None:
@@ -3864,7 +3868,7 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             )
         else:
             # UPDATE: non-destructive field writes.
-            cache = getattr(target, "Cache")
+            cache = target.Cache
             # Tag-history decision (#87): earlier runs' tag lines are KEPT.
             # The source Description write replaces the whole alternative, so
             # capture them first and re-append them before this run's line.
@@ -4066,22 +4070,41 @@ _OPS_ACCESSOR_FOR_CATEGORY: dict = {
 }
 
 
-def _find_obj_by_guid(ops, guid_str: str):
+def _find_obj_by_guid(ops, guid_str: str, index_cache=None):
     """Return the first object in ops.GetAll() whose GUID matches `guid_str`.
 
     Returns None if not found or if GetAll raises.
+
+    Issue #14 (NEW-3): with `index_cache` (a dict owned by the caller, one
+    per run) the first lookup against an `ops` builds a guid -> object index
+    in a single `GetAll()` pass and later lookups are O(1). A miss in a
+    cached index falls back to one fresh linear scan (refreshing the index),
+    so an object created after the index was built is still found.
     """
-    try:
-        for obj in ops.GetAll():
-            try:
-                obj_guid = str(getattr(obj, "Guid", None) or "").lower()
-            except Exception:
-                continue
-            if obj_guid == guid_str.lower():
-                return obj
-    except Exception:
-        pass
-    return None
+    want = guid_str.lower()
+
+    def _scan():
+        found = {}
+        try:
+            for obj in ops.GetAll():
+                try:
+                    g = str(getattr(obj, "Guid", None) or "").lower()
+                except Exception:
+                    continue
+                found.setdefault(g, obj)
+        except Exception:
+            pass
+        return found
+
+    if index_cache is None:
+        return _scan().get(want)
+    key = id(ops)
+    entry = index_cache.get(key)
+    if entry is not None and entry[0] is ops and want in entry[1]:
+        return entry[1][want]
+    index = _scan()
+    index_cache[key] = (ops, index)  # hold ops so id() cannot be recycled
+    return index.get(want)
 
 
 def _lcm_slot(slot):
@@ -4345,7 +4368,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             GrammarCategory.POS, overwrite.target_guid, tag.run_id,
         )
         target.POS.ApplySyncableProperties(tgt_obj, src_props, ws_map=ws_map)
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_obj, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  POS overwritten  guid={src_guid}")
         return ow_skips
@@ -4389,7 +4412,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         tgt_pre_props = strip_residue_props(target.MorphRules.GetSyncableProperties(tgt_tpl))
         src_props = source.MorphRules.GetSyncableProperties(src_tpl_wrap)
         target.MorphRules.ApplySyncableProperties(tgt_tpl, src_props, ws_map=ws_map)
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_tpl, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  Template overwritten  guid={src_guid}")
         return
@@ -4426,7 +4449,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         # via the MorphRules accessor on slots specifically; Phase 1.0 only
         # re-applies the residue tag here. Phase 1.1 will copy the slot
         # name + description via direct property access (Name multistring).
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_slot, cache.DefaultAnalWs, tag)
         report_sink.Info(f"  Slot tagged (overwrite, no syncable props)  guid={src_guid}")
         return
@@ -4513,7 +4536,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             # the ADD/closure path's default union semantic.
             clear_before_add=True,
         )
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_entry, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  LexEntry overwritten ({cat.value})  guid={src_guid}")
         return list(ow_skips) + list(dropped[_dropped_before:])
@@ -4638,7 +4661,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                 item_guid=str(_raw_sense_type_guid),
                 reason="unresolved custom SenseTypeRA reference (no source object available)",
             ))
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_sense, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  LexSense overwritten  guid={src_guid}")
         return list(ow_skips) + list(dropped[_dropped_before:])
@@ -4734,7 +4757,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                         f"  IMoInflAffMsa slot re-sync skipped: owning category "
                         f"{pos_guid[:8]}… is not resolvable in the target by "
                         f"GUID or by natural key; slot membership left unchanged")
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_msa, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  IMoInflAffMsa overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
         return _msa_skips
@@ -4786,7 +4809,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                 GrammarCategory.ALLOMORPH, overwrite.target_guid, tag.run_id,
             )
             target.Allomorphs.ApplySyncableProperties(tgt_allo, src_props, ws_map=ws_map)
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_allo, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  IMoAffixAllomorph overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
         return ow_skips
@@ -4817,7 +4840,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                 target.Environments.ApplySyncableProperties(tgt_env, src_props, ws_map=ws_map)
             except AttributeError:
                 pass
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_env, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  PhEnvironment overwritten  guid={src_guid}")
         return
