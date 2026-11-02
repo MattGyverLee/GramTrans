@@ -8544,6 +8544,9 @@ def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
     if existing is not None:
         _rebuild_targets_rs_in_source_order(
             existing, copied_members, dropped=dropped, rel_guid=rel_guid)
+        _copy_supplemental_scalars(
+            "LexReference", src_relation, existing, ctx,
+            getattr(ctx, "_ws_map", None), dropped, rel_guid)
         return existing
 
     if __package__:
@@ -18521,8 +18524,11 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
             f"rule guid={src_guid}: {e!r}"
         )
 
-    # Only PhRegularRule has the full StrucDesc/RHS tree.
-    if class_name != "PhRegularRule":
+    # PhRegularRule: StrucDescOS + RightHandSidesOS. PhMetathesisRule: StrucDescOS
+    # + switch-index scalars only (no RHS tree). Other rule kinds: syncable scalars
+    # + Disabled above are all we copy today.
+    _metathesis_only = class_name == "PhMetathesisRule"
+    if class_name not in ("PhRegularRule", "PhMetathesisRule"):
         try:
             apply_carrier_b(new_rule, cache.DefaultAnalWs, tag, strict=False)
         except Exception:
@@ -18531,8 +18537,21 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
 
     # --- Cast to typed interfaces ---
     try:
-        src_rr = IPhRegularRule(src_rule)
-        new_rr = IPhRegularRule(new_rule)
+        if _metathesis_only:
+            from SIL.LCModel import IPhMetathesisRule
+            src_rr = IPhMetathesisRule(src_rule)
+            new_rr = IPhMetathesisRule(new_rule)
+            for _sw in (
+                "LeftSwitchIndex", "LeftSwitchLimit",
+                "RightSwitchIndex", "RightSwitchLimit",
+            ):
+                try:
+                    setattr(new_rr, _sw, getattr(src_rr, _sw))
+                except (AttributeError, TypeError):
+                    pass
+        else:
+            src_rr = IPhRegularRule(src_rule)
+            new_rr = IPhRegularRule(new_rule)
     except (TypeError, AttributeError):
         # Can't cast; rule shell is all we can produce.
         try:
@@ -18738,20 +18757,22 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
     # Guarding the acquisition and letting each right-hand side fail on its own
     # is the whole fix; the pool itself is already created GUID-preserved by
     # `_pre_pass_constraints_from_seq`.
-    try:
-        pre_pass_rhs = list(src_rr.RightHandSidesOS)
-    except (AttributeError, TypeError):
-        pre_pass_rhs = []
-    for src_rhs in pre_pass_rhs:
-        for attr in ("StrucChangeOS", "LeftContextOA", "RightContextOA"):
-            try:
-                val = getattr(src_rhs, attr, None)
-                if val is None:
-                    continue
-                # OA returns a single object; OS is iterable.
-                _pre_pass_constraints_from_seq([val] if attr.endswith("OA") else val)
-            except (AttributeError, TypeError):
-                pass
+    if not _metathesis_only:
+        try:
+            pre_pass_rhs = list(src_rr.RightHandSidesOS)
+        except (AttributeError, TypeError):
+            pre_pass_rhs = []
+        for src_rhs in pre_pass_rhs:
+            for attr in ("StrucChangeOS", "LeftContextOA", "RightContextOA"):
+                try:
+                    val = getattr(src_rhs, attr, None)
+                    if val is None:
+                        continue
+                    # OA returns a single object; OS is iterable.
+                    _pre_pass_constraints_from_seq(
+                        [val] if attr.endswith("OA") else val)
+                except (AttributeError, TypeError):
+                    pass
 
     # -----------------------------------------------------------------------
     # Helper: wire the scalar bounds + nested-context reference on a
@@ -19035,10 +19056,13 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
     # It was also a never-silent violation (SC-010): `pass` left no trace in
     # the run report, so the rule reported success having transferred some of
     # its right-hand sides.
-    try:
-        rhs_list = list(src_rr.RightHandSidesOS)
-    except (AttributeError, TypeError):
-        rhs_list = []
+    if _metathesis_only:
+        rhs_list = ()
+    else:
+        try:
+            rhs_list = list(src_rr.RightHandSidesOS)
+        except (AttributeError, TypeError):
+            rhs_list = []
     for src_rhs in rhs_list:
         try:
             rhs_guid = _guid_str_from(src_rhs)
