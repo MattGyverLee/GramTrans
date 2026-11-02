@@ -5409,17 +5409,12 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
     except (AttributeError, TypeError):
         pass
 
-    # Wire StratumRA manually (mirrors phonological_rules_execute_action)
-    try:
-        src_stratum = getattr(src_rule, "StratumRA", None)
-        if src_stratum is not None:
-            src_stratum_guid = str(ICmObject(src_stratum).Guid).lower()
-            for tgt_stratum in target.Strata.GetAll():
-                if str(ICmObject(tgt_stratum).Guid).lower() == src_stratum_guid:
-                    new_rule.StratumRA = tgt_stratum
-                    break
-    except (AttributeError, TypeError):
-        pass
+    # StratumRA (FR-336) -- shared never-silent helper (issue #132 batch 2).
+    _wire_stratum(
+        src_rule, new_rule, target, context,
+        category=GrammarCategory.ADHOC_COMPOUND_RULES,
+        source_guid=src_guid,
+    )
 
     # --- T009: adhoc reference wiring ----------------------------------------
     if class_name == "MoAlloAdhocProhib":
@@ -9622,6 +9617,8 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     if dropped is None:
         dropped = []
 
+    object.__setattr__(context, "_closure_category", category)
+
     target = context.target_handle
     src_guid = _guid_str_from(src_entry)
     plan = getattr(context, "_run_plan", None)
@@ -11654,7 +11651,7 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
             new_msa = _create_via_wrapper_or_reuse(
                 lambda: target.MSA.CreateStem(new_sense, tgt_pos),
                 new_entry, subclass, pos_fields, src_msa, dropped, src_entry, new_sense=new_sense)
-        _wire_stratum(src_msa, new_msa, target)
+        _wire_stratum(src_msa, new_msa, target, context, source_guid=src_g)
     elif subclass == "MoDerivAffMsa":
         from_pos = _resolve_or_none("FromPartOfSpeechRA", "FromPartOfSpeechRA")
         to_pos = _resolve_or_none("ToPartOfSpeechRA", "ToPartOfSpeechRA")
@@ -11846,21 +11843,48 @@ def _create_entry_owned_msas_without_sense(src_entry, new_entry, context, tag,
             msa_by_src_guid[m_guid] = new_msa
 
 
-def _wire_stratum(src_msa, new_msa, target):
-    """Wire MoStemMsa.StratumRA to the Phase 3a-transferred Stratum by GUID
-    lookup (FR-336). No-op / silent when unresolved."""
+def _wire_stratum(src_piece, new_piece, target, context=None, *,
+                    category=None, source_guid=None):
+    """Wire ``StratumRA`` to a Phase 3a-transferred stratum by GUID (FR-336).
+
+    When the source names a stratum that is not in the target, append a
+    ``Skip(DEPENDENCY_UNRESOLVED)`` to ``context._exec_skips`` when wired
+    (issue #132 never-silent batch) instead of leaving the reference dangling
+    with no report line."""
     from SIL.LCModel import ICmObject
     try:
-        src_stratum = getattr(src_msa, "StratumRA", None)
+        src_stratum = getattr(src_piece, "StratumRA", None)
         if src_stratum is None:
             return
         sg = str(ICmObject(src_stratum).Guid).lower()
         for tgt_stratum in target.Strata.GetAll():
             if str(ICmObject(tgt_stratum).Guid).lower() == sg:
-                new_msa.StratumRA = tgt_stratum
+                new_piece.StratumRA = tgt_stratum
                 return
     except (AttributeError, TypeError):
-        pass
+        return
+    cat = category
+    if cat is None and context is not None:
+        cat = getattr(context, "_closure_category", None)
+    guid = source_guid
+    if guid is None:
+        try:
+            guid = _guid_str_from(src_piece)
+        except Exception:  # noqa: BLE001
+            guid = None
+    if context is None or cat is None or not guid:
+        return
+    exec_skips = getattr(context, "_exec_skips", None)
+    if exec_skips is None:
+        return
+    exec_skips.append(Skip(
+        category=cat,
+        source_guid=str(guid).lower(),
+        reason=SkipReason.DEPENDENCY_UNRESOLVED,
+        detail=(
+            f"StratumRA references stratum {sg} but that stratum is not in the "
+            "target; reference left unwired (FR-336)"),
+    ))
 
 
 # ----- 17.1 MSA-slot wiring sub-pass (FR-333) ------------------------------
@@ -14645,7 +14669,9 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
                 except (AttributeError, TypeError):
                     pass
             # StratumRA (FR-336).
-            _wire_stratum(src_tpl, new_typed, target)
+            _wire_stratum(src_tpl, new_typed, target, context,
+                          category=GrammarCategory.AFFIX_TEMPLATES,
+                          source_guid=src_guid)
             try:
                 apply_carrier_b(new_typed, ws, tag, strict=False)
             except Exception:
