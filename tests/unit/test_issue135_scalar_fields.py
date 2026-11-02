@@ -94,6 +94,64 @@ def test_tsstring_pronunciation_fields():
     assert new.CVPattern == "CVC" or getattr(new.CVPattern, "Text", None) == "CVC"
 
 
+def test_slice2_tables():
+    from gramtrans.Lib.scalar_fields import VALUE_FIELDS
+    assert MULTISTRING_FIELDS["LexReference"][1] == ("Name", "Comment")
+    assert MULTISTRING_FIELDS["LexEntryInflType"][1] == ("GlossPrepend", "GlossAppend")
+    assert VALUE_FIELDS["MoAlloAdhocProhib"][1] == ("Adjacency", "Disabled")
+    assert VALUE_FIELDS["MoMorphAdhocProhib"][1] == ("Adjacency", "Disabled")
+
+
+def test_lex_reference_name_comment_ws_mapped():
+    src = _Obj(Name=_MS({1: "Calendar", 2: "Cal-ko"}), Comment=_MS({1: "c"}))
+    new = _Obj(Name=_MS(), Comment=_MS())
+    drops = []
+    w = copy_supplemental_fields("LexReference", src, new, source=SRC, target=TGT,
+                                 ws_map={"ko": "ko-x"}, dropped=drops)
+    assert new.Name.d == {10: "Calendar", 20: "Cal-ko"}
+    assert new.Comment.d == {10: "c"} and drops == []
+    assert len(w) == 3
+
+
+def test_infl_type_glosses_unmapped_ws_dropped():
+    src = _Obj(GlossPrepend=_MS({2: "pre"}), GlossAppend=_MS({1: "app"}))
+    new = _Obj(GlossPrepend=_MS(), GlossAppend=_MS())
+    drops = []
+    copy_supplemental_fields("LexEntryInflType", src, new, source=SRC, target=TGT,
+                             ws_map={}, dropped=drops)
+    assert new.GlossAppend.d == {10: "app"}
+    assert [(d.owner_kind, d.field_name) for d in drops] == [
+        ("LexEntryInflType", "GlossPrepend")]
+
+
+def test_adhoc_adjacency_disabled_copied_and_defaults_untouched():
+    src = _Obj(Adjacency=2, Disabled=True)
+    new = _Obj(Adjacency=0, Disabled=False)
+    drops = []
+    w = copy_supplemental_fields("MoAlloAdhocProhib", src, new, source=SRC,
+                                 target=TGT, ws_map={}, dropped=drops)
+    assert (new.Adjacency, new.Disabled) == (2, True)
+    assert w == ["Adjacency", "Disabled"] and drops == []
+    same = _Obj(Adjacency=0, Disabled=False)
+    assert copy_supplemental_fields(
+        "MoMorphAdhocProhib", _Obj(Adjacency=0, Disabled=False), same,
+        source=SRC, target=TGT, ws_map={}, dropped=drops) == []
+
+
+def test_adhoc_readback_mismatch_dropped():
+    class Stuck:
+        Adjacency = 0
+        Disabled = False
+
+        def __setattr__(self, k, v):
+            pass
+    drops = []
+    copy_supplemental_fields("MoAlloAdhocProhib", _Obj(Adjacency=3, Disabled=False),
+                             Stuck(), source=SRC, target=TGT, ws_map={}, dropped=drops)
+    assert len(drops) == 1 and drops[0].field_name == "Adjacency"
+    assert "read-back" in drops[0].reason
+
+
 def test_unknown_class_noop():
     assert copy_supplemental_fields("Nope", _Obj(), _Obj(), source=SRC,
                                     target=TGT, ws_map={}, dropped=[]) == []

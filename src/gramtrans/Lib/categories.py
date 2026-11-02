@@ -4377,6 +4377,16 @@ _ENTRY_TYPE_MULTISTRINGS = (
 )
 
 
+def _copy_infl_type_glosses(src_obj, new_obj, factory_label, context,
+                            ws_mapping, src_guid):
+    """Issue #135: LexEntryInflType.GlossPrepend / GlossAppend, only for an
+    object created through `ILexEntryInflTypeFactory`."""
+    if factory_label != "ILexEntryInflTypeFactory":
+        return
+    _copy_supplemental_scalars_ctx(
+        "LexEntryInflType", src_obj, new_obj, context, ws_mapping, src_guid)
+
+
 def variant_types_execute_action(action, context, ws_mapping, tag):
     """Create variant type with GUID preserved.
 
@@ -4483,6 +4493,8 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
                 src_obj, new_vt, _ENTRY_TYPE_MULTISTRINGS,
                 source=source, target=target, ws_map=ws_mapping,
             )
+            _copy_infl_type_glosses(src_obj, new_vt, factory_label, context,
+                                    ws_mapping, src_guid)
             apply_carrier_b(new_vt, ws, tag)
             return new_vt
         _safe_add_to_owner(
@@ -4500,6 +4512,8 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
         src_obj, new_vt, _ENTRY_TYPE_MULTISTRINGS,
         source=source, target=target, ws_map=ws_mapping,
     )
+    _copy_infl_type_glosses(src_obj, new_vt, factory_label, context,
+                            ws_mapping, src_guid)
     apply_carrier_b(new_vt, ws, tag)
     return new_vt
 
@@ -4675,6 +4689,8 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
         src_obj, new_cft, _ENTRY_TYPE_MULTISTRINGS,
         source=source, target=target, ws_map=ws_mapping,
     )
+    _copy_infl_type_glosses(src_obj, new_cft, factory_label, context,
+                            ws_mapping, src_guid)
     apply_carrier_b(new_cft, ws, tag)
     return new_cft
 
@@ -5401,6 +5417,9 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
         target.MorphRules.ApplySyncableProperties(new_rule, props, ws_map=ws_mapping)
     except (AttributeError, TypeError):
         pass
+    # Issue #135: adhoc prohibition Adjacency / Disabled (no-op for compound rules).
+    _copy_supplemental_scalars_ctx(
+        class_name, src_rule, new_rule, context, ws_mapping, src_guid)
 
     # Wire StratumRA manually (mirrors phonological_rules_execute_action)
     try:
@@ -8393,6 +8412,11 @@ def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
         except (AttributeError, TypeError):
             pass
 
+    # Issue #135: LexReference.Name / Comment (flexicon never carries them).
+    _copy_supplemental_scalars(
+        "LexReference", src_relation, new_rel, ctx,
+        getattr(ctx, "_ws_map", None), dropped, rel_guid)
+
     try:
         cache = getattr(target, "Cache", None)
         ws = getattr(cache, "DefaultAnalWs", None)
@@ -9566,6 +9590,19 @@ def _copy_supplemental_scalars(owner_class, src, new, context, ws_map, dropped,
         owner_class, src, new, source=context.source_handle,
         target=context.target_handle, ws_map=ws_map, dropped=dropped,
         owner_guid=owner_guid, owner_label=_owner_label_for(owner_class, src))
+
+
+def _copy_supplemental_scalars_ctx(owner_class, src, new, context, ws_mapping,
+                                   owner_guid):
+    """Issue #135 slice 2: `_copy_supplemental_scalars` for execute-actions
+    that have no `dropped` parameter -- failures land on `context._dropped`
+    (attached by `transfer.execute`). Never raises."""
+    dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
+    _copy_supplemental_scalars(
+        owner_class, src, new, context, _ws_map_dict(ws_mapping), dropped,
+        owner_guid)
 
 
 def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
