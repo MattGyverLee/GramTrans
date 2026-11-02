@@ -1725,8 +1725,9 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
       already exists (issue #110 -- a second writer here made the tail see
       ALREADY_WIRED, so Move reported fewer writes than Preview's Wire rows).
       No ValuesOC loop -- complex features have no symbolic values.
-    - "FsOpenFeature": documented clean skip (Skip(NEEDS_MANUAL)) -- open
-      features have no closed value set to sync; no crash, no orphan.
+    - "FsOpenFeature": created via IFsOpenFeatureFactory (issue #29);
+      Name/Abbreviation/Description plus WritingSystem (WS-mapped) and
+      WsSelector. No values, no TypeRA.
 
     Feature 038 (T035) -- FACTORY CALL ORDER. All three Fs* creates below
     (IFsComplexFeature, IFsClosedFeature, IFsSymFeatVal) call the CONCRETE
@@ -1856,26 +1857,67 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
         return new_feat
 
     # ------------------------------------------------------------
-    # OPEN FEATURE branch -- documented clean skip; no crash, no orphan.
-    # Open features have no closed value set to sync.
+    # OPEN FEATURE branch (issue #29). IFsOpenFeature adds only
+    # WritingSystem (string) and WsSelector (int) over IFsFeatDefn; it has
+    # no closed value set and no TypeRA. flexicon has no wrapper for
+    # IFsOpenFeatureFactory, so the LCM factory is used directly, with the
+    # same 1-arg Create(Guid) then Add() order as the other Fs* creates.
     # ------------------------------------------------------------
     if src_class == "FsOpenFeature":
-        import logging as _logging
-        _logging.getLogger("gramtrans.Lib.categories").info(
-            "inflection_features_execute_action: FsOpenFeature has no "
-            "closed value set to sync -- skipping guid=%s", src_guid,
-        )
-        exec_skips = getattr(context, "_exec_skips", None)
-        if exec_skips is not None:
-            exec_skips.append(Skip(
-                category=GrammarCategory.INFLECTION_FEATURES,
-                source_guid=src_guid,
-                reason=SkipReason.NEEDS_MANUAL,
-                detail=(f"source feature {src_guid} is FsOpenFeature; open "
-                        "inflection features have no closed value set and "
-                        "are not supported by this transfer path"),
-            ))
-        return ActionOutcome.skipped("open/complex feature not supported on this path (reported via exec_skips)", skip_reason=SkipReason.NEEDS_MANUAL, recorded=exec_skips is not None)
+        try:
+            from SIL.LCModel import IFsOpenFeatureFactory, IFsOpenFeature
+        except Exception as _imp_exc:  # noqa: BLE001 -- offline/older LCM build
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "inflection_features_execute_action: IFsOpenFeatureFactory "
+                "not importable -- skipping open feature guid=%s: %s",
+                src_guid, _imp_exc, exc_info=True,
+            )
+            exec_skips = getattr(context, "_exec_skips", None)
+            if exec_skips is not None:
+                exec_skips.append(Skip(
+                    category=GrammarCategory.INFLECTION_FEATURES,
+                    source_guid=src_guid,
+                    reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+                    detail=(f"IFsOpenFeatureFactory not importable on this "
+                            f"LCM build; cannot create open feature {src_guid}"),
+                ))
+            return ActionOutcome.skipped("IFsOpenFeatureFactory not importable on this LCM build", skip_reason=SkipReason.UNSUPPORTED_LCM_TYPE, recorded=exec_skips is not None)
+
+        open_factory = sl.GetService(IFsOpenFeatureFactory)
+        try:
+            new_feat_raw = open_factory.Create(parsed_guid)
+        except Exception as e:
+            raise _create_guid_failure(
+                "IFsOpenFeatureFactory", src_guid, e,
+                detail="(open feature)",
+            ) from e
+        _safe_add_to_owner(new_feat_raw, feature_system.FeaturesOC,
+                           "IFsOpenFeatureFactory", src_guid)
+
+        new_feat = IFsOpenFeature(new_feat_raw)
+        src_feat_typed = IFsOpenFeature(src_feat)
+
+        try:
+            src_props = source.InflectionFeatures.GetSyncableProperties(src_feat_typed)
+            target.InflectionFeatures.ApplySyncableProperties(
+                new_feat, src_props, ws_map=ws_map)
+        except Exception:
+            _copy_multistrings_ws_mapped(
+                src_feat_typed, new_feat, ("Name", "Abbreviation", "Description"),
+                source=source, target=target, ws_map=ws_map)
+
+        # Open-feature-specific scalars. WritingSystem is a WS id string:
+        # translate it through the WS mapping when one exists.
+        src_ws = getattr(src_feat_typed, "WritingSystem", None)
+        if src_ws:
+            new_feat.WritingSystem = ws_map.get(src_ws, src_ws) if ws_map else src_ws
+        src_sel = getattr(src_feat_typed, "WsSelector", None)
+        if src_sel is not None:
+            new_feat.WsSelector = src_sel
+
+        apply_carrier_b(new_feat, ws, tag)
+        return new_feat
 
     # ------------------------------------------------------------
     # CLOSED FEATURE branch (default / existing GOLD working path).
