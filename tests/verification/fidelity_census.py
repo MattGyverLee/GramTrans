@@ -143,7 +143,7 @@ import pytest
 # ============================================================================
 
 # Value-field kinds (no LCM type suffix): see FieldSpec.
-_VALUE_KINDS = frozenset({"MU", "INT"})
+_VALUE_KINDS = frozenset({"MU", "INT", "STR"})
 
 
 @dataclass(frozen=True)
@@ -196,6 +196,9 @@ EXPECTED_MODEL_FIELDS: dict[str, tuple[FieldSpec, ...]] = {
         FieldSpec("MorphoSyntaxAnalyses", "OC"),
         FieldSpec("Pronunciations", "OS"),
         FieldSpec("Senses", "OS"),
+        # Issue #135: text fields flexicon's GetSyncableProperties omits.
+        FieldSpec("SummaryDefinition", "MU"),
+        FieldSpec("Restrictions", "MU"),
     ),
     "LexSense": (
         FieldSpec("AnthroCodes", "RC"),
@@ -213,6 +216,19 @@ EXPECTED_MODEL_FIELDS: dict[str, tuple[FieldSpec, ...]] = {
         FieldSpec("Status", "RA"),
         FieldSpec("ThesaurusItems", "RC"),
         FieldSpec("UsageTypes", "RC"),
+        # Issue #135: text fields flexicon's GetSyncableProperties omits.
+        FieldSpec("AnthroNote", "MU"),
+        FieldSpec("UsageNote", "MU"),
+    ),
+    # Issue #135: VALUE fields only (STR = single ITsString). The owning/
+    # reference fields of these two classes are copied by the owned.py rows.
+    "LexEtymology": (
+        FieldSpec("Note", "MU"),
+        FieldSpec("PrecComment", "MU"),
+    ),
+    "LexPronunciation": (
+        FieldSpec("CVPattern", "STR"),
+        FieldSpec("Tone", "STR"),
     ),
     "LexExtendedNote": (
         FieldSpec("Examples", "OS"),
@@ -802,6 +818,56 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
              "DroppedItemRecord on the ref (never silent).",
     ),
 
+    # ---- Issue #135 scalar/text fields -------------------------------------
+    ("LexEntry", "SummaryDefinition"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields, called from categories._walk_lex_entry_closure (entry)",
+        note="issue #135: flexicon GetSyncableProperties omits this field, so "
+             "it was never copied on create. Written per ws_map-translated TARGET handle, runs kept; unmapped WS / failed read-back is a DroppedItemRecord.",
+    ),
+    ("LexEntry", "Restrictions"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields, called from categories._walk_lex_entry_closure (entry)",
+        note="issue #135: flexicon GetSyncableProperties omits this field, so "
+             "it was never copied on create. Same as SummaryDefinition.",
+    ),
+    ("LexSense", "AnthroNote"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields, called from categories._walk_lex_entry_closure (top-level sense) and owned._copy_one_owned_child (sub-sense)",
+        note="issue #135: flexicon GetSyncableProperties omits this field, so "
+             "it was never copied on create. WS-mapped, read-back verified, never silent.",
+    ),
+    ("LexSense", "UsageNote"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields, called from categories._walk_lex_entry_closure (top-level sense) and owned._copy_one_owned_child (sub-sense)",
+        note="issue #135: flexicon GetSyncableProperties omits this field, so "
+             "it was never copied on create. Same as AnthroNote.",
+    ),
+    ("LexEtymology", "Note"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via owned._copy_one_owned_child",
+        note="issue #135: flexicon GetSyncableProperties omits this field, so "
+             "it was never copied on create. WS-mapped, read-back verified.",
+    ),
+    ("LexEtymology", "PrecComment"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via owned._copy_one_owned_child",
+        note="issue #135: flexicon GetSyncableProperties omits this field, so "
+             "it was never copied on create. Same as Note.",
+    ),
+    ("LexPronunciation", "CVPattern"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via owned._copy_one_owned_child",
+        note="issue #135: flexicon GetSyncableProperties omits this field, so "
+             "it was never copied on create. Single ITsString; run WS translated to target; read-back verified.",
+    ),
+    ("LexPronunciation", "Tone"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via owned._copy_one_owned_child",
+        note="issue #135: flexicon GetSyncableProperties omits this field, so "
+             "it was never copied on create. Same as CVPattern.",
+    ),
+
     # ---- LexReference ------------------------------------------------------
     ("LexReference", "TargetsRS"): Classification(
         Bucket.COPIED,
@@ -1073,8 +1139,10 @@ def test_expected_model_fields_field_count() -> None:
     "MU" -- the ref's two value fields, found silently lost)."""
     counts = {name: len(fields) for name, fields in EXPECTED_MODEL_FIELDS.items()}
     assert counts == {
-        "LexEntry": 11,
-        "LexSense": 15,
+        "LexEntry": 13,
+        "LexSense": 17,
+        "LexEtymology": 2,
+        "LexPronunciation": 2,
         "LexExtendedNote": 2,
         "MoStemAllomorph": 3,
         "MoAffixAllomorph": 6,
@@ -1086,7 +1154,7 @@ def test_expected_model_fields_field_count() -> None:
         "MoUnclassifiedAffixMsa": 3,
         "ReversalIndexEntry": 4,
     }
-    assert sum(counts.values()) == 81
+    assert sum(counts.values()) == 89
 
 
 # ============================================================================
@@ -1122,6 +1190,7 @@ TEXTS_WORDFORMS_MODEL_FIELDS: dict[str, tuple[FieldSpec, ...]] = {
         FieldSpec("Contents", "OA"),
         FieldSpec("Genres", "RC"),
         FieldSpec("MediaFiles", "OA"),
+        FieldSpec("Source", "MU"),  # issue #135
     ),
     "StTxtPara": (
         FieldSpec("AnalyzedTextObjects", "OS"),
@@ -1200,6 +1269,16 @@ TEXTS_WORDFORMS_CLASSIFICATION: dict[tuple[str, str], Classification] = {
         note="rationale-class: spec-excluded-media -- media/audio files are "
              "out of scope per spec Scale/Scope (media/audio alignment "
              "excluded). Routed to a future media feature.",
+    ),
+
+    ("Text", "Source"): Classification(
+        Bucket.COPIED,
+        "texts._copy_text_source (called from texts.apply_texts for a text "
+        "this run CREATED) -> scalar_fields.copy_supplemental_fields",
+        note="issue #135: flexicon TextOperations has no Get/SetSource, so "
+             "plan.source_text was always empty and IText.Source was never "
+             "copied. WS-mapped, read-back verified, never overwrites an "
+             "existing target text.",
     ),
 
     # ---- StTxtPara -------------------------------------------------------
@@ -1445,7 +1524,7 @@ def test_026_expected_model_fields_field_count() -> None:
     counts = {name: len(fields)
               for name, fields in TEXTS_WORDFORMS_MODEL_FIELDS.items()}
     assert counts == {
-        "Text": 3,
+        "Text": 4,
         "StTxtPara": 4,
         "Segment": 4,
         "WfiWordform": 1,
@@ -1453,4 +1532,4 @@ def test_026_expected_model_fields_field_count() -> None:
         "WfiMorphBundle": 4,
         "WfiGloss": 0,
     }
-    assert sum(counts.values()) == 25
+    assert sum(counts.values()) == 26

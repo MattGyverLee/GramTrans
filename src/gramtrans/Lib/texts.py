@@ -842,6 +842,8 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
             _updated += 1
         # Non-string container props (FR-002).
         _set_if(text_ops, "SetAbbreviation", target_text, plan.abbreviation)
+        if _created:
+            _copy_text_source(plan, source, target, target_text, ws_map, dropped)
         if plan.is_translated is not None:
             _safe(lambda: text_ops.SetIsTranslated(target_text, plan.is_translated))
         # Genres (FR-005) via the shared resolver.
@@ -866,6 +868,29 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
             f"(dropped items so far: {len(dropped)})."))
     return {"added": _added, "updated": _updated, "already": _already,
             "skips": _skips}
+
+
+def _copy_text_source(plan, source, target, target_text, ws_map, dropped):
+    """Issue #135: IText.Source (IMultiString) -- flexicon's TextOperations has
+    no Get/SetSource, so `plan.source_text` was always empty. Copied only onto
+    a text THIS run created (an existing target text is never overwritten).
+    Never raises."""
+    try:
+        from SIL.LCModel import ICmObjectRepository
+        from System import Guid
+        repo = source.ObjectRepository(ICmObjectRepository)
+        src_text = repo.GetObject(Guid.Parse(plan.source_guid))
+    except Exception as exc:  # noqa: BLE001 -- offline / unresolved
+        _log.debug("texts: Source copy skipped, source text unresolved: %s", exc)
+        return
+    if __package__:
+        from .scalar_fields import copy_supplemental_fields
+    else:  # pragma: no cover
+        from scalar_fields import copy_supplemental_fields  # type: ignore
+    copy_supplemental_fields(
+        "Text", src_text, target_text, source=source, target=target,
+        ws_map=ws_map, dropped=dropped, owner_guid=plan.source_guid or "",
+        owner_label=plan.title or UNTITLED_LABEL)
 
 
 def _default_vern_handle(project):

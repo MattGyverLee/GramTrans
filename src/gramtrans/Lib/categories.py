@@ -9476,6 +9476,20 @@ def _wire_subsense_msas(src_parent_sense, src_entry, new_entry, context, tag,
             msa_by_src_guid, dropped, copy_set)
 
 
+def _copy_supplemental_scalars(owner_class, src, new, context, ws_map, dropped,
+                               owner_guid):
+    """Issue #135: copy the text fields flexicon's GetSyncableProperties omits
+    (see `Lib/scalar_fields.py`). Never raises."""
+    if __package__:
+        from .scalar_fields import copy_supplemental_fields
+    else:  # pragma: no cover
+        from scalar_fields import copy_supplemental_fields  # type: ignore
+    copy_supplemental_fields(
+        owner_class, src, new, source=context.source_handle,
+        target=context.target_handle, ws_map=ws_map, dropped=dropped,
+        owner_guid=owner_guid, owner_label=_owner_label_for(owner_class, src))
+
+
 def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     """Atomic owned-child closure write for one LexEntry (E2), shared by
     AFFIXES + STEMS execute_action.
@@ -9548,6 +9562,8 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         target.LexEntry.ApplySyncableProperties(new_entry, props, ws_map=ws_map)
     except (AttributeError, TypeError):
         pass
+    _copy_supplemental_scalars(
+        "LexEntry", src_entry, new_entry, context, ws_map, dropped, src_guid)
     apply_residue(new_entry, ws, tag)
     if in_plan_entries is not None:
         try:
@@ -9624,6 +9640,8 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
             target.Senses.ApplySyncableProperties(new_sense, sprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
+        _copy_supplemental_scalars(
+            "LexSense", src_sense, new_sense, context, ws_map, dropped, s_guid)
         # Feature 024 (T030, US3): sense-owned children -- ExamplesOS (+ each
         # example's TranslationsOC) and recursive sub-senses (Sense.SensesOS,
         # `OwnedObjectSpec.recurse=True`), both via the SAME
