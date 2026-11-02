@@ -19710,12 +19710,12 @@ def _repair_adhoc_prohib_refs(context, target, picks, dropped, skips):
 def _repair_rule_input_poses(context, target, picks, dropped, skips):
     """Add the `InputPOSesRC` members a PHONOLOGICAL_RULES-time wiring missed
     (POS created later in the run), and retire the stale drop record."""
-    from SIL.LCModel import IPhRegularRule
     source = context.source_handle
     try:
         phon_data = target.Cache.LangProject.PhonologicalDataOA
     except (AttributeError, TypeError):
         return 0
+    from SIL.LCModel import IPhRegularRule
     index = _build_rule_rc_index(target, phon_data)
     tgt_rules = {}
     for r in target.PhonRules.GetAll():
