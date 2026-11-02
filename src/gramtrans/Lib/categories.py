@@ -1856,6 +1856,8 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
         # existed made the tail see ALREADY_WIRED and under-report.
 
         # NO ValuesOC loop -- complex features have no symbolic values.
+        _copy_fs_gloss_fields("FsFeatDefn", src_feat_typed, new_feat, context,
+                              ws_map, src_guid)
         apply_carrier_b(new_feat, ws, tag)
         return new_feat
 
@@ -1919,6 +1921,8 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
         if src_sel is not None:
             new_feat.WsSelector = src_sel
 
+        _copy_fs_gloss_fields("FsFeatDefn", src_feat_typed, new_feat, context,
+                              ws_map, src_guid)
         apply_carrier_b(new_feat, ws, tag)
         return new_feat
 
@@ -2019,7 +2023,11 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
             _copy_multistrings_ws_mapped(
                 src_val_typed, new_val, ("Name", "Abbreviation", "Description"),
                 source=source, target=target, ws_map=ws_map)
+            _copy_fs_gloss_fields("FsSymFeatVal", src_val_typed, new_val,
+                                  context, ws_map, val_guid)
 
+    _copy_fs_gloss_fields("FsFeatDefn", src_feat_typed, new_feat, context,
+                          ws_map, src_guid)
     # Carrier B: Description-append on the feature.
     apply_carrier_b(new_feat, ws, tag)
     return new_feat
@@ -9821,6 +9829,19 @@ def _copy_supplemental_scalars_ctx(owner_class, src, new, context, ws_mapping,
         owner_guid)
 
 
+def _copy_fs_gloss_fields(owner_class, src_obj, new_obj, context, ws_map,
+                          owner_guid):
+    """Issue #135 slice 3: GlossAbbreviation / RightGlossSep / ShowInGloss
+    (+ DisplayToRightOfValues on the feature) for an Fs feature definition or
+    symbolic value created on the target. Failures land on `context._dropped`.
+    Never raises."""
+    dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
+    _copy_supplemental_scalars(owner_class, src_obj, new_obj, context, ws_map,
+                               dropped, owner_guid)
+
+
 def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     """Atomic owned-child closure write for one LexEntry (E2), shared by
     AFFIXES + STEMS execute_action.
@@ -15777,6 +15798,8 @@ def phonological_features_execute_action(action, context, ws_mapping, tag):
         target.PhonFeatures.ApplySyncableProperties(new_feat, props, ws_map=ws_mapping)
     except (AttributeError, TypeError):
         pass
+    _copy_fs_gloss_fields("FsFeatDefn", src_feat, new_feat, context,
+                          _ws_map_dict(ws_mapping), src_guid)
     try:
         apply_carrier_b(new_feat, cache.DefaultAnalWs, tag, strict=False)
     except Exception:

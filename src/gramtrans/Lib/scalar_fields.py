@@ -35,6 +35,9 @@ MULTISTRING_FIELDS: dict = {
     # Slice 2: lexical-relation Name/Comment, inflectional-variant-type glosses.
     "LexReference": ("ILexReference", ("Name", "Comment")),
     "LexEntryInflType": ("ILexEntryInflType", ("GlossPrepend", "GlossAppend")),
+    # Slice 3: feature-definition / symbolic-value gloss fields (IMultiUnicode).
+    "FsFeatDefn": ("IFsFeatDefn", ("GlossAbbreviation", "RightGlossSep")),
+    "FsSymFeatVal": ("IFsSymFeatVal", ("GlossAbbreviation", "RightGlossSep")),
 }
 
 #: owner class -> (LCM interface, single-ITsString field names)
@@ -47,6 +50,8 @@ TSSTRING_FIELDS: dict = {
 VALUE_FIELDS: dict = {
     "MoAlloAdhocProhib": ("IMoAdhocProhib", ("Adjacency", "Disabled")),
     "MoMorphAdhocProhib": ("IMoAdhocProhib", ("Adjacency", "Disabled")),
+    "FsFeatDefn": ("IFsFeatDefn", ("ShowInGloss", "DisplayToRightOfValues")),
+    "FsSymFeatVal": ("IFsSymFeatVal", ("ShowInGloss",)),
 }
 
 
