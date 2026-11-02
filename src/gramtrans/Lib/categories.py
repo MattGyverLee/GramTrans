@@ -3380,6 +3380,19 @@ FEATURES_RS_CREATE_WIRED = "create_wired"  # planned create; the create path wir
 FEATURES_RS_TYPE_ABSENT = "type_absent"    # not in the target, not planned: out of scope
 
 
+def features_rs_reordered_skip_detail(type_guid: str) -> str:
+    """Shared Move Skip.detail and Preview REORDERED row body (issue #138)."""
+    return (f"struct-type {type_guid} FeaturesRS holds every source member but in a "
+            f"different order than the source; {FEATURES_RS_REORDERED_NOTE}")
+
+
+def features_rs_reordered_after_repair_skip_detail(type_guid: str) -> str:
+    """After insert-only repair, shared order may still differ (issue #138)."""
+    return (f"struct-type {type_guid} FeaturesRS missing members were inserted but "
+            f"shared members remain in a different order than the source; "
+            f"{FEATURES_RS_REORDERED_NOTE}")
+
+
 def _target_feature_system(target, attr):
     """`target.Cache.LangProject.<attr>` (Ms/PhFeatureSystemOA), or None."""
     try:
@@ -3638,9 +3651,7 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                 skips.append(Skip(
                     category=types_cat, source_guid=type_guid,
                     reason=SkipReason.NEEDS_MANUAL,
-                    detail=(f"struct-type {type_guid} FeaturesRS holds every "
-                            "source member but in a different order than "
-                            f"the source; {FEATURES_RS_REORDERED_NOTE}"),
+                    detail=features_rs_reordered_skip_detail(type_guid),
                 ))
             elif outcome == FEATURES_RS_REPAIR:
                 fs = _target_feature_system(target, attr)
@@ -3687,10 +3698,8 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                         skips.append(Skip(
                             category=types_cat, source_guid=type_guid,
                             reason=SkipReason.NEEDS_MANUAL,
-                            detail=(f"struct-type {type_guid} FeaturesRS "
-                                    "missing members were inserted but shared "
-                                    "members remain in a different order than "
-                                    f"the source; {FEATURES_RS_REORDERED_NOTE}"),
+                            detail=features_rs_reordered_after_repair_skip_detail(
+                                type_guid),
                         ))
             if unresolved:
                 for g, _label in unresolved:

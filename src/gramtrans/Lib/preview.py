@@ -2298,7 +2298,6 @@ def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
         getattr(plan, "actions", ()) or ())
     labels = {
         _cats.FEATURES_RS_REPAIR: "Repair",
-        _cats.FEATURES_RS_REORDERED: f"SKIP ({_cats.FEATURES_RS_REORDERED_NOTE})",
         _cats.FEATURES_RS_COMPLETE: "SKIP (already complete)",
         _cats.FEATURES_RS_CREATE_WIRED: "Wire at create",
     }
@@ -2332,7 +2331,11 @@ def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
             tail = f" -> {list(desired)} (source order)"
         else:
             tail = ""
-        lines.append(f"    {labels.get(outcome, outcome)}  "
+        if outcome == _cats.FEATURES_RS_REORDERED:
+            head = (f"SKIP ({_cats.features_rs_reordered_skip_detail(type_guid)})")
+        else:
+            head = labels.get(outcome, outcome)
+        lines.append(f"    {head}  "
                      f"[{ref['system']}] type {type_guid}{tail}")
         for g, _label in unresolved:
             lines.append(f"    REPORT (member feature unavailable)  "
