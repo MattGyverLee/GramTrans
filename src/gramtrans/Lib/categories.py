@@ -6171,6 +6171,32 @@ def target_has_pos_create_infra(target) -> bool:
     return _get_pos_factory(target) is not None
 
 
+def stash_feature_links_for_creatable_pos(context, src_pos, _seen=None) -> None:
+    """Issue #172, Preview twin of the stash in `resolve_or_create_target_pos`
+    (G6): record the source InflectableFeatsRC links of `src_pos` AND of every
+    ancestor POS that Move would have to create with it, so the plan's
+    `feature_category_links` -- what Preview renders -- already names the pairs
+    Move will link. Identity/natural-key present POS are skipped (Move creates
+    nothing there). Idempotent; read-only on the target; never raises."""
+    try:
+        _seen = _seen if _seen is not None else set()
+        pos_guid = _guid_str_from(src_pos)
+        if not pos_guid or pos_guid in _seen:
+            return
+        _seen.add(pos_guid)
+        target = getattr(context, "target_handle", None)
+        if _resolve_target_pos(
+                target, pos_guid, src_pos=src_pos,
+                source_handle=getattr(context, "source_handle", None)) is not None:
+            return
+        _stash_feature_category_links(src_pos, context)
+        owner = getattr(src_pos, "Owner", None)
+        if _owner_is_pos(owner):
+            stash_feature_links_for_creatable_pos(context, owner, _seen)
+    except Exception:  # noqa: BLE001 -- planning bookkeeping, never fatal
+        pass
+
+
 def _guid_arg_for_create(guid_str: str):
     """`.NET Guid` for a factory `.Create(guid, owner)` call, falling back to
     the raw string host-free (matches `owned._guid_for_create`)."""
@@ -6263,6 +6289,18 @@ def resolve_or_create_target_pos(context, src_pos, ws_mapping, tag, _seen=None):
     except Exception:
         return None
     _sync_pos_properties(context, new_pos, src_pos, ws_mapping, tag)
+    # Issue #172: a POS created HERE (dependency closure: an owner/parent of a
+    # picked item, or a POS an allomorph's MsEnvPartOfSpeechRA needs) never
+    # went through `_plan_pos_piece`, so its source InflectableFeatsRC was
+    # never stashed and every (POS, feature) pair was reported as a drop.
+    # Stash it now; the single link pass (`_run_infl_feature_link_pass`, run
+    # post-loop) links to features that already exist in the target and
+    # creates/edits no feature. Runs per created POS, so each ancestor made by
+    # the recursion above is covered too. Never raises (best-effort bookkeeping).
+    try:
+        _stash_feature_category_links(src_pos, context)
+    except Exception:  # noqa: BLE001 -- must not undo a successful create
+        pass
     return new_pos
 
 

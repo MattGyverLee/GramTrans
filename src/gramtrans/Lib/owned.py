@@ -1653,6 +1653,9 @@ def _plan_msenv_pos_ra(src_allo, ctx, dropped, resolver_cache=None) -> list:
     if _categories().target_has_pos_create_infra(ctx.target_handle):
         if pos_guid:
             planned.add(pos_guid)
+        # Issue #172: Move creates this POS (and any absent ancestors) and
+        # links its inflectable features; make Preview's link map say so.
+        _categories().stash_feature_links_for_creatable_pos(ctx, src_pos)
         return [ReferenceDecisionRecord(
             owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
             field_name="MsEnvPartOfSpeechRA", action=ReferenceAction.CREATE,
