@@ -1670,6 +1670,15 @@ def build_run_plan(
     # `_resolver_cache` (genres/tags) and `_dropped` collectors as the rest of
     # the walk so the never-silent guarantee is uniform (FR-023).
     _text_plans: list = []
+    # Issue #166: the source GUIDs of every POS this run will CREATE, so a
+    # wordform analysis whose CategoryRA is one of them plans a LINK (rebound at
+    # Move once the grammar leg has created it) instead of a drop. POS creation
+    # preserves the source GUID, so the GUID is the join key.
+    object.__setattr__(context, '_planned_pos_guids', {
+        str(a.source_guid).lower() for a in actions
+        if getattr(a, 'category', None) in (GrammarCategory.GRAM_CATEGORIES,
+                                            GrammarCategory.POS)
+        and getattr(a, 'source_guid', None)})
     if selection.is_on(GrammarCategory.TEXTS):
         if __package__:
             from .texts import plan_texts as _plan_texts

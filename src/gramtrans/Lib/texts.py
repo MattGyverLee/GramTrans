@@ -1538,7 +1538,7 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
             # US2: analyses + AnalysesRS alignment.
             _wordforms.apply_analyses(
                 seg_plan.analyses, source_of(ctx), target, ctx, tag,
-                None, dropped)
+                resolver_cache, dropped)
             _wordforms.apply_alignment(tgt_seg, seg_plan.alignment, ctx, dropped)
             # US5 (T035): per-segment text-markup tag references.
             _apply_segment_tags(seg_plan, target, target_text, tgt_seg,
