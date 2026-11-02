@@ -166,7 +166,7 @@ class _Project:
 # ---------------------------------------------------------------------------
 
 _CASTS = (
-    "IPhRegularRule", "IPhSimpleContextSeg", "IPhSimpleContextNC",
+    "IPhRegularRule", "IPhMetathesisRule", "IPhSimpleContextSeg", "IPhSimpleContextNC",
     "IPhSimpleContextBdry", "IPhSequenceContext", "IPhIterationContext",
     "ICmObject",
 )
@@ -411,3 +411,52 @@ def test_fully_resolvable_refs_emit_no_records(lcm):
     assert list(rhs.ReqRuleFeatsRC) == [a]
     assert list(rhs.ExclRuleFeatsRC) == [b]
     assert dropped == []
+
+
+class _MetathesisRule:
+    """Minimal PhMetathesisRule fake for `_phon_rule_apply_body` (no RHS tree)."""
+
+    def __init__(self, struc_desc=()):
+        self.ClassName = "PhMetathesisRule"
+        self.Direction = 2
+        self.Disabled = False
+        self.LeftSwitchIndex = 1
+        self.LeftSwitchLimit = 2
+        self.RightSwitchIndex = 3
+        self.RightSwitchLimit = 4
+        self.StrucDescOS = _Coll(struc_desc)
+        self.RightHandSidesOS = _Coll()
+        self.InitialStratumRA = None
+        self.FinalStratumRA = None
+
+
+def _apply_metathesis(src_rule, target, dropped):
+    new_rule = _MetathesisRule()
+    categories._phon_rule_apply_body(
+        src_rule, new_rule, "PhMetathesisRule", _Project(), target,
+        ws_mapping=None, tag="t", src_guid="meta-1", context=None,
+        dropped=dropped,
+    )
+    return new_rule
+
+
+def test_metathesis_rule_copies_switch_indices_and_struc_desc(lcm):
+    """Issue #135: metathesis rules must not stop after flat sync + Disabled."""
+    ph = _Ref("ph-m")
+    target = _Project(phonemes=[ph])
+    src = _MetathesisRule(struc_desc=[_seg("seg-m", _Ref("ph-m"))])
+    dropped = []
+
+    new_rule = _apply_metathesis(src, target, dropped)
+
+    assert dropped == []
+    assert (
+        new_rule.LeftSwitchIndex,
+        new_rule.LeftSwitchLimit,
+        new_rule.RightSwitchIndex,
+        new_rule.RightSwitchLimit,
+    ) == (1, 2, 3, 4)
+    cells = list(new_rule.StrucDescOS)
+    assert len(cells) == 1
+    assert cells[0].FeatureStructureRA is ph
+    assert list(new_rule.RightHandSidesOS) == []
