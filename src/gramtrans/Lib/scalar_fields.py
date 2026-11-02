@@ -32,11 +32,21 @@ MULTISTRING_FIELDS: dict = {
     "LexSense": ("ILexSense", ("AnthroNote", "UsageNote")),
     "LexEtymology": ("ILexEtymology", ("Note", "PrecComment")),
     "Text": ("IText", ("Source",)),
+    # Slice 2: lexical-relation Name/Comment, inflectional-variant-type glosses.
+    "LexReference": ("ILexReference", ("Name", "Comment")),
+    "LexEntryInflType": ("ILexEntryInflType", ("GlossPrepend", "GlossAppend")),
 }
 
 #: owner class -> (LCM interface, single-ITsString field names)
 TSSTRING_FIELDS: dict = {
     "LexPronunciation": ("ILexPronunciation", ("CVPattern", "Tone")),
+}
+
+#: owner class -> (LCM interface, int/bool field names). Copied only when the
+#: source value differs from the freshly created target's value.
+VALUE_FIELDS: dict = {
+    "MoAlloAdhocProhib": ("IMoAdhocProhib", ("Adjacency", "Disabled")),
+    "MoMorphAdhocProhib": ("IMoAdhocProhib", ("Adjacency", "Disabled")),
 }
 
 
@@ -62,7 +72,8 @@ def copy_supplemental_fields(owner_class, src_obj, new_obj, *, source, target,
     Never raises; failures become DroppedItemRecords."""
     ms_spec = MULTISTRING_FIELDS.get(owner_class)
     ts_spec = TSSTRING_FIELDS.get(owner_class)
-    if (ms_spec is None and ts_spec is None) or src_obj is None or new_obj is None:
+    val_spec = VALUE_FIELDS.get(owner_class)
+    if (ms_spec is None and ts_spec is None and val_spec is None) or src_obj is None or new_obj is None:
         return []
     c = _cats()
     written = []
@@ -157,6 +168,25 @@ def copy_supplemental_fields(owner_class, src_obj, new_obj, *, source, target,
                       % (name, type(exc).__name__, exc))
                 continue
             if back is None or str(back) != str(text):
+                _drop(name, name, "%s not present on read-back" % name)
+            else:
+                written.append(name)
+
+    if val_spec is not None:
+        iface, names = val_spec
+        s, n = _typed(c, src_obj, iface), _typed(c, new_obj, iface)
+        for name in names:
+            try:
+                want = getattr(s, name, None)
+                if want is None or want == getattr(n, name, None):
+                    continue
+                setattr(n, name, want)
+                back = getattr(n, name, None)
+            except Exception as exc:  # noqa: BLE001 -- recorded
+                _drop(name, name, "%s not written (%s: %s)"
+                      % (name, type(exc).__name__, exc))
+                continue
+            if back != want:
                 _drop(name, name, "%s not present on read-back" % name)
             else:
                 written.append(name)

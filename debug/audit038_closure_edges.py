@@ -140,6 +140,8 @@ _CANDIDATE_TASK = {
     "EXCEPTION_FEATURE_TO_POS": "#67",
     "POS_INFLECTABLE_FEAT_TO_POS": "#67",
     "INFLECTION_FEATURE_TO_STRUCT_TYPE": "#109",
+    "STRUCT_TYPE_TO_INFL_FEATURE": "#138",
+    "PHON_STRUCT_TYPE_TO_PHON_FEATURE": "#138",
 }
 
 
@@ -458,6 +460,9 @@ def _audit(proj) -> int:
         # refused MSA_TO_INFL_FEATURE.
         _GC.PHONEMES: (_piece_guids(_GC.PHONEMES), set()),
         _GC.NATURAL_CLASSES: (_piece_guids(_GC.NATURAL_CLASSES), set()),
+        # Issue #138.
+        _GC.PHONOLOGICAL_FEATURES: (_piece_guids(_GC.PHONOLOGICAL_FEATURES),
+                                    set()),
     }
 
     #: `(DependencyKind name, producer name, producer, SOURCE category, FAR
@@ -528,6 +533,16 @@ def _audit(proj) -> int:
          "inflection_features_type_dependencies",
          _cats.inflection_features_type_dependencies,
          _GC.INFLECTION_FEATURES, _GC.FEATURE_STRUCT_TYPES),
+        # Issue #138 (FR-018). The reverse arrow: a struct type's `FeaturesRS`
+        # -> the feature defns it names, on the analysis and phonology side.
+        ("STRUCT_TYPE_TO_INFL_FEATURE",
+         "feature_struct_types_infl_feature_dependencies",
+         _cats.feature_struct_types_infl_feature_dependencies,
+         _GC.FEATURE_STRUCT_TYPES, _GC.INFLECTION_FEATURES),
+        ("PHON_STRUCT_TYPE_TO_PHON_FEATURE",
+         "phon_feat_types_phon_feature_dependencies",
+         _cats.phon_feat_types_phon_feature_dependencies,
+         _GC.PHON_FEAT_TYPES, _GC.PHONOLOGICAL_FEATURES),
     )
 
     relationships: dict = {}

@@ -422,8 +422,11 @@ class TestInsertOnly:
         a, b, c = _Defn(A), _Defn(B), _Defn(C)
         t1 = _Type(T1, [b, a])
         tgt = _Proj(ms_feats=[a, b, c], ms_types=[t1])
-        self._run(tgt, {T1: _ref([A, B, C])})
+        ctx, skips = self._run(tgt, {T1: _ref([A, B, C])})
         assert _guids(t1.FeaturesRS) == [B, C, A]
+        assert ctx._struct_type_features_rs_writes == 1
+        assert len(skips) == 1 and skips[0].source_guid == T1
+        assert "reordered in target, left as-is" in skips[0].detail
 
     def test_never_calls_remove_at(self) -> None:
         a, b, x = _Defn(A), _Defn(B), _Defn(X)

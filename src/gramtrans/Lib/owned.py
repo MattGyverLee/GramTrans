@@ -453,9 +453,25 @@ def _apply_child_refs(child_refs, src_child, new_child, ctx, tag, resolver_cache
                 owner_coll = getattr(new_child, spec.field_name, None)
                 if owner_coll is not None:
                     try:
-                        owner_coll.Add(resolved)
-                    except (AttributeError, TypeError):
-                        pass
+                        if __package__:
+                            from . import categories as _categories
+                        else:
+                            import categories as _categories  # type: ignore
+                    except ImportError:  # pragma: no cover
+                        _log.warning(
+                            "owned._apply_child_refs: categories import "
+                            "failed -- cannot Add to %s.%s",
+                            spec.owner_class, spec.field_name,
+                        )
+                    else:
+                        _categories._add_resolved_to_reference_collection(
+                            owner_coll, resolved, dropped=dropped,
+                            owner_class=spec.owner_class,
+                            owner_guid=owner_guid,
+                            src_obj=src_child,
+                            field_name=spec.field_name,
+                            source_item=item,
+                        )
 
 
 def _apply_full_sense_reference_fields(owner_class, src_child, new_child, ctx, tag,

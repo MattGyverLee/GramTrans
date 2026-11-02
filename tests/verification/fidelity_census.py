@@ -265,6 +265,22 @@ EXPECTED_MODEL_FIELDS: dict[str, tuple[FieldSpec, ...]] = {
     ),
     "LexReference": (
         FieldSpec("Targets", "RS"),
+        # Issue #135 slice 2: value fields flexicon omits.
+        FieldSpec("Name", "MU"),
+        FieldSpec("Comment", "MU"),
+    ),
+    "LexEntryInflType": (
+        FieldSpec("GlossPrepend", "MU"),
+        FieldSpec("GlossAppend", "MU"),
+    ),
+    # "INT" = value kind (Adjacency is Int32, Disabled is Boolean).
+    "MoAlloAdhocProhib": (
+        FieldSpec("Adjacency", "INT"),
+        FieldSpec("Disabled", "INT"),
+    ),
+    "MoMorphAdhocProhib": (
+        FieldSpec("Adjacency", "INT"),
+        FieldSpec("Disabled", "INT"),
     ),
     "MoStemMsa": (
         FieldSpec("Components", "RS"),
@@ -873,6 +889,48 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
              "it was never copied on create. Same as CVPattern.",
     ),
 
+    # ---- Issue #135 slice 2 ------------------------------------------------
+    ("LexReference", "Name"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields, called from categories.reproduce_lexical_relation",
+        note="issue #135: flexicon omits it; WS-mapped, read-back verified, never silent.",
+    ),
+    ("LexReference", "Comment"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields, called from categories.reproduce_lexical_relation",
+        note="issue #135: same as Name.",
+    ),
+    ("LexEntryInflType", "GlossPrepend"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via categories._copy_infl_type_glosses (variant/complex form type execute_action)",
+        note="issue #135: flexicon omits it; WS-mapped, read-back verified.",
+    ),
+    ("LexEntryInflType", "GlossAppend"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via categories._copy_infl_type_glosses",
+        note="issue #135: same as GlossPrepend.",
+    ),
+    ("MoAlloAdhocProhib", "Adjacency"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields, called from categories.adhoc_compound_rules_execute_action",
+        note="issue #135: Int32, written when it differs from the created default; read-back verified.",
+    ),
+    ("MoAlloAdhocProhib", "Disabled"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields, called from categories.adhoc_compound_rules_execute_action",
+        note="issue #135: Boolean; same as Adjacency.",
+    ),
+    ("MoMorphAdhocProhib", "Adjacency"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields, called from categories.adhoc_compound_rules_execute_action",
+        note="issue #135: same as MoAlloAdhocProhib.Adjacency.",
+    ),
+    ("MoMorphAdhocProhib", "Disabled"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields, called from categories.adhoc_compound_rules_execute_action",
+        note="issue #135: same as MoAlloAdhocProhib.Disabled.",
+    ),
+
     # ---- LexReference ------------------------------------------------------
     ("LexReference", "TargetsRS"): Classification(
         Bucket.COPIED,
@@ -1152,14 +1210,17 @@ def test_expected_model_fields_field_count() -> None:
         "MoStemAllomorph": 3,
         "MoAffixAllomorph": 6,
         "LexEntryRef": 7,
-        "LexReference": 1,
+        "LexReference": 3,
+        "LexEntryInflType": 2,
+        "MoAlloAdhocProhib": 2,
+        "MoMorphAdhocProhib": 2,
         "MoStemMsa": 9,
         "MoInflAffMsa": 7,
         "MoDerivAffMsa": 13,
         "MoUnclassifiedAffixMsa": 3,
         "ReversalIndexEntry": 4,
     }
-    assert sum(counts.values()) == 89
+    assert sum(counts.values()) == 97
 
 
 # ============================================================================

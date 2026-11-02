@@ -630,6 +630,34 @@ def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips, post_pass_fail
             pass
 
 
+def _ensure_ref_repoint(exec_ctx, target, exec_skips):
+    """Issue #15 / spec 041: opt-in stale-reference re-point (no-op unless
+    `selection.repoint_stale_refs`). Own latch; never raises."""
+    if getattr(exec_ctx, "_did_ref_repoint", False):
+        return
+    plan = getattr(exec_ctx, "_run_plan", None)
+    if not getattr(getattr(plan, "selection", None), "repoint_stale_refs", False):
+        return
+    if __package__:
+        from .categories import _run_ref_repoint_pass
+    else:
+        from categories import _run_ref_repoint_pass  # type: ignore
+    try:
+        object.__setattr__(exec_ctx, "_did_ref_repoint", True)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        skips = _run_ref_repoint_pass(exec_ctx, target)
+    except Exception:
+        _log.exception("execute: stale-reference re-point FAILED (swallowed)")
+        return
+    if skips and exec_skips is not None:
+        try:
+            exec_skips.extend(skips)
+        except (AttributeError, TypeError):
+            pass
+
+
 def _ensure_late_rule_refs(exec_ctx, target, exec_skips):
     """Issue #134: repair phon-rule `InputPOSesRC` and adhoc-prohibition
     member chains AFTER the leaf-dispatch loop (their targets -- POS,
@@ -1221,6 +1249,17 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # silently. See `_ensure_owner_feat_strucs` for the measurement.
     _ensure_owner_feat_strucs(exec_ctx, target, tag, _exec_skips, _leaf_execution_failures)
 
+    # Issue #137: ReferenceFormsOC structures are created empty during POS
+    # dispatch; fill them now that features/values/types all exist.
+    try:
+        _complete_reference_form_structs(plan, source, target, report_sink,
+                                         _dropped)
+    except Exception as exc:  # noqa: BLE001 -- must not lose the run's writes
+        _log.exception("execute: ReferenceForms completion FAILED (swallowed)")
+        _record_post_pass_failure(
+            _leaf_execution_failures, pass_name="reference-form-strucs",
+            category=GrammarCategory.GRAM_CATEGORIES, exc=exc)
+
     # Issue #54: a starter `PhNCSegments` the plan matched by natural key gets
     # its source class's members, after every create (see the helper).
     _ensure_matched_nc_segments(exec_ctx, target, _exec_skips, _leaf_execution_failures)
@@ -1250,6 +1289,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Issue #134: phon-rule InputPOSesRC + adhoc member chains, after every
     # category (POS / STEMS dispatch after the rules that reference them).
     _ensure_late_rule_refs(exec_ctx, target, _exec_skips)
+    _ensure_ref_repoint(exec_ctx, target, _exec_skips)
 
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check
@@ -3273,8 +3313,11 @@ def _resolve_and_tag(src_props, tgt_pre_props, tag, log, category, target_guid, 
 # `categories._copy_multistrings_ws_mapped`). It does NOT get its own owned
 # grandchildren (e.g. an `MoInflAffixTemplate`'s slot sequence) or its own
 # reference fields. For the five collections whose children have a dedicated
-# category that is what the deferral above is for; for `AffixSlotsOC` and
-# `ReferenceFormsOC` this is a real, acknowledged depth limit of T045.
+# category that is what the deferral above is for; for `AffixSlotsOC` this is
+# a real, acknowledged depth limit of T045. `ReferenceFormsOC` is no longer
+# one (issue #137): the created `IFsFeatStruc` is filled with its type and
+# feature specs by `_complete_reference_form_structs`, a post-pass (the
+# feature/value/type endpoints do not exist yet when POS dispatches).
 
 #: The categories whose `PlannedOverwrite` may carry an `EnrichmentRecord`.
 #: Mirrors `categories._POS_OWNED_COLLECTION_CATEGORIES` (POS is ALIASED to
@@ -3602,6 +3645,147 @@ def _create_collection_child(spec, child, receiver, live, target):
         return None, f"create failed for {spec.owning_field} via {factory_name}"
     live.Add(new_child)
     return new_child, ""
+
+
+def _read_reference_form_binding(src_struc):
+    """The plain-dict binding of a source `IFsFeatStruc` (None when it holds no
+    specs). Reuses Preview's reader -- the same one the MSA feature-structure
+    owners use -- live via pythonnet casts, duck-typed for host-free fakes."""
+    if __package__:
+        from . import preview as _pv
+    else:
+        import preview as _pv  # type: ignore
+    cats = _categories_mod()
+    try:
+        from SIL.LCModel import (  # noqa: N813
+            ICmObject, IFsFeatStruc, IFsClosedValue, IFsComplexValue)
+        if not all(callable(x) for x in (
+                ICmObject, IFsFeatStruc, IFsClosedValue, IFsComplexValue)):
+            raise TypeError("SIL.LCModel interfaces unavailable")
+    except Exception:  # noqa: BLE001 -- no pythonnet: offline fake path
+        return _pv._read_feat_struc_duck(src_struc)
+    try:
+        IFsFeatStruc(src_struc)
+    except TypeError:
+        return _pv._read_feat_struc_duck(src_struc)
+    return _pv._read_feat_struc_live(
+        src_struc, (IFsFeatStruc, IFsClosedValue, IFsComplexValue),
+        lambda o: cats._guid_str_from(o) or "")
+
+
+def _copy_reference_form_feat_struc(src_child, new_child, target, report_sink,
+                                    src_guid):
+    """Issue #137: copy a source `ReferenceFormsOC` `IFsFeatStruc` into the
+    (just created, or empty) destination one: `TypeRA` plus every
+    `FeatureSpecsOC` entry, GUID-preserved, with the feature / value / type
+    endpoints re-resolved against the TARGET.
+
+    Reuses the MSA owners' machinery (`_resolve_feat_struc_binding` /
+    `_apply_feat_struc_rows`): all-or-nothing deferral, existing pairs skipped,
+    complex values recursed. Returns a reason string when the structure could
+    not be filled (the caller records it), else "".
+    """
+    cats = _categories_mod()
+    binding = _read_reference_form_binding(src_child)
+    if binding is None:
+        return ""                      # nothing to copy: an empty source struc
+    problems: list = []
+
+    def _unresolved(guid, detail):
+        problems.append(detail)
+
+    label = "ReferenceFormsOC struc=" + (cats._guid_str_from(src_child) or "")
+    rows = cats._resolve_feat_struc_binding(
+        target, binding, _unresolved, label)
+    if rows is None:
+        return "; ".join(problems) or "feature structure endpoints unresolved"
+    tgt_struc = cats._cast_lcm(new_child, "IFsFeatStruc")
+    type_guid = binding.get("type_guid", "")
+    if type_guid and getattr(tgt_struc, "TypeRA", None) is None:
+        tgt_type = cats._resolve_target_by_guid(target, type_guid)
+        if tgt_type is None:
+            problems.append(f"type_guid={type_guid} not in target")
+        else:
+            try:
+                tgt_struc.TypeRA = cats._cast_lcm(tgt_type, "IFsFeatStrucType")
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"TypeRA not set: {type(exc).__name__}: {exc}")
+    from types import SimpleNamespace
+    existing = cats._existing_infl_feat_pairs(
+        SimpleNamespace(FsFeatStruc=tgt_struc), "FsFeatStruc")
+    cats._apply_feat_struc_rows(
+        target, tgt_struc, rows, existing,
+        lambda guid, detail: problems.append(detail), label)
+    return "; ".join(problems)
+
+
+def _complete_reference_form_structs(plan, source, target, report_sink,
+                                     dropped=None):
+    """Issue #137: SINGLE WRITER of a POS `ReferenceFormsOC` structure's content.
+
+    `_enrich_one_collection` creates each `IFsFeatStruc` (GUID-preserved) as an
+    empty shell; this pass, run AFTER every category, fills it. It cannot be
+    done at create time: POS dispatches before INFLECTION_FEATURES /
+    FEATURE_STRUCT_TYPES, so the feature, value and type endpoints are not in
+    the target yet (measured live). Here they are, and a re-run also completes
+    a shell an earlier run left behind. Add-only: only a destination structure
+    with NO `FeatureSpecsOC` yet is written; a populated one is untouched.
+
+    Runs only when the plan touches a POS category. Never raises; every
+    structure that could not be filled is reported as a `DroppedItemRecord`.
+    """
+    touched = [getattr(a, "category", None) for a in plan.actions]
+    touched += [getattr(o, "category", None)
+                for o in (getattr(plan, "overwrites", ()) or ())]
+    if not any(c in _ENRICHMENT_CATEGORIES for c in touched):
+        return
+    cats = _categories_mod()
+    filled = failed = 0
+    try:
+        poses = list(source.POS.GetAll(recursive=True))
+    except Exception:  # noqa: BLE001 -- unreadable source: nothing to complete
+        return
+    for pos in poses:
+        pos_guid = cats._guid_str_from(pos) or ""
+        _spelling, children = cats._pos_owned_collection(
+            cats._unwrap_lcm(pos), "ReferenceFormsOC")
+        for child in children or ():
+            tgt = cats._resolve_target_by_guid(
+                target, cats._guid_str_from(child) or "")
+            if tgt is None:
+                continue                # not created this run (not selected)
+            try:
+                if list(cats._cast_lcm(tgt, "IFsFeatStruc").FeatureSpecsOC):
+                    continue            # already populated: never touched
+            except Exception:  # noqa: BLE001 -- unreadable: leave it alone
+                continue
+            try:
+                reason = _copy_reference_form_feat_struc(
+                    child, tgt, target, report_sink, pos_guid)
+            except Exception as exc:  # noqa: BLE001 -- LCM/COM failures are wide
+                _log.exception(
+                    "reference-form feature structure copy failed owner=%s",
+                    pos_guid)
+                reason = f"copy failed: {type(exc).__name__}: {exc}"
+            if not reason:
+                filled += 1
+                continue
+            failed += 1
+            report_sink.Warning(
+                f"  [enrich] ReferenceFormsOC: feature structure not copied --"
+                f" {reason}  guid={pos_guid[:8]}")
+            if dropped is not None:
+                cats._append_dropped_once(dropped, DroppedItemRecord(
+                    owner_kind=_ENRICH_OWNER_KIND, owner_guid=pos_guid,
+                    owner_label=pos_guid,
+                    field_name="ReferenceFormsOC.FeatureSpecsOC",
+                    item_name="IFsFeatStruc",
+                    item_guid=cats._guid_str_from(child) or "",
+                    reason="feature structure not (fully) copied: " + reason))
+    if filled or failed:
+        report_sink.Info(
+            f"  [enrich] ReferenceFormsOC feature structures: filled={filled}"
+            f" failed={failed}")
 
 
 def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
