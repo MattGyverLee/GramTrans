@@ -3321,6 +3321,9 @@ def phon_feat_types_execute_action(
 #   * REORDERED iff every member of S is in C but the shared members' order
 #     differs from source: NOT written; reported as a Skip in Preview and
 #     Move alike ("reordered in target, left as-is").
+#   * When REPAIR applies and shared members are already out of source order,
+#     only missing members are inserted; present shared members are not moved
+#     (same user-order preservation as REORDERED, without a separate Skip).
 #   * Target-only members (in C, not in the source type) are NEVER removed.
 #     Each one is REPORTED as Skip(NEEDS_MANUAL) on every run that touches
 #     the feature system -- the target owns that decision.
@@ -3491,6 +3494,20 @@ def _classify_struct_type_features_rs(target, system, type_guid, members, *,
             target_only)
 
 
+def _features_rs_present_shared_order_differs(current, source_member_guids):
+    """True when source members already in `current` are not in source order.
+
+    Used when the classifier returns REPAIR (missing members mask REORDERED).
+    `source_member_guids`: member GUIDs in source order (all source members,
+    resolved or not). Read-only."""
+    src = list(dict.fromkeys(source_member_guids))
+    src_set = set(src)
+    current_set = set(current)
+    in_source_order = [g for g in src if g in current_set]
+    in_current_order = list(dict.fromkeys(g for g in current if g in src_set))
+    return len(in_source_order) > 1 and in_source_order != in_current_order
+
+
 def _rewrite_features_rs(tgt_type, source_order, defn_by_guid, inserted=None):
     """INSERT-ONLY repair of `tgt_type.FeaturesRS`: every source member absent
     from the sequence is inserted right after its nearest source predecessor
@@ -3607,6 +3624,9 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                 defn_by_guid = {_guid_str_from(f): f
                                 for f in (getattr(fs, "FeaturesOC", None) or ())}
                 source_order = [g for g, _ in ref["members"]]
+                current_before = [g for g, _ in _features_rs_guids(tgt_type)]
+                shared_reordered = _features_rs_present_shared_order_differs(
+                    current_before, source_order)
                 try:
                     _rewrite_features_rs(tgt_type, source_order, defn_by_guid,
                                          inserted)
@@ -3630,8 +3650,11 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                         writes += 1
                 else:
                     writes += 1
+                    reorder_note = (
+                        f"; shared members already {FEATURES_RS_REORDERED_NOTE}"
+                        if shared_reordered else "")
                     log.info("struct-type %s: FeaturesRS repaired, inserted "
-                             "%s", type_guid, inserted)
+                             "%s%s", type_guid, inserted, reorder_note)
             if unresolved:
                 for g, _label in unresolved:
                     log.warning("struct-type %s: FeaturesRS member %s has no "

@@ -2272,7 +2272,7 @@ def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
     for type_guid in sorted(refs):
         ref = refs[type_guid]
         try:
-            outcome, _t, desired, unresolved, target_only = (
+            outcome, tgt_type, desired, unresolved, target_only = (
                 _cats._classify_struct_type_features_rs(
                     target, ref["system"], type_guid, ref["members"],
                     planned_feat_guids=planned_feats,
@@ -2287,6 +2287,13 @@ def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
         # Wire-at-create shows source order; the rest name just the type.
         if outcome == _cats.FEATURES_RS_REPAIR:
             tail = f" insert {list(desired)}"
+            if tgt_type is not None:
+                current = [g for g, _ in _cats._features_rs_guids(tgt_type)]
+                source_order = [g for g, _ in ref["members"]]
+                if _cats._features_rs_present_shared_order_differs(
+                        current, source_order):
+                    tail += (f"; shared members already "
+                             f"{_cats.FEATURES_RS_REORDERED_NOTE}")
         elif outcome == _cats.FEATURES_RS_CREATE_WIRED:
             tail = f" -> {list(desired)} (source order)"
         else:
