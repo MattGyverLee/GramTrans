@@ -506,6 +506,9 @@ class Selection:
     text_picks: frozenset = field(default_factory=frozenset)  # frozenset[str] — IText GUIDs
     enable_overwrite: bool = False  # Phase 1 (FR-101/FR-108): when True,
     # already-present-by-GUID items become PlannedOverwrites instead of skips.
+    # Issue #15 / spec 041: opt-in LINK stale-reference re-point. Default OFF so
+    # LINK stays write-nothing. See categories.compute_ref_repoints.
+    repoint_stale_refs: bool = False
     interactive_merge: bool = False  # Phase 2 (FR-201): when True, per-field
     # conflicts on overwrite-candidate objects raise a ConflictPrompt instead
     # of falling through to FR-109 source-wins.

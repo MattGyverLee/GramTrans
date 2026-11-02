@@ -2244,6 +2244,40 @@ def count_complex_feature_type_ra_wires(plan: RunPlan) -> int:
                if r.strip().startswith("Wire"))
 
 
+def render_ref_repoints(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #15 / spec 041 (Principle III): render the stale-reference
+    re-point rows, from the SAME `categories.compute_ref_repoints` the Move
+    pass applies. The number of **Re-point** rows equals the writes Move
+    makes. `()` unless `selection.repoint_stale_refs` is on."""
+    selection = getattr(plan, "selection", None)
+    if not getattr(selection, "repoint_stale_refs", False):
+        return ()
+    if __package__:
+        from . import categories as _cats
+    else:
+        import categories as _cats  # type: ignore
+    ctx = getattr(plan, "context", None)
+    try:
+        rows = _cats.compute_ref_repoints(
+            ctx.source_handle, ctx.target_handle, selection)
+    except Exception:  # noqa: BLE001 -- render must never break Preview
+        return ("  Stale reference re-point: REPORT (could not classify)",)
+    lines: List[str] = ["  Stale reference re-point (MsEnvPartOfSpeechRA):"]
+    for g, label, outcome, _ref, _tgt in rows:
+        if outcome == _cats.REPOINT:
+            lines.append(f"    Re-point  allomorph {label or g} ({g})")
+        else:
+            lines.append(f"    SKIP ({_cats.REPOINT_REASONS[outcome]})  "
+                         f"allomorph {label or g} ({g})")
+    return tuple(lines) if len(lines) > 1 else ()
+
+
+def count_ref_repoints(plan: RunPlan) -> int:
+    """Number of "Re-point" rows Preview promises Move."""
+    return sum(1 for r in render_ref_repoints(plan)
+               if r.strip().startswith("Re-point"))
+
+
 def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
     """Issue #108 (Principle III): render `plan.struct_type_feature_refs` --
     one row per in-scope struct-type (both feature systems), classified by
@@ -2714,6 +2748,7 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_feature_category_links(plan))
         + tuple(render_complex_feature_type_refs(plan))
         + tuple(render_struct_type_features_rs(plan))
+        + tuple(render_ref_repoints(plan))
         + tuple(render_sense_list_reference_decisions(plan))
         + tuple(render_other_reference_decisions(plan))
         + tuple(render_reversal_and_text_decisions(plan))

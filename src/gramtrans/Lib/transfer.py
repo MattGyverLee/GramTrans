@@ -630,6 +630,34 @@ def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips, post_pass_fail
             pass
 
 
+def _ensure_ref_repoint(exec_ctx, target, exec_skips):
+    """Issue #15 / spec 041: opt-in stale-reference re-point (no-op unless
+    `selection.repoint_stale_refs`). Own latch; never raises."""
+    if getattr(exec_ctx, "_did_ref_repoint", False):
+        return
+    plan = getattr(exec_ctx, "_run_plan", None)
+    if not getattr(getattr(plan, "selection", None), "repoint_stale_refs", False):
+        return
+    if __package__:
+        from .categories import _run_ref_repoint_pass
+    else:
+        from categories import _run_ref_repoint_pass  # type: ignore
+    try:
+        object.__setattr__(exec_ctx, "_did_ref_repoint", True)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        skips = _run_ref_repoint_pass(exec_ctx, target)
+    except Exception:
+        _log.exception("execute: stale-reference re-point FAILED (swallowed)")
+        return
+    if skips and exec_skips is not None:
+        try:
+            exec_skips.extend(skips)
+        except (AttributeError, TypeError):
+            pass
+
+
 def _ensure_late_rule_refs(exec_ctx, target, exec_skips):
     """Issue #134: repair phon-rule `InputPOSesRC` and adhoc-prohibition
     member chains AFTER the leaf-dispatch loop (their targets -- POS,
@@ -1250,6 +1278,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Issue #134: phon-rule InputPOSesRC + adhoc member chains, after every
     # category (POS / STEMS dispatch after the rules that reference them).
     _ensure_late_rule_refs(exec_ctx, target, _exec_skips)
+    _ensure_ref_repoint(exec_ctx, target, _exec_skips)
 
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check
