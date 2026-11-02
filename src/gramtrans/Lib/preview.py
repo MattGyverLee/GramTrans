@@ -23,6 +23,7 @@ if __package__:
     from .models import (
         CategoryScope,
         ClosureEdge,
+        ConflictMode,
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
@@ -50,6 +51,7 @@ else:
     from models import (
         CategoryScope,
         ClosureEdge,
+        ConflictMode,
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
@@ -467,6 +469,44 @@ def _materialise_closure_edges(visit_order, pulled_in_by, registry) -> tuple:
                 verified_by=verified_by,
             ))
     return tuple(edges)
+
+
+def _link_mode_skip(result, selection):
+    """Issue #22 Part 3 (preview/move agreement under LINK).
+
+    A GUID-matched ``write_mode="merge"`` overwrite is what the category
+    planners emit whenever source and target fields differ; it is the right
+    plan under UPDATE (Merge). Under ``ConflictMode.LINK`` Move writes nothing
+    to an existing item (``transfer.execute``: "LINK mode -- item present, no
+    field writes"), so Preview must not promise the merge. Returns a
+    ``Skip(ALREADY_PRESENT_BY_GUID)`` that says the item is linked and that
+    the compared differences are deliberately not written, or ``None`` when
+    the overwrite must stay in the plan (any other mode, or a match that is
+    not a plain GUID merge: natural-key matches carry the identity the
+    executor resolves references through, and other write modes are not
+    field merges).
+    """
+    if getattr(result, "write_mode", "") != "merge":
+        return None
+    if getattr(result, "match_via", "guid") != "guid":
+        return None
+    try:
+        mode = selection.conflict_mode_for(result.category)
+    except Exception:  # noqa: BLE001 -- unknown category: leave the plan alone
+        return None
+    if mode != ConflictMode.LINK:
+        return None
+    return Skip(
+        category=result.category,
+        source_guid=result.source_guid,
+        reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+        detail=(
+            f"GUID {str(result.source_guid)[:8]}... present in target; LINK "
+            "mode links by GUID and writes no fields, so the differences "
+            f"found are NOT applied ({result.summary})"
+        ),
+    )
+
 
 
 def _walk_verified_closure(context, selection, actions, overwrites) -> tuple:
@@ -1518,7 +1558,11 @@ def build_run_plan(
             if isinstance(result, Skip):
                 skips.append(result)
             elif isinstance(result, PlannedOverwrite):
-                overwrites.append(result)
+                _linked = _link_mode_skip(result, selection)
+                if _linked is not None:
+                    skips.append(_linked)
+                else:
+                    overwrites.append(result)
             elif isinstance(result, (PlannedAction, CreateDefinitionAction)):
                 # CreateDefinitionAction (custom-field schema create) is a
                 # standalone dataclass, NOT a PlannedAction subclass. Without
