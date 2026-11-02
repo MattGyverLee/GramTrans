@@ -3932,13 +3932,21 @@ DROP_SEVERITIES = ("info", "warning")
 DROP_ORIGIN_PREVIEW_TEXTS = "preview:texts"
 
 
-def move_blind_plan_drops(plan) -> tuple:
+def move_blind_plan_drops(plan, skipped_text_guids=()) -> tuple:
     """Issue #167: the `plan.dropped_items` a Move never re-emits itself --
     the Preview-decided text-walk drops (`origin == DROP_ORIGIN_PREVIEW_TEXTS`).
     Every other plan drop is re-decided at Move, so folding it would report a
-    drop Move may have resolved."""
-    return tuple(d for d in (getattr(plan, "dropped_items", ()) or ())
-                 if getattr(d, "origin", "") == DROP_ORIGIN_PREVIEW_TEXTS)
+    drop Move may have resolved.
+
+    Issue #192: a drop whose owning text (`text_guid`) is in
+    `skipped_text_guids` is NOT carried -- Move skipped that whole text, and
+    its Skip already says so. Records with no `text_guid` are always carried."""
+    skipped = {str(g).lower() for g in (skipped_text_guids or ()) if g}
+    return tuple(
+        d for d in (getattr(plan, "dropped_items", ()) or ())
+        if getattr(d, "origin", "") == DROP_ORIGIN_PREVIEW_TEXTS
+        and not (skipped and str(getattr(d, "text_guid", "") or "").lower()
+                 in skipped))
 
 
 @dataclass(frozen=True)
@@ -4024,6 +4032,10 @@ class DroppedItemRecord:
     and from equality, so a stamped record still equals (and de-duplicates
     against) the same drop without a stamp.
 
+    text_guid (issue #192): source GUID of the text whose walk decided a
+    `preview:texts` drop ("" otherwise). Lets Move leave out the planned drops
+    of a text it skipped whole. Provenance only (compare=False).
+
     relocated (issue #169): True for a `relocated:` record (#158) -- text that
     was NOT lost but written into the target default analysis writing system
     because none of its source writing systems exists in the target. It is a
@@ -4042,6 +4054,7 @@ class DroppedItemRecord:
     severity: str = "info"
     origin: str = field(default="", compare=False)
     relocated: bool = False
+    text_guid: str = field(default="", compare=False)
 
     def __post_init__(self) -> None:
         if not self.owner_kind:
