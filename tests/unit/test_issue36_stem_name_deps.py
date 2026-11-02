@@ -150,6 +150,15 @@ def test_owner_pos_rows_introduce_no_cycle():
     not a source of any owner-POS row either."""
     graph: dict = {}
     for row in CLOSURE_EDGES_VERIFIED.values():
+        # Issue #138: INFLECTION_FEATURES <-> FEATURE_STRUCT_TYPES is a
+        # DELIBERATE 2-cycle (#109 feature -> type, #138 type -> features).
+        # `closure.walk` has a visited set, so it terminates; it is excluded
+        # here and its termination is asserted in
+        # `test_feature_type_two_cycle_walk_terminates`.
+        if (row["category"], row["dependency_category"]) == (
+                GrammarCategory.FEATURE_STRUCT_TYPES,
+                GrammarCategory.INFLECTION_FEATURES):
+            continue
         graph.setdefault(row["category"], set()).add(row["dependency_category"])
 
     assert GrammarCategory.GRAM_CATEGORIES not in graph
@@ -173,12 +182,25 @@ def test_owner_pos_rows_introduce_no_cycle():
     # Issue #109 registered INFLECTION_FEATURES -> FEATURE_STRUCT_TYPES, so
     # INFLECTION_FEATURES is now a source; FEATURE_STRUCT_TYPES (the sink,
     # whose `FeaturesRS` points back at features) must stay a non-source or
-    # that edge would close a cycle.
+    # that edge would close a cycle (except the audited #138 reverse arrow,
+    # excluded from `graph` above).
     pos_far = {GrammarCategory.FEATURE_STRUCT_TYPES}
     produced = gram_categories_dependencies(
         SimpleNamespace(DefaultFeaturesOA=None))
     assert produced == ()
     assert not (pos_far & set(graph))
+
+
+def test_feature_type_two_cycle_walk_terminates():
+    """#109 + #138: feature -> type -> feature is a cycle in the pull-in graph;
+    the walk must visit each node once and not loop."""
+    feat = (GrammarCategory.INFLECTION_FEATURES, "f1")
+    typ = (GrammarCategory.FEATURE_STRUCT_TYPES, "t1")
+    graph = {feat: (typ,), typ: (feat,)}
+    order, pulled = closure.walk([feat], lambda c, g: graph.get((c, g), ()))
+    assert order == (feat, typ)
+    assert pulled[feat] == () and pulled[typ] == (feat,)
+    assert len(closure.topological(order, pulled)) == 2
 
 
 def test_walk_with_owner_pos_terminates_when_pos_is_also_selected(monkeypatch):

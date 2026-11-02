@@ -515,6 +515,9 @@ class TestClosureRegistryShipsEmpty:
             DependencyKind.POS_INFLECTABLE_FEAT_TO_POS,
             # Issue #109.
             DependencyKind.INFLECTION_FEATURE_TO_STRUCT_TYPE,
+            # Issue #138.
+            DependencyKind.STRUCT_TYPE_TO_INFL_FEATURE,
+            DependencyKind.PHON_STRUCT_TYPE_TO_PHON_FEATURE,
         }
         categories_mod._closure_registry_by_category(registry)
         for kind, entry in registry.items():
@@ -546,7 +549,10 @@ class TestClosureRegistryShipsEmpty:
                               GrammarCategory.INFLECTION_CLASSES,
                               GrammarCategory.POS_INFLECTABLE_FEATS,
                               # Issue #109.
-                              GrammarCategory.INFLECTION_FEATURES}
+                              GrammarCategory.INFLECTION_FEATURES,
+                              # Issue #138.
+                              GrammarCategory.FEATURE_STRUCT_TYPES,
+                              GrammarCategory.PHON_FEAT_TYPES}
         dep_fn = categories_mod.closure_dependencies_for(_ctx())
         for cat in GrammarCategory:
             if cat in registered:

@@ -2244,6 +2244,40 @@ def count_complex_feature_type_ra_wires(plan: RunPlan) -> int:
                if r.strip().startswith("Wire"))
 
 
+def render_ref_repoints(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #15 / spec 041 (Principle III): render the stale-reference
+    re-point rows, from the SAME `categories.compute_ref_repoints` the Move
+    pass applies. The number of **Re-point** rows equals the writes Move
+    makes. `()` unless `selection.repoint_stale_refs` is on."""
+    selection = getattr(plan, "selection", None)
+    if not getattr(selection, "repoint_stale_refs", False):
+        return ()
+    if __package__:
+        from . import categories as _cats
+    else:
+        import categories as _cats  # type: ignore
+    ctx = getattr(plan, "context", None)
+    try:
+        rows = _cats.compute_ref_repoints(
+            ctx.source_handle, ctx.target_handle, selection)
+    except Exception:  # noqa: BLE001 -- render must never break Preview
+        return ("  Stale reference re-point: REPORT (could not classify)",)
+    lines: List[str] = ["  Stale reference re-point (MsEnvPartOfSpeechRA):"]
+    for g, label, outcome, _ref, _tgt in rows:
+        if outcome == _cats.REPOINT:
+            lines.append(f"    Re-point  allomorph {label or g} ({g})")
+        else:
+            lines.append(f"    SKIP ({_cats.REPOINT_REASONS[outcome]})  "
+                         f"allomorph {label or g} ({g})")
+    return tuple(lines) if len(lines) > 1 else ()
+
+
+def count_ref_repoints(plan: RunPlan) -> int:
+    """Number of "Re-point" rows Preview promises Move."""
+    return sum(1 for r in render_ref_repoints(plan)
+               if r.strip().startswith("Re-point"))
+
+
 def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
     """Issue #108 (Principle III): render `plan.struct_type_feature_refs` --
     one row per in-scope struct-type (both feature systems), classified by
@@ -2714,6 +2748,7 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_feature_category_links(plan))
         + tuple(render_complex_feature_type_refs(plan))
         + tuple(render_struct_type_features_rs(plan))
+        + tuple(render_ref_repoints(plan))
         + tuple(render_sense_list_reference_decisions(plan))
         + tuple(render_other_reference_decisions(plan))
         + tuple(render_reversal_and_text_decisions(plan))
@@ -3522,12 +3557,11 @@ def _populate_msa_feat_struc_bindings(source, bindings: dict) -> None:
         on all three pairs (feature 037); `PhPhoneme` transfers for CREATED
         phonemes and not for those matched to the starter inventory, which is
         an enrichment gap owned by T121, not a missing create path.
-      * `PartOfSpeech.ReferenceForms` (5049010) and `CmAnnotation.Features`
-        (34008) -- `ReferenceFormsOC` already has a create path in
-        `transfer.py` that is documented to produce an empty shell (T045's
-        acknowledged depth limit), and annotations are outside this feature's
-        Assumptions. Both are left to be ruled on explicitly rather than
-        half-transferred here.
+      * `PartOfSpeech.ReferenceForms` (5049010) -- issue #137: its structure
+        is filled by `transfer._complete_reference_form_structs` (post-pass,
+        reusing `_read_feat_struc_live` / the shared resolver), not by this
+        producer. `CmAnnotation.Features` (34008) -- annotations are outside
+        this feature's Assumptions; left to be ruled on explicitly.
 
     Keyed by `feat_struc_binding_key(owner_guid, attr)`; see that function for
     why the owner GUID alone would have been a silent bug.
