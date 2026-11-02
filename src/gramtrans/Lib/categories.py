@@ -5457,17 +5457,12 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
     _copy_supplemental_scalars_ctx(
         class_name, src_rule, new_rule, context, ws_mapping, src_guid)
 
-    # Wire StratumRA manually (mirrors phonological_rules_execute_action)
-    try:
-        src_stratum = getattr(src_rule, "StratumRA", None)
-        if src_stratum is not None:
-            src_stratum_guid = str(ICmObject(src_stratum).Guid).lower()
-            for tgt_stratum in target.Strata.GetAll():
-                if str(ICmObject(tgt_stratum).Guid).lower() == src_stratum_guid:
-                    new_rule.StratumRA = tgt_stratum
-                    break
-    except (AttributeError, TypeError):
-        pass
+    # StratumRA (FR-336) -- shared never-silent helper (issue #132 batch 2).
+    _wire_stratum(
+        src_rule, new_rule, target, context,
+        category=GrammarCategory.ADHOC_COMPOUND_RULES,
+        source_guid=src_guid,
+    )
 
     # --- T009: adhoc reference wiring ----------------------------------------
     if class_name == "MoAlloAdhocProhib":
@@ -9784,8 +9779,9 @@ def _copy_supplemental_scalars(owner_class, src, new, context, ws_map, dropped,
     else:  # pragma: no cover
         from scalar_fields import copy_supplemental_fields  # type: ignore
     copy_supplemental_fields(
-        owner_class, src, new, source=context.source_handle,
-        target=context.target_handle, ws_map=ws_map, dropped=dropped,
+        owner_class, src, new, source=getattr(context, "source_handle", None),
+        target=getattr(context, "target_handle", None), ws_map=ws_map,
+        dropped=dropped,
         owner_guid=owner_guid, owner_label=_owner_label_for(owner_class, src))
 
 

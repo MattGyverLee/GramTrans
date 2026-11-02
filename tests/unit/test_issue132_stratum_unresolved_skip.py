@@ -92,3 +92,23 @@ def test_wire_stratum_no_source_stratum_is_silent(_fake_lcm) -> None:
     categories._wire_stratum(src, new, target, ctx, source_guid="msa-1")
 
     assert skips == []
+
+
+def test_wire_stratum_honors_explicit_category(_fake_lcm) -> None:
+    from gramtrans.Lib import categories
+
+    src = _Piece("rule-1", _Stratum("stratum-missing"))
+    new = _Piece("rule-1")
+    target = _Target([])
+    skips = []
+    ctx = type("Ctx", (), {"_exec_skips": skips})()
+
+    categories._wire_stratum(
+        src, new, target, ctx,
+        category=GrammarCategory.ADHOC_COMPOUND_RULES,
+        source_guid="rule-1",
+    )
+
+    assert len(skips) == 1
+    assert skips[0].category == GrammarCategory.ADHOC_COMPOUND_RULES
+    assert skips[0].source_guid == "rule-1"
