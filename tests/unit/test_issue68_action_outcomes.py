@@ -63,6 +63,8 @@ def _quiet_tail(monkeypatch):
     monkeypatch.setattr(categories, "reproduce_reversal_entries",
                         lambda *a, **k: None)
     monkeypatch.setattr(transfer, "_ensure_171_subpass", lambda *a, **k: None)
+    monkeypatch.setattr(categories, "_run_late_rule_ref_repair_pass",
+                        lambda *a, **k: [])
     monkeypatch.setattr(transfer, "_ensure_owner_feat_strucs",
                         lambda *a, **k: None)
 
