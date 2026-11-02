@@ -32,7 +32,7 @@ from gramtrans.Lib.selection import (
     phonology_uses_untraversed_rules,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
 
 
 # ---------------------------------------------------------------------------

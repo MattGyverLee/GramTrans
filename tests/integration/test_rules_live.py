@@ -40,7 +40,7 @@ from gramtrans.Lib.models import (
     WSMapping,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
 
 # ---------------------------------------------------------------------------
 # Source / target fixture helpers

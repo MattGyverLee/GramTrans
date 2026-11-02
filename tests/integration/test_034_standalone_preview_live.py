@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
 
 SOURCE_PROJECT = "Ejagham Mini"
 TARGET_PROJECT = "Ejagham Full GT-Test"

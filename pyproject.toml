@@ -103,4 +103,5 @@ python_files = [
 ]
 markers = [
     "integration: requires the FlexTools host + a live LCM project pair (use `-m 'not integration'` to skip)",
+    "requires_live_project: opens real FieldWorks projects; run only with FLEXLIBS_REQUIRE_LIVE=1 (use `-m requires_live_project` to select)",
 ]

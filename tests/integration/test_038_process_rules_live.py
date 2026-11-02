@@ -48,7 +48,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
 
 _SNAPSHOT = (Path(__file__).parent / "_snapshots"
              / "process-rules-038-mbugwe.json")

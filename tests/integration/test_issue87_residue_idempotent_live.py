@@ -46,7 +46,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
 
 if os.environ.get("FLEXLIBS_REQUIRE_LIVE") != "1":
     pytest.skip("FLEXLIBS_REQUIRE_LIVE != 1; live write-path gate not requested.",

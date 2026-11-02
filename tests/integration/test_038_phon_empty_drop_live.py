@@ -59,7 +59,7 @@ from gramtrans.Lib.selection import (
     _PHON_CATEGORY_ACCESSORS, build_phonology_inventory,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
 
 PROJECTS_ROOT = Path("C:/ProgramData/SIL/FieldWorks/Projects")
 
