@@ -1208,6 +1208,34 @@ def expand_lexicon_categories(selection: Selection):
     return dataclasses.replace(selection, categories=categories), (note,)
 
 
+def lexicon_pick_notes(selection: Selection) -> tuple:
+    """Issue #117: say, in Preview, whether AFFIXES / STEMS are narrowed.
+
+    Per-item picks (`affix_picks` / `stem_picks` / `leaf_item_picks`) filter
+    `affixes_enumerate_source` / `stems_enumerate_source`. A selected lexicon
+    carrier with NO picks transfers every entry; that is stated, so an empty
+    pick set is never mistaken for "nothing picked, nothing transferred" or
+    for a filter that silently failed.
+    """
+    notes = []
+    for cat, noun in ((GrammarCategory.AFFIXES, "affix"),
+                      (GrammarCategory.STEMS, "stem")):
+        if not selection.is_on(cat):
+            continue
+        picks = selection.leaf_picks_for(cat)
+        if picks is None:
+            notes.append(
+                f"{cat.value}: no {noun} picks set -- every {noun} entry in "
+                "the source is planned")
+        else:
+            n = len(picks)
+            notes.append(
+                f"{cat.value}: only the {n} picked {noun} "
+                f"entr{'y' if n == 1 else 'ies'} planned (plus the "
+                "dependencies they need); other source entries are left out")
+    return tuple(notes)
+
+
 # Issue #126: mirrors `transfer._ENRICHMENT_CATEGORIES` (POS is aliased to
 # gram_categories); the categories whose ADD runs `_fill_created_pos_collections`.
 _POS_ADD_CATEGORIES = frozenset({
@@ -1277,6 +1305,7 @@ def build_run_plan(
     effective selection and a note saying so (`RunPlan.category_notes`).
     """
     selection, _category_notes = expand_lexicon_categories(selection)
+    _category_notes = tuple(_category_notes) + lexicon_pick_notes(selection)
     actions: List[PlannedAction] = []
     skips: List[Skip] = []
     overwrites: List[PlannedOverwrite] = []

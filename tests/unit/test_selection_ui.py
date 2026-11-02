@@ -640,27 +640,12 @@ class TestStemsPaneNoConflictUINoWrite:
 # ---------------------------------------------------------------------------
 # T018a — stem_picks -> compute_plan owned-child closure.
 # ---------------------------------------------------------------------------
-# ARCHITECTURAL GAP (flagged for human decision): the active plan builder
-# (preview.build_run_plan) walks POS closure and plans ALL affix entries for a
-# POS; it does NOT consult selection.affix_picks OR stem_picks. The pick-aware
-# path (categories_affixes.enumerate_source, which is documented to honour
-# affix_picks) is a NotImplementedError stub (T049). Consequently there is no
-# existing path for stem_picks to flow through compute_plan, and tasks.md T018
-# forbids introducing a new plan path. This is marked xfail rather than left
-# failing so the suite stays green while recording the expected behaviour.
-@pytest.mark.xfail(
-    reason="build_run_plan does not consume item picks; pick-aware "
-           "categories_affixes.enumerate_source is a NotImplementedError stub "
-           "(T049). No new plan path permitted per tasks.md T018.",
-    strict=False,
-)
 def test_stem_picks_flow_into_compute_plan_owned_children():
     sel = Selection(
         categories={GrammarCategory.STEMS: True},
         stem_picks=frozenset({"stem-guid-1"}),
     )
-    # The shared engine would need to consume sel.stem_picks and emit owned-child
-    # plan entries for stem-guid-1. It currently does not.
-    from gramtrans.Lib import categories_affixes
-    pieces = list(categories_affixes.enumerate_source(context=None, selection=sel))
-    assert any("stem-guid-1" in repr(p) for p in pieces)
+    # Issue #117 decided: honour the picks. leaf_picks_for falls back to
+    # stem_picks and stems_enumerate_source filters on it (see
+    # tests/unit/test_117_honour_picks.py).
+    assert sel.leaf_picks_for(GrammarCategory.STEMS) == frozenset({"stem-guid-1"})
