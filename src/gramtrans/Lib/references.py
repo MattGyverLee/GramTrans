@@ -62,6 +62,11 @@ else:
 # data-model.md's single worked example (`lp.LexDbOA.SenseTypesOA`) is NOT a
 # blanket rule. Each row below uses the exact accessor confirmed live.
 
+#: `ItemClsid` of the morph-types list (`LexDb.MorphTypesOA`) -- see the issue
+#: #119 note in `decide_reference`.
+_MORPH_TYPE_CLSID = 5042
+
+
 def _lp(target):
     """Return the target's ILangProject (`target.Cache.LangProject`)."""
     return target.Cache.LangProject
@@ -823,6 +828,33 @@ def decide_reference(source_item, target, spec: "ReferenceFieldSpec", cache: dic
         )
 
     target_item = _find_in_possibility_list(target_list, guid)
+
+    if target_item is None and getattr(target_list, "ItemClsid", None) == _MORPH_TYPE_CLSID:
+        # Issue #119 decision: a morph type absent from the target is REPORTED,
+        # never created. The morph-types list is FLEx's fixed canonical set (all
+        # 19 GUIDs are byte-identical across every project measured; the FLEx
+        # UI offers no way to add one), and CREATE here copies only
+        # Name/Abbreviation/Description -- it would lose the Prefix/Postfix
+        # markers and SecondaryOrder that DEFINE a morph type, minting a
+        # degraded type the parser and the affix/stem split cannot interpret.
+        # Same stance as `matcher.NATURAL_KEY_BINDINGS["MoMorphType"]`
+        # (create_on_miss=False).
+        dropped = DroppedItemRecord(
+            owner_kind=spec.owner_class,
+            owner_guid="",
+            owner_label="",
+            field_name=spec.field_name,
+            item_name=_item_label(source_item),
+            item_guid=guid,
+            reason=(
+                "morph type not in target's morph-types list; not created "
+                "(the list is FLEx's fixed set and a created copy would lose "
+                "its Prefix/Postfix markers)"
+            ),
+        )
+        return ReferenceDecision(
+            action=ReferenceAction.REPORT_DROPPED, source_item=source_item, dropped=dropped,
+        )
 
     if target_item is None:
         # CREATE. `ancestors_to_create` is always populated so `apply_reference`
