@@ -3568,19 +3568,40 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                     writes += 1
                     log.info("struct-type %s: FeaturesRS repaired, inserted "
                              "%s", type_guid, inserted)
-            if dropped is not None:
-                for g, label in unresolved:
+            if unresolved:
+                for g, _label in unresolved:
                     log.warning("struct-type %s: FeaturesRS member %s has no "
                                 "target defn in %s.FeaturesOC -- reported as "
                                 "dropped", type_guid, g, attr)
-                    _append_dropped_once(
-                        dropped, _features_rs_drop(type_guid, ref, g, label))
-            for g in target_only:
+                if dropped is not None:
+                    for g, label in unresolved:
+                        _append_dropped_once(
+                            dropped,
+                            _features_rs_drop(type_guid, ref, g, label))
+                else:
+                    # No drop sink on this context: a log line alone would let
+                    # Preview show drops the Move report never mentions.
+                    # Surface them as ONE Skip per type instead (issue #138).
+                    skips.append(Skip(
+                        category=types_cat, source_guid=type_guid,
+                        reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                        detail=(f"struct-type {type_guid} FeaturesRS: "
+                                f"{len(unresolved)} member feature "
+                                f"definition(s) not in the target {attr}."
+                                f"FeaturesOC ("
+                                f"{', '.join(g for g, _ in unresolved)}); "
+                                "FeaturesRS left incomplete"),
+                    ))
+            if target_only:
+                # One Skip per type, not per member (issue #138): a target-only
+                # member is re-reported on every in-scope run, so per-member
+                # rows drown the report.
                 skips.append(Skip(
                     category=types_cat, source_guid=type_guid,
                     reason=SkipReason.NEEDS_MANUAL,
                     detail=(f"target struct-type {type_guid} FeaturesRS holds "
-                            f"{g}, which the source type does not; preserved, "
+                            f"{len(target_only)} member(s) the source type "
+                            f"does not ({', '.join(target_only)}); preserved, "
                             "not removed (review manually)"),
                 ))
         except Exception as exc:  # noqa: BLE001 -- one bad type must not abort
