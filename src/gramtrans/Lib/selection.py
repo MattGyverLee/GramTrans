@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import collections
 import logging as _logging
+import unicodedata
 from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 
@@ -108,6 +109,17 @@ def _partition_entries(entries) -> Tuple[List, List]:
 # ============================================================================
 # POS-Grouped Affix Inventory (specs/008-affix-pos-picker, T008-T010)
 # ============================================================================
+
+
+def _norm_form(text: str) -> str:
+    """Canonical key for form/label matching (issue #22 audit follow-up).
+
+    NFC first, then strip + casefold: a source "é" (decomposed) and a
+    target "é" (precomposed) are the same word. Without the NFC step they
+    never matched, and real-data lexicons mix both spellings.
+    """
+    return unicodedata.normalize("NFC", text).strip().casefold()
+
 
 @dataclass(frozen=True)
 class AffixRow:
@@ -442,7 +454,7 @@ def _build_target_sets(
             target_guids.add(g)
         f = _best_form(entry)
         if f and f != "?":
-            norm = f.strip().casefold()
+            norm = _norm_form(f)
             target_forms.add(norm)
             if g is not None:
                 cand = SimilarCandidate(
@@ -485,7 +497,7 @@ def _suggested_target_guid_for(
     """
     if not form or form == "?":
         return None
-    cands = form_to_candidates.get(form.strip().casefold())
+    cands = form_to_candidates.get(_norm_form(form))
     if not cands:
         return None
     return cands[0].target_guid
@@ -496,7 +508,7 @@ def _entry_status(entry_guid: str, form: str,
     """Compute FR-018 status for one source affix entry."""
     if entry_guid in target_guids:
         return "in_target"
-    normalized = form.strip().casefold()
+    normalized = _norm_form(form)
     if normalized and normalized in target_forms:
         return "similar"
     return "new"
@@ -2653,7 +2665,7 @@ def _phon_target_sets(target, accessor: str, *,
             guids.add(g)
             lbl = _phon_label(obj, phoneme=phoneme)
             if lbl and lbl != "?":
-                norm = lbl.strip().casefold()
+                norm = _norm_form(lbl)
                 labels.add(norm)
                 h = _hvo(obj)
                 prev = best.get(norm)
@@ -2808,12 +2820,12 @@ def build_phonology_inventory(source, target=None, *,
                 if target is not None:
                     if g in tgt_guids:
                         status = "in_target"
-                    elif lbl.strip().casefold() in tgt_labels:
+                    elif _norm_form(lbl) in tgt_labels:
                         status = "similar"
                         # FR-006: record the matched target GUID (lowest-HVO
                         # pick from the collision-aware label->guid map).
                         matched_target_guid = tgt_label_to_guid.get(
-                            lbl.strip().casefold())
+                            _norm_form(lbl))
                     else:
                         status = "new"
                 rows.append(PhonologyRow(
@@ -3089,7 +3101,7 @@ def _rule_target_status(obj_guid: str, target_guids: set,
     if obj_guid in target_guids:
         return "IN TARGET"
     if target_labels is not None and obj_label:
-        if obj_label.strip().casefold() in target_labels:
+        if _norm_form(obj_label) in target_labels:
             return "SIMILAR"
     return "NEW"
 
@@ -3177,7 +3189,7 @@ def _rules_target_guid_label_sets(target):
             adhoc_guids.add(g)
             lbl = _rule_label(obj)
             if lbl:
-                adhoc_labels.add(lbl.strip().casefold())
+                adhoc_labels.add(_norm_form(lbl))
     except Exception:  # noqa: BLE001
         pass
 
@@ -3188,7 +3200,7 @@ def _rules_target_guid_label_sets(target):
             compound_guids.add(g)
             lbl = _rule_label(obj)
             if lbl:
-                compound_labels.add(lbl.strip().casefold())
+                compound_labels.add(_norm_form(lbl))
     except Exception:  # noqa: BLE001
         pass
 
