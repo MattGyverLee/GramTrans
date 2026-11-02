@@ -256,9 +256,12 @@ def test_failed_plan_assembly_renders_nothing(qapp, monkeypatch,
     assert "SHOULD-NOT-APPEAR" not in _extra_text(page)
 
 
-def test_dry_run_render_failure_does_not_leave_execute_armed(qapp, monkeypatch):
-    """A raising render must not cache the new plan or leave Execute enabled."""
-    new_plan, old_plan = object(), object()
+def test_dry_run_render_failure_becomes_a_warning_line(qapp, monkeypatch):
+    """Issue #164: a raising render no longer aborts the dry run. The plan is
+    still cached (the preview itself succeeded) and the failure is shown as a
+    warning line in the stats panel instead of a Qt slot exception."""
+    new_plan = object()
+    shown = []
     monkeypatch.setattr(sw, "_safe_compute_wizard_plan",
                         lambda wizard: (new_plan, _report()))
 
@@ -268,15 +271,14 @@ def test_dry_run_render_failure_does_not_leave_execute_armed(qapp, monkeypatch):
     monkeypatch.setattr(sw, "render_preview_extra_lines", _boom)
 
     page = _finish_page(_Wizard(context=_ctx()))
-    page._cached_plan = old_plan  # a stale plan from an earlier dry run
+    monkeypatch.setattr(page._stats, "set_report",
+                        lambda report, extra=(): shown.append(tuple(extra)))
     page._modify_allowed = True
     page._move_done = False
-    page._refresh_execute_state()
-    assert page._move_btn.isEnabled()
 
-    with pytest.raises(RuntimeError):
-        page._on_dry_run()
+    page._on_dry_run()  # must not raise
 
-    assert page._cached_plan is not new_plan
-    assert page._cached_plan is None
-    assert not page._move_btn.isEnabled()
+    assert page._cached_plan is new_plan
+    assert len(shown) == 1
+    assert any(ln.startswith("[WARN]") and "render failed" in ln
+               for ln in shown[0]), shown
