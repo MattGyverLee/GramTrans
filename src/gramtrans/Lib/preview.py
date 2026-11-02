@@ -2119,6 +2119,27 @@ def _target_feature_present(target, plan, feature_guid) -> bool:
         return False
 
 
+def _target_pos_present(target, plan, pos_guid, *, src_pos=None,
+                        source_handle=None) -> bool:
+    """Issue #178 item 4: will Move be able to resolve this POS? True when this
+    run plans to create it (GRAM_CATEGORIES action) or the target already holds
+    it (GUID or natural key, the link pass's own resolver). Fail-soft: a probe
+    that raises answers True so Preview never over-reports a drop."""
+    pg = str(pos_guid).lower()
+    for a in getattr(plan, "actions", ()) or ():
+        if (getattr(a, "category", None) == GrammarCategory.GRAM_CATEGORIES
+                and str(getattr(a, "source_guid", "")).lower() == pg):
+            return True
+    if target is None:
+        return True
+    try:
+        return _target_pos_for_source_guid(
+            target, pos_guid, src_pos=src_pos,
+            source_handle=source_handle) is not None
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def render_feature_category_links(plan: RunPlan) -> Tuple[str, ...]:
     """T010 (US1, Principle III / VR-5 / SC-004): render `plan.feature_category_
     links` for the Preview pane -- one row per (POS, feature) association with a
@@ -2149,11 +2170,22 @@ def render_feature_category_links(plan: RunPlan) -> Tuple[str, ...]:
             already = present is not None and str(feature_guid).lower() in present
             if already:
                 action = "SKIP (already linked)"
+            elif not _target_pos_present(
+                    target, plan, pos_guid, src_pos=src_pos,
+                    source_handle=source):
+                # Issue #178 item 4: neither in the target nor planned, so
+                # Move gives a POS-unresolved skip, not a link.
+                action = "DROP (part of speech absent from target)"
             elif _target_feature_present(target, plan, feature_guid):
                 action = "Link"
             else:
                 # Move reports this pair as a dependency drop and writes
                 # nothing; Preview must not promise a Link it cannot make.
+                # Known limit (issue #178 item 4, accepted): a feature that is
+                # PLANNED here counts as present, but if its create fails in
+                # Move the link becomes a reported dependency drop. Preview
+                # cannot know a create will fail without running it; the
+                # failure is reported by Move (DroppedItemRecord), never silent.
                 action = "DROP (feature absent from target)"
             lines.append(f"    {action}  POS {pos_guid} <- feature {feature_guid}")
     return tuple(lines)

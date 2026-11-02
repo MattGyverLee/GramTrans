@@ -114,7 +114,7 @@ class _Feat:
     def __init__(self, guid):
         self.guid = guid
         self.Guid = guid
-        self.ClassName = "FsFeatDefn"
+        self.ClassName = "FsClosedFeature"
 
 
 class _PosAccessor:
