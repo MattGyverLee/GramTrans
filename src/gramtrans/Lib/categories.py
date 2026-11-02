@@ -8221,9 +8221,7 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
 
     # Issue #141: name the relation so Preview can show it -- the relation
     # type's label, the same one the drop records use.
-    src_type = getattr(src_relation, "Owner", None)
-    if src_type is not None:
-        src_type = _as_lex_ref_type(src_type) or src_type
+    src_type = _relation_type_of(src_relation)
     record = ReferenceDecisionRecord(
         owner_kind="LexReference",
         owner_guid=rel_guid,
@@ -8231,6 +8229,7 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
         action=ReferenceAction.CREATE,
         item_name=_lex_ref_type_label(src_type),
         item_guid=rel_guid,
+        type_guid=_guid_str_from(src_type) if src_type is not None else "",
     )
     if rel_guid:
         planned[rel_guid] = record
@@ -8280,6 +8279,17 @@ def _as_lex_ref_type(obj):
         return ILexRefType(obj)
     except Exception:
         return None
+
+
+def _relation_type_of(src_relation):
+    """The relation's owning `LexRefType`, cast via `_as_lex_ref_type` (raw
+    `Owner` when no cast is possible), or `None`. Single helper for the
+    Preview planners so the type GUID is derived the same way everywhere
+    (issue #165)."""
+    owner = getattr(src_relation, "Owner", None)
+    if owner is None:
+        return None
+    return _as_lex_ref_type(owner) or owner
 
 
 def _iter_lex_ref_types(ref_list):
@@ -8402,11 +8412,10 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
     Preview/Move-each-get-their-own-resolver_cache convention), so the two
     modes converge on the same relations in, same decisions out. Returns
     the list of `ReferenceDecisionRecord` for every relation that WOULD be
-    reproduced -- callers fold this into `RunPlan`-level bookkeeping
-    (`Lib/preview.py` currently threads reference decisions per-action; this
-    single pass is not owned by any one action, so its records are surfaced
-    via `context._dropped`/a dedicated plan-level collector at the call
-    site rather than one action's `reference_decisions` tuple).
+    reproduced. This single pass is not owned by any one action, so
+    `Lib/preview.py.build_run_plan` folds the list into
+    `RunPlan.lexical_relation_decisions` rather than one action's
+    `reference_decisions` tuple (drops go to `dropped`).
 
     Issue #142: a relation type absent from the target (predicted
     `PLAN_TIME_PENDING`, which Move will CREATE) also yields one
@@ -8427,7 +8436,7 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
             source, copy_set, dropped):
         record = plan_lexical_relation_decision(
             src_relation, context, resolver_cache, dropped)
-        src_type = getattr(src_relation, "Owner", None)
+        src_type = _relation_type_of(src_relation)
         type_guid = _guid_str_from(src_type) if src_type is not None else ""
         if type_guid in pending and type_guid not in announced:
             announced.add(type_guid)

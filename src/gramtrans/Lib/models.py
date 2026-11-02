@@ -4307,6 +4307,7 @@ class ReferenceDecisionRecord:
     item_guid: str = ""
     new_ancestors: tuple = ()  # tuple[tuple[str, str], ...]
     planned: bool = False  # issue #146: LINK produced from a PlannedCreate
+    type_guid: str = ""  # issue #165: LexReference records -- source GUID of the relation type
 
 
 # ============================================================================
