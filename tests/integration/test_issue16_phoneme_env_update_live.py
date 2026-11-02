@@ -131,10 +131,10 @@ class _UpdateRecorder:
             self.reached.append((ow.category.value, self._cur))
             return orig_exec(ow, *a, **kw)
 
-        def _apply(src_props, tgt_props, ops, tgt_obj, ws_map=None):
+        def _apply(src_props, tgt_props, ops, tgt_obj, ws_map=None, **kw):
             keys = sorted(compute_merge_fillable(src_props, tgt_props))
             self.written[self._cur] = keys
-            return orig_apply(src_props, tgt_props, ops, tgt_obj, ws_map=ws_map)
+            return orig_apply(src_props, tgt_props, ops, tgt_obj, ws_map=ws_map, **kw)
 
         monkeypatch.setattr(t, "_execute_update_semantic", _exec)
         monkeypatch.setattr(t, "apply_update_semantic", _apply)
