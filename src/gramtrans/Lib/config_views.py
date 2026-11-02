@@ -88,7 +88,7 @@ def _project_dir(project) -> str:
        .Path`, the `.fwdata` file path) -- the same accessor `Lib/api.py`
        already uses for schema-close diagnostics; its directory IS the
        project directory.
-    2. Duck-typed attributes mirroring `Lib/ui/main_window.py._safe_path`'s
+    2. Duck-typed attributes mirroring `Lib/ui/selection_wizard.py._safe_path`'s
        convention (`ProjectPath` / `ProjectFilename` / `ProjectFolder`):
        if the value looks like a file (has an extension), its directory is
        used; otherwise the value is assumed to already be the project

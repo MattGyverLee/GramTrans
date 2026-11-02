@@ -8751,7 +8751,7 @@ def reproduce_reversal_entries(context, tag, resolver_cache, dropped) -> None:
 
     Principle III (P0-2, feature-025 cycle-6 remediation): the SAME Add/Link
     decision this walk applies was already rendered on the Preview surface
-    the click before -- `Lib/ui/main_window.py._on_preview` calls
+    the click before -- `Lib/ui/selection_wizard.py._PageFinish._on_dry_run` calls
     `Lib/preview.py.render_preview_extra_lines(plan)` (which wraps
     `render_reversal_decisions`) and displays the result via `Lib/ui/
     stats_panel.py.StatsPanel.set_report`'s `extra_lines` parameter, BEFORE

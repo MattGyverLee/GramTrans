@@ -243,7 +243,7 @@ def _run_gui(project, report, modifyAllowed, QtWidgets, *,
     gate = resolve_gate(confirmation_gate)
     _log.debug("_run_gui: confirmation gate = %s", type(gate).__name__)
 
-    # Phase 3c: use the SelectionWizard (replaces main_window.MainWindow).
+    # Phase 3c: use the SelectionWizard (the old main_window.MainWindow was removed, #193).
     # Flat import (Lib/ui on sys.path) so the dual-mode guard takes its flat
     # branch; fall back to the package path for non-addsitedir hosts.
     try:

@@ -400,8 +400,8 @@ def test_the_package_source_scan_covers_every_module():
         assert ("# === %s ===" % p.name) in src, (
             "%s is missing from the package source scan" % p.name
         )
-    assert len(wizard_module_paths()) == 11, (
-        "expected the facade plus ten wizard_* modules; got %d"
+    assert len(wizard_module_paths()) == 12, (
+        "expected the facade plus eleven wizard_* modules; got %d"
         % len(wizard_module_paths())
     )
     # And it must contain real code, not just banners. 19 top-level classes at

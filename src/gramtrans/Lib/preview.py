@@ -1679,7 +1679,7 @@ def build_run_plan(
     # remediation -- the plain, non-directory-creating path helper), which
     # raises `ValueError` for a duck-typed test double that exposes none of
     # the expected accessors
-    # (`Lib/ui/main_window.py._safe_path`'s `ProjectPath`/`ProjectFilename`/
+    # (`Lib/ui/selection_wizard.py._safe_path`'s `ProjectPath`/`ProjectFilename`/
     # `ProjectFolder` convention, or the real `project.project.ProjectId
     # .Path`) -- e.g. `tests/unit/test_preview_no_writes.py`'s `_FakeProject`.
     # Swallowing that (and any other duck-typing gap) to an empty tuple
@@ -1981,7 +1981,7 @@ def render_reversal_decisions(plan: RunPlan) -> Tuple[str, ...]:
     This is a plain-text rendering surface (mirrors `report.
     render_text_summary`'s own line-based contract) -- wiring an actual
     interactive PyQt widget onto it is a separate UI concern, not part of
-    this feature's US1 scope (`Lib/ui/main_window.py`/the stats panel can
+    this feature's US1 scope (`Lib/ui/selection_wizard.py`/the stats panel can
     call this the same way they already consume `report.render_text_summary`
     for the run-report pane).
     """
@@ -2695,8 +2695,8 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
     """Compose the Preview-only extra lines -- the reversal Add/Link plan
     (`render_reversal_decisions`), the config-view Add/Overwrite/Skip
     list (`render_config_view_records`), and the feature->category link plan
-    (`render_feature_category_links`) -- that `Lib/ui/main_window.py.
-    _on_preview` displays alongside the existing stats-panel report text
+    (`render_feature_category_links`) -- that `Lib/ui/selection_wizard.py.
+    _PageFinish._on_dry_run` displays alongside the existing stats-panel report text
     BEFORE Move ever writes (Principle III).
 
     Before this fix neither render function had any call site in the
