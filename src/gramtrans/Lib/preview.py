@@ -2124,10 +2124,12 @@ def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
 # Issue #116: the sense fields whose resolver decisions the Preview pane
 # itemizes. Feature 030's two fields only -- they are the ones that can CREATE
 # new possibility-list items (thesaurus) or LINK project-level appendixes the
-# user may not know are shared. The 024 reference-field rows on the same
-# `PlannedAction.reference_decisions` tuple are deliberately not rendered here
-# (they include one owned-object CREATE row per example/pronunciation and
-# would swamp the pane); see the #116 implementation report.
+# user may not know are shared. The other reference-decision rows on the same
+# `PlannedAction.reference_decisions` tuple (they include one owned-object
+# CREATE row per example/pronunciation) are NOT itemized per row; issue #143
+# renders them as a per-(owner, field, action) count summary
+# (`render_other_reference_decisions`) and serializes every row in the run
+# report JSON.
 _SENSE_LIST_REF_FIELDS = ("AppendixesRC", "ThesaurusItemsRC")
 
 # Shared by the #116/#147 sense-list renderer and the #144 reversal/text
@@ -2370,6 +2372,42 @@ def _iter_reversal_pos_decisions(decisions):
         yield from _iter_reversal_pos_decisions(decision.sub_entry_decisions)
 
 
+def render_other_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #143 (Principle III): per-category SUMMARY of the reference
+    decisions on `PlannedAction` / `PlannedOverwrite.reference_decisions`
+    that no other renderer shows -- owned children, pictures, entry-ref
+    types, allomorph refs, relation types.
+
+    Design decision: a count per (owner kind, field, action), NOT one row per
+    decision. These rows are one-per-example/pronunciation/picture and would
+    swamp the pane; the complete per-row list is serialized in the run
+    report JSON (`reference_decisions`). Row count is bounded by the number
+    of distinct field names, so no cap is needed. The 030 sense appendix /
+    thesaurus fields are excluded (`render_sense_list_reference_decisions`
+    itemizes them). Returns `()` when there are none."""
+    counts: dict = {}
+    items = (tuple(getattr(plan, "actions", ()) or ())
+             + tuple(getattr(plan, "overwrites", ()) or ()))
+    for item in items:
+        for d in getattr(item, "reference_decisions", ()) or ():
+            if getattr(d, "field_name", "") in _SENSE_LIST_REF_FIELDS:
+                continue
+            act = getattr(getattr(d, "action", None), "value", "")
+            key = (getattr(d, "owner_kind", ""), getattr(d, "field_name", ""),
+                   act)
+            counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return ()
+    labels = dict(_REF_ACTION_LABELS)
+    lines: List[str] = ["  Other reference decisions (summary; the run report "
+                        "JSON lists every one):"]
+    for (owner, field_name, act) in sorted(counts):
+        n = counts[(owner, field_name, act)]
+        lines.append(f"    {labels.get(act, act)}  {owner}.{field_name}: "
+                     f"{n} reference{'s' if n != 1 else ''}")
+    return tuple(lines)
+
+
 def render_reversal_and_text_decisions(plan: RunPlan) -> Tuple[str, ...]:
     """Issue #144 (Principle III): render the reference decisions Move applies
     but Preview never showed --
@@ -2470,6 +2508,7 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_complex_feature_type_refs(plan))
         + tuple(render_struct_type_features_rs(plan))
         + tuple(render_sense_list_reference_decisions(plan))
+        + tuple(render_other_reference_decisions(plan))
         + tuple(render_reversal_and_text_decisions(plan))
         + tuple(render_lexical_relation_decisions(plan))
     )
