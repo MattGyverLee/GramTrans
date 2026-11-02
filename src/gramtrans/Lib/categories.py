@@ -13497,7 +13497,19 @@ def _run_post_pass_a(context, target, tag=None):
 # after every GRAM_CATEGORIES action (transfer.py `_LEAF_DISPATCH_CATEGORIES`),
 # so both endpoints (POS and feature) exist before wiring.
 
-def _resolve_target_by_guid(target, guid):
+def _class_matches(obj, expected_class):
+    """Issue #178 item 1: True when `obj.ClassName` is one of `expected_class`
+    (a str or tuple of str). Objects with no string ClassName (offline fakes)
+    are accepted -- the check only bites on live LCM objects, where a wrong-type
+    GUID hit would otherwise fail later at `.Add` as a generic WRITE_FAILED."""
+    name = getattr(obj, "ClassName", None)
+    if not isinstance(name, str):
+        return True
+    wanted = (expected_class,) if isinstance(expected_class, str)         else tuple(expected_class)
+    return name in wanted
+
+
+def _resolve_target_by_guid(target, guid, expected_class=None):
     """Resolve a target object by GUID across offline fakes AND the live target.
 
     Offline test doubles expose ``get_object_by_guid(guid)``. The live flexicon
@@ -13507,10 +13519,18 @@ def _resolve_target_by_guid(target, guid):
     for IUndoStackManager). API verified read-only via FLExToolsMCP:
     ``repo = project.ObjectRepository(ICmObjectRepository)``; guard with
     ``IsValidObjectId(guid)`` then ``GetObject(guid)``. Returns None when the
-    GUID is absent from the target (caller emits Skip(DEPENDENCY_UNRESOLVED))."""
+    GUID is absent from the target (caller emits Skip(DEPENDENCY_UNRESOLVED)).
+
+    ``expected_class`` (issue #178 item 1, optional): an LCM ``ClassName`` (or
+    tuple). An object of any other class is treated as unresolved (None) with a
+    warning, so a wrong-type GUID hit is reported as an unresolved dependency
+    rather than failing later at ``.Add``. Fakes without ``ClassName`` pass."""
     getter = getattr(target, "get_object_by_guid", None)
     if callable(getter):
-        return getter(guid)
+        found = getter(guid)
+        if found is not None and expected_class is not None                 and not _class_matches(found, expected_class):
+            return None
+        return found
     try:
         from SIL.LCModel import ICmObjectRepository
         from System import Guid as _DotNetGuid
@@ -13518,7 +13538,15 @@ def _resolve_target_by_guid(target, guid):
         parsed = _DotNetGuid.Parse(str(guid))
         if not repo.IsValidObjectId(parsed):
             return None
-        return repo.GetObject(parsed)
+        found = repo.GetObject(parsed)
+        if found is not None and expected_class is not None                 and not _class_matches(found, expected_class):
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "_resolve_target_by_guid: guid %s resolved to class %s, "
+                "expected %s -- treating as unresolved",
+                guid, getattr(found, "ClassName", None), expected_class)
+            return None
+        return found
     except Exception as exc:  # noqa: BLE001 -- absent repo / bad guid -> unresolved
         import logging as _logging
         _logging.getLogger("gramtrans.Lib.categories").warning(
@@ -13633,7 +13661,8 @@ def _run_infl_feature_link_pass(context, target, tag=None):
         # nothing does T095's resolver run, which re-tries identity over the
         # POS scope and then consults the natural key -- so a run where every
         # GUID was preserved behaves exactly as it did before T095.
-        target_pos = _resolve_target_by_guid(target, pos_guid)
+        target_pos = _resolve_target_by_guid(
+            target, pos_guid, expected_class="PartOfSpeech")
         if target_pos is None:
             target_pos = _target_pos_for_source_guid(context, target, pos_guid)
         if target_pos is None:
@@ -13669,7 +13698,9 @@ def _run_infl_feature_link_pass(context, target, tag=None):
                 ))
             continue
         for feature_guid in feature_guids:
-            target_feat = _resolve_target_by_guid(target, feature_guid)
+            target_feat = _resolve_target_by_guid(
+                target, feature_guid,
+                expected_class=("FsClosedFeature", "FsComplexFeature"))
             if target_feat is None:
                 # Issue #133: never silently deferred, and reported ONCE. The
                 # feature is absent from the target (INFLECTION_FEATURES not
@@ -13711,10 +13742,19 @@ def _run_infl_feature_link_pass(context, target, tag=None):
             # read-back counts the pair as linked.
             confirmed, readback_error = _infl_feat_in_collection(
                 feats_rc, target_feat, feat_g)
-            if confirmed:
+            if confirmed and error is None:
                 writes += 1
                 settled.add(_infl_pair_key(pos_guid, feature_guid))
                 continue
+            if confirmed:
+                # Issue #178 item 3: Add RAISED but the pair is present on
+                # read-back -- a partial apply. The collection may be in a
+                # state the failed Add half-wrote, so it is NOT counted as a
+                # clean link; it is reported, and the pair is settled (the
+                # link exists, and a rerun will see "already linked").
+                error = ("Add raised after partially applying (the pair is "
+                         "present on read-back, not counted as a clean "
+                         "link): " + error)
             detail = error or readback_error or (
                 "Add returned normally but the feature is absent from "
                 "InflectableFeatsRC on read-back")
