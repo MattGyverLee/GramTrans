@@ -7062,6 +7062,51 @@ def _collection_already_has(owner_coll, resolved) -> bool:
         return False
 
 
+def _add_resolved_to_reference_collection(
+    owner_coll, resolved, *, dropped, owner_class, owner_guid, src_obj,
+    field_name, source_item=None,
+):
+    """Issue #132 batch 2 (#161 GenresRC pattern): after `apply_reference`
+    resolves an item, `.Add` it onto the owner's reference collection.
+    Records a `DroppedItemRecord` when Add fails instead of swallowing."""
+    if owner_coll is None or resolved is None:
+        return
+    if _collection_already_has(owner_coll, resolved):
+        return
+    try:
+        owner_coll.Add(resolved)
+    except (AttributeError, TypeError) as exc:
+        import logging as _logging
+        item = source_item if source_item is not None else resolved
+        item_guid = _guid_str_from(item)
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_add_resolved_to_reference_collection: %s adding %s.%s "
+            "(item=%s): %s",
+            type(exc).__name__, owner_class, field_name, item_guid, exc,
+            exc_info=True,
+        )
+        _append_dropped_once(
+            dropped,
+            _enrich_dropped(
+                owner_class,
+                owner_guid,
+                src_obj,
+                DroppedItemRecord(
+                    owner_kind=owner_class,
+                    owner_guid="",
+                    owner_label="",
+                    field_name=field_name,
+                    item_name=_references_item_label(item),
+                    item_guid=item_guid,
+                    reason=(
+                        f"reference collection Add failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                ),
+            ),
+        )
+
+
 def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
                              resolver_cache, dropped, skip_fields=(), ws_map=None,
                              source=None, owner_guid="", clear_before_add=False):
@@ -7179,11 +7224,12 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
                             except (AttributeError, TypeError):
                                 pass
                         cleared_fields.add(spec.field_name)
-                    if not _collection_already_has(owner_coll, resolved):
-                        try:
-                            owner_coll.Add(resolved)
-                        except (AttributeError, TypeError):
-                            pass
+                    _add_resolved_to_reference_collection(
+                        owner_coll, resolved, dropped=dropped,
+                        owner_class=owner_class, owner_guid=owner_guid,
+                        src_obj=src_obj, field_name=spec.field_name,
+                        source_item=item,
+                    )
 
 
 def _plan_entry_reference_decisions(src_entry, context, target):
