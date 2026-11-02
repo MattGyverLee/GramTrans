@@ -110,7 +110,10 @@ def _sel_features_and_types(_full):
 
 def _sel_features_only(_full):
     from gramtrans.Lib.models import GrammarCategory, Selection
-    return Selection(categories={GrammarCategory.INFLECTION_FEATURES: True})
+    # include_closure=False: since #109 the closure pulls the struct-types in,
+    # which would defeat this selection's purpose (types deliberately absent).
+    return Selection(categories={GrammarCategory.INFLECTION_FEATURES: True},
+                     include_closure=False)
 
 
 def _target_type_ra() -> dict:

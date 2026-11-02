@@ -139,6 +139,7 @@ _CANDIDATE_TASK = {
     "INFLECTION_CLASS_TO_POS": "#67",
     "EXCEPTION_FEATURE_TO_POS": "#67",
     "POS_INFLECTABLE_FEAT_TO_POS": "#67",
+    "INFLECTION_FEATURE_TO_STRUCT_TYPE": "#109",
 }
 
 
@@ -522,6 +523,11 @@ def _audit(proj) -> int:
          "pos_inflectable_feats_pos_dependencies",
          _cats.pos_inflectable_feats_pos_dependencies,
          _GC.POS_INFLECTABLE_FEATS, _GC.GRAM_CATEGORIES),
+        # Issue #109. A complex feature's `TypeRA` -> its struct type.
+        ("INFLECTION_FEATURE_TO_STRUCT_TYPE",
+         "inflection_features_type_dependencies",
+         _cats.inflection_features_type_dependencies,
+         _GC.INFLECTION_FEATURES, _GC.FEATURE_STRUCT_TYPES),
     )
 
     relationships: dict = {}

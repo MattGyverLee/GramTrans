@@ -298,6 +298,22 @@
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "CONFIRMED"
+    },
+    "INFLECTION_FEATURE_TO_STRUCT_TYPE": {
+      "dependency_category": "feature_struct_types",
+      "distinct_far_guids": 4,
+      "edges": 4,
+      "foreign_edges": 0,
+      "population": 9,
+      "producer": "categories.inflection_features_type_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 4,
+      "source_category": "inflection_features",
+      "task": "#109",
+      "unkeyed_pieces": 0,
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
     }
   },
   "source_project": "Mbugwe Lizzie"

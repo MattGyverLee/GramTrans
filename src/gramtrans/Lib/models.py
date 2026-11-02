@@ -2794,6 +2794,12 @@ class DependencyKind(enum.Enum):
     STEM_NAME_TO_POS = "stem_name_to_pos"
     INFLECTION_CLASS_TO_POS = "inflection_class_to_pos"
     POS_INFLECTABLE_FEAT_TO_POS = "pos_inflectable_feat_to_pos"
+    #: Issue #109. A complex `IFsComplexFeature`'s `TypeRA` names an
+    #: `IFsFeatStrucType` owned by FEATURE_STRUCT_TYPES. SELECTION edge only:
+    #: dispatch order stays INFLECTION_FEATURES before FEATURE_STRUCT_TYPES
+    #: (the types' `FeaturesRS` points back at feature defns); `TypeRA` is
+    #: wired by the #37 Move tail once both exist.
+    INFLECTION_FEATURE_TO_STRUCT_TYPE = "inflection_feature_to_struct_type"
 
 
 @dataclass(frozen=True)

@@ -1509,6 +1509,23 @@ def inflection_features_dependencies(piece):
     return ()
 
 
+def inflection_features_type_dependencies(piece):
+    """NARROW producer for `DependencyKind.INFLECTION_FEATURE_TO_STRUCT_TYPE`
+    (issue #109): `(FEATURE_STRUCT_TYPES, type_guid)` for a complex feature
+    whose `TypeRA` is set; nothing for any other feature class.
+
+    CAST DISCIPLINE: `FeatureGetAll()` yields base `IFsFeatDefn` proxies, on
+    which the complex-only `TypeRA` is invisible until cast."""
+    raw = _unwrap_lcm(piece)
+    if getattr(raw, "ClassName", None) != "FsComplexFeature":
+        return ()
+    src_type = getattr(_cast_lcm(raw, "IFsComplexFeature"), "TypeRA", None)
+    type_guid = _guid_str_from(src_type) if src_type is not None else ""
+    if not type_guid:
+        return ()
+    return ((GrammarCategory.FEATURE_STRUCT_TYPES, type_guid),)
+
+
 def inflection_features_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
     return ()
 
@@ -19370,6 +19387,29 @@ CLOSURE_EDGES_VERIFIED: dict = {
     # of the objects, so read NO_DATA), stated rather than rounded up.
     # EXCEPTION_FEATURES is NOT registered: NO_DATA on every corpus.
     # -----------------------------------------------------------------------
+    # Issue #109 -- complex feature -> its struct type. EXPLICIT
+    # dependency_category (no `(INFLECTION_FEATURES, None)` wildcard).
+    # SELECTION edge only: the walker never reorders dispatch, so
+    # INFLECTION_FEATURES still dispatches before FEATURE_STRUCT_TYPES.
+    DependencyKind.INFLECTION_FEATURE_TO_STRUCT_TYPE: {
+        "category": GrammarCategory.INFLECTION_FEATURES,
+        "producer": inflection_features_type_dependencies,
+        "dependency_category": GrammarCategory.FEATURE_STRUCT_TYPES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-11-01) over "
+            "'Mbugwe Lizzie', 'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.INFLECTION_FEATURE_TO_STRUCT_TYPE = CONFIRMED on "
+            "ALL THREE (4 edges over 4 distinct struct types / 2 over 2 / "
+            "1 over 1, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0, unkeyed_pieces 0 -- every far GUID "
+            "resolves against feature_struct_types_enumerate_source) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, "
+            "asserted by tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered; live "
+            "single-run proof in "
+            "tests/integration/test_issue109_infl_type_closure_live.py"
+        ),
+    },
     DependencyKind.STEM_NAME_TO_POS: {
         "category": GrammarCategory.STEM_NAMES,
         "producer": stem_names_pos_dependencies,
