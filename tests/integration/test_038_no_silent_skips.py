@@ -198,6 +198,12 @@ REPORT_FIELD_ROLES = {
     # Issue #84 (pre-existing): human-readable notes about how the lexicon
     # category selection was expanded. Text about the selection, not an item.
     "category_notes": NOT_AN_ITEM,
+    # Issue #126: owned children of each created POS. Detail about items
+    # already counted as ADDs -- an annotation, not a fifth outcome.
+    "created_pos_children": ANNOTATION,
+    # Issue #143: per-reference decisions the plan/overwrites carry. Diagnostic
+    # detail about items already counted elsewhere.
+    "reference_decisions": ANNOTATION,
     # THE ONE THAT NEEDED WORK. `reproduced=True` is an ADD; `reproduced=False`
     # must be named by a Skip or a dropped record, and until T080 nothing
     # checked that it was. See `TestTheFifthOutcomeWasReal`.
