@@ -337,7 +337,7 @@ _OVERWRITE_ENTRY_REF_FIELDS = frozenset(
 
 
 def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
-                                    keep_fields, source=None):
+                                    keep_fields, source=None, resolver_cache=None):
     """Read-only `decide_reference` pass over `keep_fields` only (the
     OVERWRITE-path resolver's actual scope, see `_OVERWRITE_*_REF_FIELDS`
     above) for a single ENTRY/SENSE `PlannedOverwrite` -- populates
@@ -345,7 +345,8 @@ def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
     Update/Report *before* Move ever writes (Principle III), the same
     guarantee `PlannedAction.reference_decisions` gives the ADD path.
 
-    Uses a call-local `resolver_cache`/`dropped` (this function has no
+    Uses the caller's run-wide `resolver_cache` when given (issue #165; else a
+    call-local one) and a call-local `dropped` (this function has no
     `RunContext` to read a per-run collector from -- the verb-vertical
     planner functions that call this predate the context-based leaf-category
     plan_action functions). Never raises: any resolver failure yields an
@@ -364,7 +365,8 @@ def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
         ) - keep_fields
         return _decide_reference_fields(
             owner_class, owner_guid, src_obj, target,
-            resolver_cache={}, dropped=[], skip_fields=skip_fields, source=source,
+            resolver_cache=resolver_cache if resolver_cache is not None else {},
+            dropped=[], skip_fields=skip_fields, source=source,
         )
     except (AttributeError, TypeError, KeyError):
         return ()
@@ -1196,6 +1198,16 @@ def build_run_plan(
     excluded_lossy: List[ExcludedLossy] = []
     identity_remap: dict = {}
 
+    # Issue #146/#165: the run's marked planning cache. Created BEFORE the
+    # (legacy) verb-vertical walk so its overwrite-decision pass shares it
+    # instead of a per-call `{}` (which re-reported repeated CREATEs).
+    _resolver_cache: dict = {}
+    if __package__:
+        from .references import mark_planning_cache as _mark_planning_cache
+    else:
+        from references import mark_planning_cache as _mark_planning_cache  # type: ignore
+    _mark_planning_cache(_resolver_cache)
+
     # Walk every selected POS (or all top-level POSes when categories[POS]
     # is True and pos_picks is empty). For each POS, walk its closure:
     # POS → Template → Slots → LexEntries(MSA-points-at-POS) → Senses → MSAs
@@ -1215,7 +1227,8 @@ def build_run_plan(
         for src_pos in _select_source_poses(source, selection):
             _pos_count += 1
             _plan_pos_closure(source, target, src_pos, selection, actions, skips, overwrites)
-            _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy, identity_remap=identity_remap)
+            _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy, identity_remap=identity_remap,
+                                  resolver_cache=_resolver_cache)
     _log.debug(
         "build_run_plan: verb-vertical closure enabled=%s over %d source POS(es); "
         "actions so far=%d", _VERB_VERTICAL_ENABLED, _pos_count, len(actions),
@@ -1311,14 +1324,6 @@ def build_run_plan(
     # item cache for the resolver, mirroring `_dropped` above. Shared across
     # every reference field/owner so a possibility already resolved earlier
     # in the walk short-circuits to LINK without re-deciding.
-    _resolver_cache: dict = {}
-    # Issue #146: a planning cache -- a planned CREATE primes it with a
-    # placeholder so later references show LINK, as Move's real cache does.
-    if __package__:
-        from .references import mark_planning_cache as _mark_planning_cache
-    else:
-        from references import mark_planning_cache as _mark_planning_cache  # type: ignore
-    _mark_planning_cache(_resolver_cache)
     object.__setattr__(context, '_resolver_cache', _resolver_cache)
 
     # Feature 024 (T029/T030, US3, FR-009a): per-run copy-set dict
@@ -2485,19 +2490,26 @@ def render_lexical_relation_decisions(plan: RunPlan) -> Tuple[str, ...]:
     if not decisions:
         return ()
     new_types = [d for d in decisions if d.owner_kind == "LexRefType"]
+    # Issue #165: group by type GUID (+ label), not label alone, so two
+    # distinct types that share a name stay separate lines. A record with no
+    # type GUID falls back to label-only grouping.
     per_type: dict = {}
     for d in decisions:
         if d.owner_kind == "LexReference":
             name = d.item_name or "(unnamed type)"
-            per_type[name] = per_type.get(name, 0) + 1
+            key = (name, getattr(d, "type_guid", "") or "")
+            per_type[key] = per_type.get(key, 0) + 1
     lines: List[str] = ["  Lexical relations:"]
     for d in new_types:
         lines.append(f"    Create relation type '{d.item_name or '(unnamed)'}'"
                      f" {{{d.item_guid}}}")
-    for name in sorted(per_type):
-        n = per_type[name]
+    for key in sorted(per_type):
+        name, type_guid = key
+        n = per_type[key]
+        same_label = sum(1 for k in per_type if k[0] == name)
+        suffix = f" {{{type_guid}}}" if type_guid and same_label > 1 else ""
         lines.append(f"    Create {n} relation{'s' if n != 1 else ''} of type "
-                     f"'{name}'")
+                     f"'{name}'{suffix}")
     return tuple(lines)
 
 
@@ -3642,6 +3654,7 @@ def _plan_layer3_for_pos(
     overwrites: List[PlannedOverwrite],
     excluded_lossy: Optional[List[ExcludedLossy]] = None,
     identity_remap: dict = None,
+    resolver_cache: Optional[dict] = None,
 ) -> None:
     """Layer 3 (LexEntry / Sense / MSA / Allomorph / PhEnvironment) walk for
     affix entries whose IMoInflAffMsa.PartOfSpeechRA points at `src_pos`."""
@@ -3649,6 +3662,7 @@ def _plan_layer3_for_pos(
         source, target, src_pos, selection, actions, skips, overwrites,
         excluded_lossy=excluded_lossy,
         identity_remap=identity_remap if identity_remap is not None else {},
+        resolver_cache=resolver_cache,
     )
 
 
@@ -3828,6 +3842,7 @@ def _plan_layer3_verb_affixes_inner(
     overwrites: Optional[List[PlannedOverwrite]] = None,
     excluded_lossy: Optional[List[ExcludedLossy]] = None,
     identity_remap: dict = None,
+    resolver_cache: Optional[dict] = None,
 ) -> None:
     """Walk Layer 3 for a single source POS: every source LexEntry whose
     Sense's MSA is an IMoInflAffMsa pointing at this POS. Each yields
@@ -3848,6 +3863,10 @@ def _plan_layer3_verb_affixes_inner(
 
     if identity_remap is None:
         identity_remap = {}
+
+    # Issue #165: run-wide planning cache for the overwrite-decision passes.
+    if resolver_cache is None:
+        resolver_cache = {}
 
     # Per-scope closure for Layer 3 categories.
     # NONE -> closure off for that category; AS_NEEDED or ALL -> closure on.
@@ -3970,6 +3989,7 @@ def _plan_layer3_verb_affixes_inner(
                     reference_decisions=_overwrite_reference_decisions(
                         "LexEntry", entry_guid, entry, target,
                         _OVERWRITE_ENTRY_REF_FIELDS, source=source,
+                    resolver_cache=resolver_cache,
                     ),
                 ))
                 identity_remap[entry_guid] = resolution.target_guid
@@ -3994,6 +4014,7 @@ def _plan_layer3_verb_affixes_inner(
                 reference_decisions=_overwrite_reference_decisions(
                     "LexEntry", entry_guid, entry, target,
                     _OVERWRITE_ENTRY_REF_FIELDS, source=source,
+                resolver_cache=resolver_cache,
                 ),
             ))
             for _sense, sense_guid in sense_actions:
@@ -4008,6 +4029,7 @@ def _plan_layer3_verb_affixes_inner(
                     reference_decisions=_overwrite_reference_decisions(
                         "LexSense", sense_guid, _sense, target,
                         _OVERWRITE_SENSE_REF_FIELDS, source=source,
+                    resolver_cache=resolver_cache,
                     ),
                 ))
             # Phase 1.2 (FR-104): MSAs and Allomorphs are matched by
