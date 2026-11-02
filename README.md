@@ -85,7 +85,6 @@ src/gramtrans/
     ├── categories_templates.py
     ├── categories_msas.py
     └── ui/                   # PyQt widgets
-        ├── main_window.py
         ├── target_picker.py
         ├── ws_mapping_dialog.py
         ├── affix_tree_picker.py

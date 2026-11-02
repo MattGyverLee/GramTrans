@@ -3635,8 +3635,8 @@ class RunPlan:
     # `dropped_items` above (the single unified 024 channel); this field
     # carries the Add/Link decisions themselves so Preview renders them
     # (`Lib/preview.py.render_reversal_decisions`, wrapped by
-    # `render_preview_extra_lines` and displayed via `Lib/ui/main_window.py.
-    # _on_preview` -> `Lib/ui/stats_panel.py.StatsPanel.set_report`'s
+    # `render_preview_extra_lines` and displayed via `Lib/ui/selection_wizard.py.
+    # _PageFinish._on_dry_run` -> `Lib/ui/stats_panel.py.StatsPanel.set_report`'s
     # `extra_lines` param -- P0-2, feature-025 cycle-6 remediation) before
     # Move ever writes.
     reversal_decisions: tuple = ()  # tuple[ReversalDecision, ...]
@@ -3673,7 +3673,7 @@ class RunPlan:
     # this field carries the Add/Overwrite/Skip actions themselves so
     # Preview renders them (`Lib/preview.py.render_config_view_records`,
     # wrapped by `render_preview_extra_lines` and displayed via `Lib/ui/
-    # main_window.py._on_preview` -> `Lib/ui/stats_panel.py.StatsPanel.
+    # selection_wizard.py._PageFinish._on_dry_run` -> `Lib/ui/stats_panel.py.StatsPanel.
     # set_report`'s `extra_lines` param -- P0-2, feature-025 cycle-6
     # remediation) before Move's `Lib/transfer.py.execute` calls
     # `apply_config_views`.

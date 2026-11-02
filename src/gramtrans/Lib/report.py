@@ -2201,7 +2201,7 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
     # Feature 024 (FR-010/FR-013, contracts/dropped-item-report.md): the
     # never-silent report channel. Renders identically whether `report` came
     # from Preview (`extra_dropped_items=payload.dropped_items`,
-    # `Lib/ui/selection_wizard.py` / `Lib/ui/main_window.py`) or Move
+    # `Lib/ui/selection_wizard.py`) or Move
     # (`extra_dropped_items=_dropped`, `Lib/transfer.py.execute`) -- both
     # thread through `RunReport.build_from_plan` into the same
     # `report.dropped_items` field this section reads, so the section
