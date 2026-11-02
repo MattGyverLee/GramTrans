@@ -106,16 +106,19 @@ def _restore_around():
     _restore()
 
 
-def _sel(*cats):
+def _sel(*cats, closure=True):
     from gramtrans.Lib.models import GrammarCategory, Selection
 
     def _t(_full):
         return Selection(categories={getattr(GrammarCategory, c): True
-                                     for c in cats})
+                                     for c in cats},
+                         include_closure=closure)
     return _t
 
 
-SEL_TYPES_ONLY = _sel("FEATURE_STRUCT_TYPES", "PHON_FEAT_TYPES")
+# closure=False: since #138 a struct-types-only selection WITH closure pulls in
+# the member features, which would defeat run 1's "types without features".
+SEL_TYPES_ONLY = _sel("FEATURE_STRUCT_TYPES", "PHON_FEAT_TYPES", closure=False)
 SEL_WITH_FEATURES = _sel("INFLECTION_FEATURES", "FEATURE_STRUCT_TYPES",
                          "PHONOLOGICAL_FEATURES", "PHON_FEAT_TYPES")
 
@@ -261,7 +264,8 @@ def test_features_rs_repaired_to_source_order_and_rerun_writes_nothing(monkeypat
     print("[LIVE] flexicon=%s" % flexicon.__file__)
     # Worktree-agnostic provenance: the code under test is THIS checkout's src.
     assert Path(gramtrans.__file__).resolve().is_relative_to(
-        (Path(__file__).resolve().parents[2] / "src").resolve()),         "gramtrans resolves outside this checkout: %s" % gramtrans.__file__
+        (Path(__file__).resolve().parents[2] / "src").resolve()), (
+        "gramtrans resolves outside this checkout: %s" % gramtrans.__file__)
     src_sha = _sha(SOURCE_FWDATA)
     print("[LIVE] source sha256 before=%s" % src_sha)
 
@@ -329,6 +333,7 @@ def test_features_rs_repaired_to_source_order_and_rerun_writes_nothing(monkeypat
     after4 = _target_members()
     print("[LIVE] run4 repaired=%d %s" % (len(rep4), after4[("MsFeatureSystemOA", SUBJ_AGR)]))
     assert rep4 == [] and _rows(rows4, "Repair") == []
+    print("\n".join(["[LIVE] run4 preview:"] + rows4))
     assert len(_rows(rows4, "SKIP (reordered")) == 1
     assert SUBJ_AGR in _rows(rows4, "SKIP (reordered")[0]
     reordered = [s for s in report4.skips

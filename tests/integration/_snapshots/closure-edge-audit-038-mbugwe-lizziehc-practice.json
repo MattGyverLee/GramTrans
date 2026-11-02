@@ -304,6 +304,38 @@
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "CONFIRMED"
+    },
+    "STRUCT_TYPE_TO_INFL_FEATURE": {
+      "dependency_category": "inflection_features",
+      "distinct_far_guids": 8,
+      "edges": 9,
+      "foreign_edges": 0,
+      "population": 6,
+      "producer": "categories.feature_struct_types_infl_feature_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 8,
+      "source_category": "feature_struct_types",
+      "task": "#138",
+      "unkeyed_pieces": 0,
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "PHON_STRUCT_TYPE_TO_PHON_FEATURE": {
+      "dependency_category": "phonological_features",
+      "distinct_far_guids": 15,
+      "edges": 15,
+      "foreign_edges": 0,
+      "population": 1,
+      "producer": "categories.phon_feat_types_phon_feature_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 15,
+      "source_category": "phon_feat_types",
+      "task": "#138",
+      "unkeyed_pieces": 0,
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
     }
   },
   "source_project": "Mbugwe LizzieHC practice"

@@ -426,6 +426,9 @@ def test_the_shipped_registry_holds_only_what_was_audited() -> None:
         DependencyKind.POS_INFLECTABLE_FEAT_TO_POS,
         # Issue #109.
         DependencyKind.INFLECTION_FEATURE_TO_STRUCT_TYPE,
+        # Issue #138.
+        DependencyKind.STRUCT_TYPE_TO_INFL_FEATURE,
+        DependencyKind.PHON_STRUCT_TYPE_TO_PHON_FEATURE,
     }
     # The single-corpus caveat is part of what these two rows CLAIM, so it is
     # asserted rather than left to prose that can drift away from the code.
@@ -563,7 +566,12 @@ def test_the_registered_rows_do_not_collide_in_the_kind_lookup() -> None:
         # Issue #109.
         (GrammarCategory.INFLECTION_FEATURES,
          GrammarCategory.FEATURE_STRUCT_TYPES),
+        # Issue #138.
+        (GrammarCategory.FEATURE_STRUCT_TYPES,
+         GrammarCategory.INFLECTION_FEATURES),
+        (GrammarCategory.PHON_FEAT_TYPES,
+         GrammarCategory.PHONOLOGICAL_FEATURES),
         (GrammarCategory.INFLECTION_CLASSES, GrammarCategory.GRAM_CATEGORIES),
         (GrammarCategory.POS_INFLECTABLE_FEATS, GrammarCategory.GRAM_CATEGORIES),
     }
-    assert len(lookup) == len(categories_mod.CLOSURE_EDGES_VERIFIED) == 12
+    assert len(lookup) == len(categories_mod.CLOSURE_EDGES_VERIFIED) == 14
