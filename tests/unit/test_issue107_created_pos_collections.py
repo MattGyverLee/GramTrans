@@ -309,3 +309,134 @@ def test_add_only_check_is_not_fooled_by_fresh_proxy_wrappers():
     assert transfer._check_add_only(
         "AffixTemplatesOS", [a, b],
         base._FakeOwningCollection([b2, a2]), sink, "pos-1") is False
+
+
+# ----------------------------------------------------------------------------
+# Issue #137 follow-ups
+# ----------------------------------------------------------------------------
+
+class _SubPosFactory(base._FakeFactory):
+    """`IPartOfSpeechFactory` whose products are POS-shaped (own seven
+    collections), as the live factory's are."""
+
+    def Create(self, *args):
+        guid = args[0]
+        self.created_guids.append(guid)
+        child = base._FakePOS(str(guid))
+        if len(args) > 1:
+            args[1].SubPossibilitiesOS.Add(child)
+        return child
+
+
+class _SeqTemplate(base._FakeChild):
+    """A template child exposing the five slot-reference sequences."""
+
+    def __init__(self, guid, **seqs):
+        super().__init__(guid, name="tmpl")
+        for seq in transfer._TEMPLATE_SLOT_SEQS:
+            setattr(self, seq, base._FakeOwningCollection(seqs.get(seq, ())))
+
+
+class _TemplateFactory(base._FakeFactory):
+    def Create(self, *args):
+        self.created_guids.append(args[0])
+        return _SeqTemplate(str(args[0]))
+
+
+def test_137_a_created_sub_pos_without_its_own_action_gets_its_collections():
+    sub = base._FakePOS(
+        "sub-1", name_en="vt",
+        AffixSlotsOC=[base._FakeChild("slot-s", name="S")],
+        StemNamesOC=[base._FakeChild("stem-s", name="st")],
+        SubPossibilitiesOS=[base._FakePOS(
+            "subsub-1", InflectionClassesOC=[base._FakeChild("ic-ss")])],
+    )
+    src = base._FakePOS("pos-v", SubPossibilitiesOS=[sub])
+    created = base._FakePOS("pos-v")
+    factories = base._all_factories()
+    factories["IPartOfSpeechFactory"] = _SubPosFactory("IPartOfSpeechFactory")
+
+    _rows, sink, _s, _t = _fill(src, created, factories=factories)
+
+    (new_sub,) = list(created.SubPossibilitiesOS)
+    assert _guids(new_sub, "AffixSlotsOC") == ["slot-s"]
+    assert _guids(new_sub, "StemNamesOC") == ["stem-s"]
+    (new_subsub,) = list(new_sub.SubPossibilitiesOS)
+    assert _guids(new_subsub, "InflectionClassesOC") == ["ic-ss"]
+    assert factories["IMoInflAffixSlotFactory"].created_guids == ["slot-s"]
+    assert not sink.warning
+
+
+def test_137_a_sub_pos_with_its_own_action_is_not_filled_by_the_parent():
+    sub = base._FakePOS("sub-1", AffixSlotsOC=[base._FakeChild("slot-s")])
+    src = base._FakePOS("pos-v", SubPossibilitiesOS=[sub])
+    created = base._FakePOS("pos-v")
+    factories = base._all_factories()
+    factories["IPartOfSpeechFactory"] = _SubPosFactory("IPartOfSpeechFactory")
+    _fill(src, created, factories=factories,
+          planned_action_guids=frozenset({"sub-1"}))
+    assert _guids(created, "SubPossibilitiesOS") == []
+    assert factories["IMoInflAffixSlotFactory"].created_guids == []
+
+
+def _template_src(**seqs):
+    return base._FakePOS(
+        "pos-n",
+        AffixSlotsOC=[base._FakeChild("slot-a", name="A"),
+                      base._FakeChild("slot-b", name="B")],
+        AffixTemplatesOS=[_SeqTemplate("tmpl-1", **seqs)],
+    )
+
+
+def test_137_an_enrichment_created_template_gets_its_slot_references():
+    a, b = base._FakeChild("slot-a"), base._FakeChild("slot-b")
+    src = _template_src(PrefixSlotsRS=[b, a], SuffixSlotsRS=[a])
+    created = base._FakePOS("pos-n")
+    factories = base._all_factories()
+    factories["IMoInflAffixTemplateFactory"] = _TemplateFactory(
+        "IMoInflAffixTemplateFactory")
+
+    rows, sink, _s, _t = _fill(src, created, factories=factories)
+
+    (tpl,) = list(created.AffixTemplatesOS)
+    assert [s.guid for s in tpl.PrefixSlotsRS] == ["slot-b", "slot-a"]  # order
+    assert [s.guid for s in tpl.SuffixSlotsRS] == ["slot-a"]
+    assert list(tpl.EncliticSlotsRS) == []
+    assert not sink.warning
+
+
+def test_137_an_unresolvable_template_slot_is_a_reported_drop_not_a_hole():
+    src = _template_src(PrefixSlotsRS=[base._FakeChild("slot-gone")])
+    created = base._FakePOS("pos-n")
+    factories = base._all_factories()
+    factories["IMoInflAffixTemplateFactory"] = _TemplateFactory(
+        "IMoInflAffixTemplateFactory")
+    dropped: list = []
+
+    rows, sink, _s, _t = _fill(src, created, factories=factories,
+                               dropped=dropped)
+
+    (tpl,) = list(created.AffixTemplatesOS)
+    assert list(tpl.PrefixSlotsRS) == []
+    assert [(d.field_name, d.item_guid) for d in dropped] == [
+        ("AffixTemplatesOS.PrefixSlotsRS", "slot-gone")]
+    assert any("slot reference not wired" in m for m in sink.warning)
+    # The template itself still counts as added, not dropped.
+    assert {r.canonical_field_name: r.dropped for r in rows}[
+        "AffixTemplatesOS"] == 0
+
+
+def test_137_the_source_pos_lookup_is_one_getall_per_run():
+    calls = []
+    sources = [base._FakePOS("p%d" % i) for i in range(5)]
+    source = base._FakeProject(sources)
+    real = source.POS.GetAll
+    source.POS.GetAll = lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+    target = base._FakeProject([], factories=base._all_factories())
+    index: dict = {}
+    for p in sources:
+        transfer._fill_created_pos_collections(
+            _action(p.guid), base._FakePOS(p.guid), source, target,
+            base._Sink(), src_pos_index=index)
+    assert len(calls) == 1
+    assert set(index) == {p.guid for p in sources}
