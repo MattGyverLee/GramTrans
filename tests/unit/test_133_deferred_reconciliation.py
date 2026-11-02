@@ -156,10 +156,10 @@ def test_a_pass_that_raises_midway_keeps_the_pairs_it_settled(monkeypatch):
     ctx._deferred_infl_pairs.append(("pos-num", "feat-2"))
     real = categories._resolve_target_by_guid
 
-    def _flaky(tgt, guid):
+    def _flaky(tgt, guid, **kw):
         if guid == "feat-2":
             raise RuntimeError("mid-pass failure")
-        return real(tgt, guid)
+        return real(tgt, guid, **kw)
 
     monkeypatch.setattr(categories, "_resolve_target_by_guid", _flaky)
     object.__setattr__(ctx._run_plan, "feature_category_links",
@@ -287,13 +287,10 @@ def test_without_inflection_features_the_run_only_links_never_creates_or_edits()
         assert not feature_like or fac.created_guids == []
 
 
-def test_the_link_pass_has_no_feature_creation_surface():
-    src = inspect.getsource(categories._run_infl_feature_link_pass)
-    for needle in ("Factory", ".Create(", "FeaturesOC.Add", "create_with_guid"):
-        assert needle not in src, needle
-    # feature creation lives only in the INFLECTION_FEATURES executor.
-    assert "IFsClosedFeatureFactory" in inspect.getsource(
-        categories.inflection_features_execute_action)
+# Issue #178 item 2: the former `inspect.getsource` text-scan test of the link
+# pass was brittle (it failed on a comment or rename) and is replaced by the
+# behavioural assertions above: no feature factory is requested and no feature
+# factory creates anything (`test_without_inflection_features_...`).
 
 
 # ---- #128 P2-5: the entry-ref import guard cannot raise out of execute() ----

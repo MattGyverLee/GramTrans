@@ -16,10 +16,10 @@ def test_midpass_raise_keeps_write_count_and_skips_before_raise():
     target.POS = fake_base._FakeOps([created])
     real = categories._resolve_target_by_guid
 
-    def _flaky(tgt, guid):
+    def _flaky(tgt, guid, **kw):
         if guid == "feat-2":
             raise RuntimeError("mid-pass failure")
-        return real(tgt, guid)
+        return real(tgt, guid, **kw)
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(categories, "_resolve_target_by_guid", _flaky)

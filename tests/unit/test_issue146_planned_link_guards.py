@@ -103,3 +103,12 @@ def test_raising_rebind_in_texts_emits_drop(monkeypatch):
     plan = SimpleNamespace(genre_decisions=(planned,), source_guid="t1")
     texts._apply_genres(plan, fx["target"], "text", {}, None, None, None, dropped)
     assert len(dropped) == 1 and applied == []
+    # Issue #190: the genre rebind drop is owned by the Text (census key),
+    # not its StText body -- and the run-report JSON must say so.
+    rec = dropped[0]
+    assert (rec.owner_kind, rec.owner_guid, rec.field_name) == (
+        "Text", "t1", spec.field_name)
+    from gramtrans.Lib import report as _report
+    js = _report._dropped_item_json(rec)
+    assert js["owner_kind"] == "Text"
+    assert "StText" not in str(js)

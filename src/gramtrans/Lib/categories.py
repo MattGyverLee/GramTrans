@@ -8751,7 +8751,7 @@ def reproduce_reversal_entries(context, tag, resolver_cache, dropped) -> None:
 
     Principle III (P0-2, feature-025 cycle-6 remediation): the SAME Add/Link
     decision this walk applies was already rendered on the Preview surface
-    the click before -- `Lib/ui/main_window.py._on_preview` calls
+    the click before -- `Lib/ui/selection_wizard.py._PageFinish._on_dry_run` calls
     `Lib/preview.py.render_preview_extra_lines(plan)` (which wraps
     `render_reversal_decisions`) and displays the result via `Lib/ui/
     stats_panel.py.StatsPanel.set_report`'s `extra_lines` parameter, BEFORE
@@ -13497,7 +13497,19 @@ def _run_post_pass_a(context, target, tag=None):
 # after every GRAM_CATEGORIES action (transfer.py `_LEAF_DISPATCH_CATEGORIES`),
 # so both endpoints (POS and feature) exist before wiring.
 
-def _resolve_target_by_guid(target, guid):
+def _class_matches(obj, expected_class):
+    """Issue #178 item 1: True when `obj.ClassName` is one of `expected_class`
+    (a str or tuple of str). Objects with no string ClassName (offline fakes)
+    are accepted -- the check only bites on live LCM objects, where a wrong-type
+    GUID hit would otherwise fail later at `.Add` as a generic WRITE_FAILED."""
+    name = getattr(obj, "ClassName", None)
+    if not isinstance(name, str):
+        return True
+    wanted = (expected_class,) if isinstance(expected_class, str)         else tuple(expected_class)
+    return name in wanted
+
+
+def _resolve_target_by_guid(target, guid, expected_class=None):
     """Resolve a target object by GUID across offline fakes AND the live target.
 
     Offline test doubles expose ``get_object_by_guid(guid)``. The live flexicon
@@ -13507,10 +13519,18 @@ def _resolve_target_by_guid(target, guid):
     for IUndoStackManager). API verified read-only via FLExToolsMCP:
     ``repo = project.ObjectRepository(ICmObjectRepository)``; guard with
     ``IsValidObjectId(guid)`` then ``GetObject(guid)``. Returns None when the
-    GUID is absent from the target (caller emits Skip(DEPENDENCY_UNRESOLVED))."""
+    GUID is absent from the target (caller emits Skip(DEPENDENCY_UNRESOLVED)).
+
+    ``expected_class`` (issue #178 item 1, optional): an LCM ``ClassName`` (or
+    tuple). An object of any other class is treated as unresolved (None) with a
+    warning, so a wrong-type GUID hit is reported as an unresolved dependency
+    rather than failing later at ``.Add``. Fakes without ``ClassName`` pass."""
     getter = getattr(target, "get_object_by_guid", None)
     if callable(getter):
-        return getter(guid)
+        found = getter(guid)
+        if found is not None and expected_class is not None                 and not _class_matches(found, expected_class):
+            return None
+        return found
     try:
         from SIL.LCModel import ICmObjectRepository
         from System import Guid as _DotNetGuid
@@ -13518,7 +13538,15 @@ def _resolve_target_by_guid(target, guid):
         parsed = _DotNetGuid.Parse(str(guid))
         if not repo.IsValidObjectId(parsed):
             return None
-        return repo.GetObject(parsed)
+        found = repo.GetObject(parsed)
+        if found is not None and expected_class is not None                 and not _class_matches(found, expected_class):
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "_resolve_target_by_guid: guid %s resolved to class %s, "
+                "expected %s -- treating as unresolved",
+                guid, getattr(found, "ClassName", None), expected_class)
+            return None
+        return found
     except Exception as exc:  # noqa: BLE001 -- absent repo / bad guid -> unresolved
         import logging as _logging
         _logging.getLogger("gramtrans.Lib.categories").warning(
@@ -13656,7 +13684,8 @@ def _run_infl_feature_link_pass(context, target, tag=None):
             # nothing does T095's resolver run, which re-tries identity over the
             # POS scope and then consults the natural key -- so a run where every
             # GUID was preserved behaves exactly as it did before T095.
-            target_pos = _resolve_target_by_guid(target, pos_guid)
+            target_pos = _resolve_target_by_guid(
+                target, pos_guid, expected_class="PartOfSpeech")
             if target_pos is None:
                 target_pos = _target_pos_for_source_guid(context, target, pos_guid)
             if target_pos is None:
@@ -13692,7 +13721,9 @@ def _run_infl_feature_link_pass(context, target, tag=None):
                     ))
                 continue
             for feature_guid in feature_guids:
-                target_feat = _resolve_target_by_guid(target, feature_guid)
+                target_feat = _resolve_target_by_guid(
+                    target, feature_guid,
+                    expected_class=("FsClosedFeature", "FsComplexFeature"))
                 if target_feat is None:
                     # Issue #133: never silently deferred, and reported ONCE. The
                     # feature is absent from the target (INFLECTION_FEATURES not
@@ -13734,10 +13765,19 @@ def _run_infl_feature_link_pass(context, target, tag=None):
                 # read-back counts the pair as linked.
                 confirmed, readback_error = _infl_feat_in_collection(
                     feats_rc, target_feat, feat_g)
-                if confirmed:
+                if confirmed and error is None:
                     writes += 1
                     settled.add(_infl_pair_key(pos_guid, feature_guid))
                     continue
+                if confirmed:
+                    # Issue #178 item 3: Add RAISED but the pair is present on
+                    # read-back -- a partial apply. The collection may be in a
+                    # state the failed Add half-wrote, so it is NOT counted as a
+                    # clean link; it is reported, and the pair is settled (the
+                    # link exists, and a rerun will see "already linked").
+                    error = ("Add raised after partially applying (the pair is "
+                             "present on read-back, not counted as a clean "
+                             "link): " + error)
                 detail = error or readback_error or (
                     "Add returned normally but the feature is absent from "
                     "InflectableFeatsRC on read-back")
@@ -20166,6 +20206,313 @@ def _repair_rule_input_poses(context, target, picks, dropped, skips):
     return writes
 
 
+def _insert_missing_in_order(tgt_seq, src_items, by_guid, on_absent):
+    """Insert-only sequence repair shared by the #134 late passes.
+
+    The target's members must be an in-order subsequence of the source's,
+    else nothing is touched and None is returned (caller reports). Each
+    missing member found in `by_guid` is inserted at its source position;
+    `on_absent(src_obj, guid)` is called for the unresolvable ones. Returns
+    writes made."""
+    src_g = _late_ref_guid_chain(src_items)
+    tgt_g = _late_ref_guid_chain(tgt_seq)
+    it = iter(src_g)
+    if not all(g in it for g in tgt_g):
+        return None
+    present = set(tgt_g)
+    idx = writes = 0
+    for src_obj in src_items:
+        g = _guid_str_from(src_obj)
+        if g in present:
+            idx += 1
+            continue
+        found = by_guid.get(g)
+        if found is None:
+            on_absent(src_obj, g)
+            continue
+        tgt_seq.Insert(idx, found)
+        idx += 1
+        writes += 1
+    return writes
+
+
+def _set_ref_if_null(src_o, tgt_o, attr, pool):
+    src_v = getattr(src_o, attr, None)
+    if src_v is None or getattr(tgt_o, attr, None) is not None:
+        return 0
+    found = pool.get(_guid_str_from(src_v))
+    if found is None:
+        return 0
+    setattr(tgt_o, attr, found)
+    return 1
+
+
+def _repair_template_slot_seqs(src_tpl, tgt_tpl, all_slots, dropped, skips):
+    from SIL.LCModel import IMoInflAffixTemplate
+    tg = _guid_str_from(src_tpl)
+    src_t = IMoInflAffixTemplate(src_tpl)
+    tgt_t = IMoInflAffixTemplate(tgt_tpl)
+    writes = 0
+    for seq_name in _TEMPLATE_SLOT_SEQS:
+        src_seq = list(getattr(src_t, seq_name, None) or [])
+        tgt_seq = getattr(tgt_t, seq_name, None)
+        if not src_seq or tgt_seq is None:
+            continue
+
+        def _absent(o, g, _f=seq_name):
+            if dropped is not None:
+                _append_dropped_once(dropped, DroppedItemRecord(
+                    owner_kind="MoInflAffixTemplate", owner_guid=tg,
+                    owner_label="", field_name=_f,
+                    item_name=_rule_ref_display_name(o)
+                    or f"guid={_short_guid(g)}",
+                    item_guid=g or "",
+                    reason="slot absent from target -- template left "
+                           "incomplete"))
+        n = _insert_missing_in_order(tgt_seq, src_seq, all_slots, _absent)
+        if n is None:
+            skips.append(Skip(
+                category=GrammarCategory.AFFIX_TEMPLATES, source_guid=tg,
+                reason=SkipReason.NEEDS_MANUAL,
+                detail=(f"target template {tg} {seq_name} is not an "
+                        f"in-order subset of the source; left as-is "
+                        f"(review manually)")))
+        else:
+            writes += n
+    return writes
+
+
+def _repair_template_and_rule_refs(context, target, picks_unused, dropped,
+                                   skips):
+    """#134 MED: affix-template slot sequences + `StratumRA`, compound-rule
+    `StratumRA` and owned-MSA `PartOfSpeechRA`. Create-time-only wiring misses
+    a target that did not exist when the owner was created, and never revisits
+    an owner that is ALREADY_PRESENT. Add-only: `StratumRA`/`PartOfSpeechRA`
+    are set only when null; slot sequences are insert-only (a diverged target
+    is NEEDS_MANUAL, untouched). Returns writes made."""
+    source = context.source_handle
+    writes = 0
+    strata = {}
+    try:
+        for st in target.Strata.GetAll():
+            g = _guid_str_from(st)
+            if g:
+                strata[g] = getattr(st, "_obj", st)
+    except (AttributeError, TypeError):
+        pass
+    pos_by_guid = {}
+    for pos in _iter_all_pos(target):
+        g = _guid_str_from(pos)
+        if g:
+            pos_by_guid[g] = pos
+
+    # --- affix templates
+    tgt_tpls = {}
+    all_slots = {}
+    for pos in _iter_pos(target):
+        pobj = _as_pos(pos)
+        for tpl in getattr(pobj, "AffixTemplatesOS", None) or []:
+            g = _guid_str_from(tpl)
+            if g:
+                tgt_tpls[g] = tpl
+        for slot in getattr(pobj, "AffixSlotsOC", None) or []:
+            g = _guid_str_from(slot)
+            if g:
+                all_slots[g] = slot
+    from SIL.LCModel import IMoInflAffixTemplate
+    for pos in _iter_pos(source):
+        for src_tpl in getattr(_as_pos(pos), "AffixTemplatesOS", None) or []:
+            tg = _guid_str_from(src_tpl)
+            tgt_tpl = tgt_tpls.get(tg)
+            if tgt_tpl is None:
+                continue
+            try:
+                writes += _set_ref_if_null(
+                    IMoInflAffixTemplate(src_tpl),
+                    IMoInflAffixTemplate(tgt_tpl), "StratumRA", strata)
+                writes += _repair_template_slot_seqs(
+                    src_tpl, tgt_tpl, all_slots, dropped, skips)
+            except Exception as exc:  # noqa: BLE001 -- one template only
+                skips.append(Skip(
+                    category=GrammarCategory.AFFIX_TEMPLATES, source_guid=tg,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=(f"template ref repair failed "
+                            f"({type(exc).__name__}: {exc})")))
+
+    # --- compound rules
+    tgt_rules = {}
+    for obj in _rules_enumerate_all(target):
+        g = _guid_str_from(obj)
+        if g:
+            tgt_rules[g] = obj
+    for src_rule in _rules_enumerate_all(source):
+        cn = getattr(src_rule, "ClassName", None)
+        if cn not in ("MoEndoCompound", "MoExoCompound"):
+            continue
+        g = _guid_str_from(src_rule)
+        tgt_rule = tgt_rules.get(g)
+        if tgt_rule is None:
+            continue
+        try:
+            tgt_c = _cast_rule_concrete(tgt_rule)
+            src_c = _cast_rule_concrete(src_rule)
+            writes += _set_ref_if_null(src_c, tgt_c, "StratumRA", strata)
+            slots = ["LeftMsaOA", "RightMsaOA"] + (
+                ["OverridingMsaOA"] if cn == "MoEndoCompound" else ["ToMsaOA"])
+            for slot in slots:
+                s_msa = getattr(src_c, slot, None)
+                t_msa = getattr(tgt_c, slot, None)
+                if s_msa is None or t_msa is None:
+                    continue
+                writes += _set_ref_if_null(
+                    _cast_to_concrete(s_msa), _cast_to_concrete(t_msa),
+                    "PartOfSpeechRA", pos_by_guid)
+        except Exception as exc:  # noqa: BLE001 -- one rule only
+            skips.append(Skip(
+                category=GrammarCategory.ADHOC_COMPOUND_RULES, source_guid=g,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"compound rule ref repair failed "
+                        f"({type(exc).__name__}: {exc})")))
+    return writes
+
+
+def _repair_allomorph_refs(context, target, picks, dropped, skips):
+    """#134 MED: `PhoneEnvRC`, `PositionRS`, `StemNameRA` on allomorphs that
+    are ALREADY in the target (create-time wiring never revisits them, so an
+    environment / stem name transferred later never lands). Add-only:
+    `PhoneEnvRC` adds missing members, `PositionRS` is insert-only in source
+    order, `StemNameRA` is set only when null. Unresolvable members are
+    `DroppedItemRecord`s. `picks` is the union of the AFFIXES/STEMS leaf
+    picks (None = all)."""
+    source = context.source_handle
+    envs = {}
+    try:
+        for e in target.Cache.LangProject.PhonologicalDataOA.EnvironmentsOS:
+            g = _guid_str_from(e)
+            if g:
+                envs[g] = e
+    except (AttributeError, TypeError):
+        pass
+    tgt_allos = {}
+    for a in _iter_all_allomorphs(target):
+        g = _guid_str_from(a)
+        if g and g not in tgt_allos:
+            tgt_allos[g] = a
+    writes = 0
+    try:
+        entries = list(source.Cache.LangProject.LexDbOA.Entries)
+    except (AttributeError, TypeError):
+        return 0
+    for entry in entries:
+        if picks is not None and _guid_str_from(entry) not in picks:
+            continue
+        src_forms = list(getattr(entry, "AlternateFormsOS", None) or [])
+        lf = getattr(entry, "LexemeFormOA", None)
+        if lf is not None:
+            src_forms.append(lf)
+        for src_form in src_forms:
+            g = _guid_str_from(src_form)
+            tgt_form = tgt_allos.get(g)
+            if tgt_form is None:
+                continue
+            try:
+                writes += _repair_one_allomorph(
+                    src_form, tgt_form, g, envs, target, dropped, skips)
+            except Exception as exc:  # noqa: BLE001 -- one allomorph only
+                skips.append(Skip(
+                    category=GrammarCategory.STEMS, source_guid=g,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=(f"allomorph ref repair failed "
+                            f"({type(exc).__name__}: {exc})")))
+    return writes
+
+
+def _repair_one_allomorph(src_form, tgt_form, g, envs, target, dropped, skips):
+    src_c = _cast_to_concrete(src_form)
+    tgt_c = _cast_to_concrete(tgt_form)
+    writes = 0
+
+    def _drop(field, o, og, reason):
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="MoForm", owner_guid=g,
+                owner_label=_owner_label_for("MoForm", src_form),
+                field_name=field,
+                item_name=_rule_ref_display_name(o)
+                or f"guid={_short_guid(og)}",
+                item_guid=og or "", reason=reason))
+
+    src_envs = list(getattr(src_c, "PhoneEnvRC", None) or [])
+    tgt_envs = getattr(tgt_c, "PhoneEnvRC", None)
+    if src_envs and tgt_envs is not None:
+        have = set(_late_ref_guid_chain(tgt_envs))
+        for e in src_envs:
+            eg = _guid_str_from(e)
+            if eg in have:
+                continue
+            found = envs.get(eg)
+            if found is None:
+                _drop("PhoneEnvRC", e, eg,
+                      f"environment {eg} not present in target")
+                continue
+            tgt_envs.Add(found)
+            have.add(eg)
+            writes += 1
+
+    src_pos = list(getattr(src_c, "PositionRS", None) or [])
+    tgt_pos = getattr(tgt_c, "PositionRS", None)
+    if src_pos and tgt_pos is not None:
+        n = _insert_missing_in_order(
+            tgt_pos, src_pos, envs,
+            lambda o, og: _drop("PositionRS", o, og,
+                                f"environment {og} not present in target"))
+        if n is None:
+            skips.append(Skip(
+                category=GrammarCategory.STEMS, source_guid=g,
+                reason=SkipReason.NEEDS_MANUAL,
+                detail=(f"target allomorph {g} PositionRS is not an in-order "
+                        f"subset of the source; left as-is")))
+        else:
+            writes += n
+
+    src_sn = getattr(src_c, "StemNameRA", None)
+    if src_sn is not None and getattr(tgt_c, "StemNameRA", None) is None:
+        sg = _guid_str_from(src_sn)
+        found = None
+        try:
+            from SIL.LCModel import ICmObject
+            owner_g = _guid_str_from(ICmObject(src_sn).Owner)
+            for pos in _iter_all_pos(target):
+                if _guid_str_from(pos) == owner_g:
+                    for sn in getattr(_as_pos(pos), "StemNamesOC", None) or []:
+                        if _guid_str_from(sn) == sg:
+                            found = sn
+                    break
+        except (AttributeError, TypeError, ImportError):
+            pass
+        if found is not None:
+            tgt_c.StemNameRA = found
+            writes += 1
+        else:
+            _drop("StemNameRA", src_sn, sg,
+                  "stem name not found in target POS's StemNamesOC")
+    return writes
+
+
+def _repair_phoneme_features_late(context, target, picks, dropped, skips):
+    """#134 MED: `_wire_phoneme_features` is anchored to the LAST PHONEMES
+    action, so a run that plans no PHONEMES action never fires it. Idempotent
+    (flexicon matches specs by GUID), so safe after the tail already ran."""
+    if getattr(context, "_did_phoneme_features", False):
+        return 0
+    try:
+        object.__setattr__(context, "_did_phoneme_features", True)
+    except (AttributeError, TypeError):
+        pass
+    skips.extend(_wire_phoneme_features(context, target, None) or [])
+    return 0
+
+
 def _run_late_rule_ref_repair_pass(context, target, tag=None):
     """Issue #134: repair phon-rule `InputPOSesRC` and adhoc-prohibition
     member chains after every category exists. Returns Skips; write counts
@@ -20181,14 +20528,27 @@ def _run_late_rule_ref_repair_pass(context, target, tag=None):
 
     dropped = getattr(context, "_dropped", None)
     skips: list = []
-    counts = {"input_poses": 0, "adhoc": 0}
-    for key, fn, cat in (
+    counts = {"input_poses": 0, "adhoc": 0, "template_rule_refs": 0,
+              "allomorph_refs": 0, "phoneme_features": 0}
+    _p_aff = _picks(GrammarCategory.AFFIXES)
+    _p_stem = _picks(GrammarCategory.STEMS)
+    _allo_picks = (None if _p_aff is None or _p_stem is None
+                   else set(_p_aff) | set(_p_stem))
+    for key, fn, cat, pk in (
             ("input_poses", _repair_rule_input_poses,
-             GrammarCategory.PHONOLOGICAL_RULES),
+             GrammarCategory.PHONOLOGICAL_RULES,
+             _picks(GrammarCategory.PHONOLOGICAL_RULES)),
             ("adhoc", _repair_adhoc_prohib_refs,
-             GrammarCategory.ADHOC_COMPOUND_RULES)):
+             GrammarCategory.ADHOC_COMPOUND_RULES,
+             _picks(GrammarCategory.ADHOC_COMPOUND_RULES)),
+            ("template_rule_refs", _repair_template_and_rule_refs,
+             GrammarCategory.AFFIX_TEMPLATES, None),
+            ("allomorph_refs", _repair_allomorph_refs,
+             GrammarCategory.STEMS, _allo_picks),
+            ("phoneme_features", _repair_phoneme_features_late,
+             GrammarCategory.PHONEMES, None)):
         try:
-            counts[key] = fn(context, target, _picks(cat), dropped, skips)
+            counts[key] = fn(context, target, pk, dropped, skips)
         except Exception as exc:  # noqa: BLE001 -- keep the run's writes
             skips.append(Skip(
                 category=cat, source_guid="",
