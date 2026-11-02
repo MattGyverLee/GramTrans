@@ -12428,6 +12428,15 @@ def _wire_owner_feat_strucs(context, target, plan):
                 detail=f"feature-structure binding {key!r} carries no "
                        "owner_guid/attr; not transferred"))
             continue
+        if attr == "MsEnvFeaturesOA":
+            _copy_set = getattr(context, "_copy_set", None) or {}
+            if owner_guid in _copy_set:
+                # Issue #139: single writer. Feature 028's
+                # `owned.reproduce_moaffix_msenv_data` already reproduced this
+                # field when the allomorph was created this run; T119's
+                # row-wiring pass must not run again on the same owner.
+                continue
+
         category = getattr(GrammarCategory,
                            _FEAT_STRUC_OWNER_CATEGORIES.get(attr, "STEMS"),
                            GrammarCategory.STEMS)
