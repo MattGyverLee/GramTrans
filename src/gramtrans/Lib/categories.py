@@ -13277,13 +13277,18 @@ def _run_infl_feature_link_pass(context, target, tag=None):
         if target_pos is None:
             target_pos = _target_pos_for_source_guid(context, target, pos_guid)
         if target_pos is None:
-            skips.append(Skip(
-                category=GrammarCategory.GRAM_CATEGORIES,
-                source_guid=pos_guid,
-                reason=SkipReason.DEPENDENCY_UNRESOLVED,
-                detail=(f"pos_guid={pos_guid} not in target after "
-                        "categories+features transfer"),
-            ))
+            # Issue #170: reported ONCE. With a drop collector the unsettled
+            # deferred pairs become DroppedItemRecords in
+            # `_reconcile_deferred_infl_pairs`; a Skip as well would count the
+            # same loss in two outcome buckets.
+            if dropped is None:
+                skips.append(Skip(
+                    category=GrammarCategory.GRAM_CATEGORIES,
+                    source_guid=pos_guid,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=(f"pos_guid={pos_guid} not in target after "
+                            "categories+features transfer"),
+                ))
             continue
         # CAST DISCIPLINE (research.md T004-C): InflectableFeatsRC requires an
         # IPartOfSpeech cast on the live LCM runtime; fakes fall through.
@@ -13295,12 +13300,13 @@ def _run_infl_feature_link_pass(context, target, tag=None):
             pos_typed = target_pos
         feats_rc = getattr(pos_typed, "InflectableFeatsRC", None)
         if feats_rc is None:
-            skips.append(Skip(
-                category=GrammarCategory.GRAM_CATEGORIES,
-                source_guid=pos_guid,
-                reason=SkipReason.DEPENDENCY_UNRESOLVED,
-                detail=f"InflectableFeatsRC unavailable on target POS {pos_guid}",
-            ))
+            if dropped is None:  # issue #170: see the unresolved-POS branch
+                skips.append(Skip(
+                    category=GrammarCategory.GRAM_CATEGORIES,
+                    source_guid=pos_guid,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=f"InflectableFeatsRC unavailable on target POS {pos_guid}",
+                ))
             continue
         for feature_guid in feature_guids:
             target_feat = _resolve_target_by_guid(target, feature_guid)
