@@ -334,6 +334,29 @@ def test_move_type_create_failure_drops_relation_without_member_records(
                    for d in dropped)
 
 
+def test_issue186_lazy_type_create_failure_emits_one_drop_record(monkeypatch):
+    """Move must not emit both `_create_target_lex_ref_type` and
+    `_append_type_not_found` records for the same lazy-create failure."""
+    def _boom(*_a, **_k):
+        raise RuntimeError("create failed")
+
+    monkeypatch.setattr(categories, "_create_with_guid", _boom)
+    monkeypatch.setattr(categories, "ILexRefTypeFactory_ref", lambda: object())
+    new_t = _RefType("type-new", "GT141 New", _COLLECTION)
+    rel = _SrcRel("rel-1", new_t, [_Member("e1"), _Member("e2")])
+    new_t.MembersOC.Add(rel)
+    source = _Project([new_t])
+    factory = _RelFactory()
+    target = _Project([], rel_factory=factory)
+    ctx = _Ctx(source, target, {"e1": _Member("e1"), "e2": _Member("e2")})
+    dropped: list = []
+    categories.reproduce_all_lexical_relations(ctx, _TAG, {}, dropped)
+    type_drops = [d for d in dropped if d.owner_kind == "LexRefType"]
+    assert len(type_drops) == 1
+    assert type_drops[0].item_guid == "rel-1"
+    assert "could not be created" in type_drops[0].reason
+
+
 # ===========================================================================
 # Issue #163 QC cycle 1: relation create fails AFTER a lazy type create
 # ===========================================================================
