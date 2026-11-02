@@ -32,6 +32,7 @@ if __package__:
         FIDELITY_CENSUS_ARTIFACT_FIELDS,
         STARTER_BASELINE_ARTIFACT_FIELDS,
         CategoryReport,
+        CreatedPosChildren,
         DroppedItemRecord,
         ExcludedLossy,
         FidelityStatus,
@@ -60,6 +61,7 @@ else:
         FIDELITY_CENSUS_ARTIFACT_FIELDS,
         STARTER_BASELINE_ARTIFACT_FIELDS,
         CategoryReport,
+        CreatedPosChildren,
         DroppedItemRecord,
         ExcludedLossy,
         FidelityStatus,
@@ -96,6 +98,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                      extra_enrichments=(),
                      extra_process_rules=(),
                      extra_affix_slot_links=(),
+                     extra_created_pos_children=None,
                      not_added=None,
                      text_added: int = 0,
                      text_updated: int = 0,
@@ -462,6 +465,22 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         affix_slot_links=tuple(getattr(plan, "affix_slot_links", ()))
         + tuple(extra_affix_slot_links),
         census=census,
+        # Issue #126: owned children of each created POS. Move passes the
+        # MEASURED rows; every other caller (Preview) gets the plan's
+        # projection, so both legs read one shape from one source.
+        created_pos_children=(
+            tuple(extra_created_pos_children)
+            if extra_created_pos_children is not None
+            else tuple(
+                CreatedPosChildren(
+                    owner_guid=a.source_guid,
+                    owner_label=a.summary,
+                    collections=tuple(a.owned_children),
+                )
+                for a in plan.actions
+                if isinstance(a, PlannedAction) and a.owned_children
+            )
+        ),
         # T024d-a: the per-class matched tallies the census consumes as
         # `starter_matched_to_source`. Sorted so the snapshot diffs
         # deterministically; empty on any plan whose matcher has not run, which
@@ -1865,6 +1884,21 @@ def _to_snapshot_json(self) -> str:
     if enriched is not None:
         payload["enriched_counts"] = enriched
 
+    # Issue #126: owned children of created POS.
+    if self.created_pos_children:
+        payload["created_pos_children"] = [
+            {
+                "owner_guid": r.owner_guid,
+                "owner_label": r.owner_label,
+                "collections": [
+                    {"field_name": c.field_name, "added": c.added,
+                     "dropped": c.dropped}
+                    for c in r.collections
+                ],
+            }
+            for r in self.created_pos_children
+        ]
+
     # FR-023..FR-025: MoAffixProcess outcomes, reproduced or not.
     if self.process_rules:
         payload["process_rules"] = [
@@ -2593,6 +2627,31 @@ def _render_038_lines(report: RunReport) -> Iterable[str]:
             )
 
         for line in _rows(enrichments, _enrichment_row):
+            yield line
+
+    # ---- Issue #126: owned children of created POS -----------------------
+    created_children = getattr(report, "created_pos_children", ())
+    if created_children:
+        total = sum(c.added for r in created_children for c in r.collections)
+        yield (
+            f"  Owned children CREATED under new part-of-speech items "
+            f"(slots, templates, reference forms, ...) -- {len(created_children)}"
+            f" POS, {total} child object(s):"
+        )
+
+        def _created_children_row(r) -> str:
+            parts = []
+            for c in r.collections:
+                bits = f"{c.field_name} +{c.added}"
+                if c.dropped:
+                    bits += f" ({c.dropped} dropped with a reason)"
+                parts.append(bits)
+            return (
+                f"    - POS \"{r.owner_label}\" {_guid8(r.owner_guid)}: "
+                + "; ".join(parts)
+            )
+
+        for line in _rows(created_children, _created_children_row):
             yield line
 
     # ---- FR-023..FR-025 / SC-006: process rules --------------------------

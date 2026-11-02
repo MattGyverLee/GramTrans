@@ -25,6 +25,7 @@ if __package__:
         ActionOutcome,
         OUTCOME_FAILED,
         OUTCOME_SKIPPED,
+        CreatedPosChildren,
         DroppedItemRecord,
         GrammarCategory,
         LeafExecutionFailure,
@@ -60,6 +61,7 @@ else:
         ActionOutcome,
         OUTCOME_FAILED,
         OUTCOME_SKIPPED,
+        CreatedPosChildren,
         DroppedItemRecord,
         GrammarCategory,
         LeafExecutionFailure,
@@ -746,6 +748,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # child whose dedicated category create path runs later in this same
     # execute() -- see `_enrich_owned_collections`.
     _measured_enrichments: list = []
+    _created_pos_children: list = []  # Issue #126: measured, per created POS
     _planned_action_guids = frozenset(
         a.source_guid for a in getattr(plan, "actions", ())
         if getattr(a, "source_guid", None)
@@ -1063,12 +1066,18 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             # not on the next run. Own try: a fill failure must not turn the
             # (successful) POS create into a leaf failure.
             try:
-                _fill_created_pos_collections(
+                _fill_rows = _fill_created_pos_collections(
                     action, _result, source, target, report_sink,
                     ws_map=ws_map, dropped=_dropped,
                     planned_action_guids=_planned_action_guids,
                     deferred_pairs=_deferred_infl_pairs,
                 )
+                if _fill_rows:  # Issue #126: counted in the Move report
+                    _created_pos_children.append(CreatedPosChildren(
+                        owner_guid=action.source_guid,
+                        owner_label=action.summary,
+                        collections=tuple(_fill_rows),
+                    ))
             except Exception as _fill_exc:  # noqa: BLE001 -- LCM/COM failures are wide
                 _log.exception(
                     "execute leaf-dispatch: created-POS collection fill FAILED "
@@ -1380,6 +1389,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         # the report at all (per_category[*].added is computed from the
         # PLAN, not actual write outcomes).
         extra_leaf_execution_failures=tuple(_leaf_execution_failures),
+        extra_created_pos_children=tuple(_created_pos_children),
         not_added=tuple(_not_added),
         text_added=_texts_added,
         text_updated=_texts_updated,

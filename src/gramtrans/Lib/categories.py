@@ -796,6 +796,24 @@ def _compare_pos_owned_collections(piece, tgt_obj, context):
     return tuple(rows)
 
 
+def project_created_pos_children(src_pos, context):
+    """Issue #126 (Principle III): the owned children Move will create under a
+    POS this run ADDs, as `tuple[EnrichedCollection, ...]`.
+
+    A created POS has no target counterpart, so this is
+    `_compare_pos_owned_collections` against an EMPTY destination, minus what
+    `transfer._fill_created_pos_collections` does not create: the
+    `InflectableFeatsRC` reference collection (written by the single
+    feature-link writer and previewed by `render_feature_category_links`).
+    Rows that would add nothing are dropped, exactly as the fill drops them,
+    so Preview rows and Move rows compare field for field.
+    """
+    return tuple(
+        r for r in _compare_pos_owned_collections(src_pos, None, context)
+        if r.added and r.field_name != "InflectableFeatsRC"
+    )
+
+
 def _lcm_class_for_category(category) -> str:
     """`preview.lcm_class_for_category`, imported lazily.
 

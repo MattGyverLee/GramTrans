@@ -1168,6 +1168,51 @@ def expand_lexicon_categories(selection: Selection):
     return dataclasses.replace(selection, categories=categories), (note,)
 
 
+# Issue #126: mirrors `transfer._ENRICHMENT_CATEGORIES` (POS is aliased to
+# gram_categories); the categories whose ADD runs `_fill_created_pos_collections`.
+_POS_ADD_CATEGORIES = frozenset({
+    GrammarCategory.GRAM_CATEGORIES,
+    GrammarCategory.POS,
+})
+
+
+def _attach_created_pos_children(actions: list, context) -> None:
+    """Issue #126: stamp `PlannedAction.owned_children` on every POS ADD, in
+    place. Read-only on both projects; never breaks Preview (logged)."""
+    if __package__:
+        from . import categories as _cats126
+    else:
+        import categories as _cats126  # type: ignore
+    idx = [i for i, a in enumerate(actions)
+           if isinstance(a, PlannedAction)
+           and a.category in _POS_ADD_CATEGORIES]
+    if not idx:
+        return
+    try:
+        wanted = {str(actions[i].source_guid or "").lower() for i in idx}
+        found = {}
+        for pos in context.source_handle.POS.GetAll(recursive=True):
+            g = (_cats126._guid_str_from(pos) or "").lower()
+            if g in wanted:
+                found[g] = pos
+    except Exception:  # noqa: BLE001 -- Preview must survive; logged
+        _log.exception("build_run_plan: created-POS children gather failed")
+        return
+    for i in idx:
+        a = actions[i]
+        src = found.get(str(a.source_guid or "").lower())
+        if src is None:
+            continue
+        try:
+            rows = _cats126.project_created_pos_children(src, context)
+        except Exception:  # noqa: BLE001
+            _log.exception("build_run_plan: created-POS children projection "
+                           "failed guid=%s", a.source_guid)
+            continue
+        if rows:
+            actions[i] = dataclasses.replace(a, owned_children=rows)
+
+
 def build_run_plan(
     context: RunContext,
     selection: Selection,
@@ -1677,6 +1722,11 @@ def build_run_plan(
         actions, overwrites, skips, _LEAF_DISPATCH_CATEGORIES,
         _pull_in_pieces, _deselected_but_present,
     )
+
+    # Issue #126 (Principle III): project the owned children each created POS
+    # will receive, so Preview lists what `_fill_created_pos_collections`
+    # writes. After the pull-in: a pulled-in POS is an ADD too.
+    _attach_created_pos_children(actions, context)
 
     # Issue #33: narrow `msa_slot_bindings` from "every bound MSA in the
     # source" to "the bindings THIS RUN touches". Runs here, after the
