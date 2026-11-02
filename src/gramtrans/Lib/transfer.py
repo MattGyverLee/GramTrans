@@ -1385,7 +1385,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Fold exactly those (never another leg's projection, which Move re-decides
     # and may resolve). Move's own records go first: on an identity collision
     # the Move-time record and its reason win, and the drop appears once.
-    _report_dropped = merge_dropped_records(_dropped, move_blind_plan_drops(plan))
+    # Issue #192: not for a text Move skipped whole -- its Skip says so.
+    _skipped_texts = ()
+    if isinstance(_text_outcome, dict):
+        _skipped_texts = [getattr(sk, "source_guid", "")
+                          for sk in (_text_outcome.get("skips") or ())]
+    _report_dropped = merge_dropped_records(
+        _dropped, move_blind_plan_drops(plan, _skipped_texts))
     # Feature 038 T045: hand the report the MEASURED enrichment records in
     # place of the plan's PROJECTION, so a Move report says what the writes
     # achieved. Substitution, never addition: `report._build_from_plan` UNIONs

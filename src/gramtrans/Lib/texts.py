@@ -28,6 +28,7 @@ flexicon accessors (grounded live via FLExTools MCP static surface, 2026-07-12):
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 from typing import List, Optional
@@ -736,6 +737,7 @@ def plan_texts(selection, source, target, ctx, resolver_cache, dropped) -> List:
             is_translated = None
         source_text_str = _best_str(text_ops, text, "GetSource") or ""
 
+        _n_drops_before = len(dropped)
         action, target_guid = _text_disposition(
             target, src_guid, title, source=source, source_text=text)
         genre_decisions = _decide_genres(text, source, target, resolver_cache, dropped)
@@ -745,6 +747,14 @@ def plan_texts(selection, source, target, ctx, resolver_cache, dropped) -> List:
             resolver_cache, dropped, src_guid, title,
             tags_by_seg=tags_by_seg,
         )
+        # Issue #192: stamp this text's drops with its GUID so Move can leave
+        # out the planned drops of a text it skips whole.
+        if src_guid:
+            dropped[_n_drops_before:] = [
+                dataclasses.replace(d, text_guid=src_guid)
+                if dataclasses.is_dataclass(d) else d
+                for d in dropped[_n_drops_before:]
+            ]
 
         plans.append(TextTransferPlan(
             source_guid=src_guid,
