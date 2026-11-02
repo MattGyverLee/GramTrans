@@ -8239,7 +8239,42 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
     return (rel_guid, target_type, copied_members)
 
 
-def _rebuild_targets_rs_in_source_order(existing, copied_members) -> None:
+def _try_add_lex_rel_targets_rs_member(rel, member, rel_guid, dropped):
+    """Issue #132: never-silent `TargetsRS.Add` on lexical-relation reproduce.
+
+    When ``apply_reference``-style resolution has already succeeded but the
+    owning sequence rejects ``Add`` (pythonnet / LCM binding gaps), the
+    relation must not finish with a partial or empty ``TargetsRS`` and no
+    report line."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    m_guid = _guid_str_from(member)
+    try:
+        rel.TargetsRS.Add(member)
+        return True
+    except (AttributeError, TypeError) as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "LexReference %s TargetsRS.Add failed for member %s: %s",
+            rel_guid, m_guid, exc, exc_info=True,
+        )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexReference",
+                owner_guid=rel_guid,
+                owner_label="",
+                field_name="TargetsRS",
+                item_name=_references._item_label(member),
+                item_guid=m_guid,
+                reason=f"TargetsRS.Add failed: {exc}",
+            ))
+        return False
+
+
+def _rebuild_targets_rs_in_source_order(existing, copied_members, *,
+                                        dropped=None, rel_guid="") -> None:
     """Make `existing.TargetsRS` match `copied_members` (already source-
     ordered by `_evaluate_lexical_relation`) exactly, in place -- used ONLY
     by `reproduce_lexical_relation`'s cache-hit branch, which (per that
@@ -8258,17 +8293,46 @@ def _rebuild_targets_rs_in_source_order(existing, copied_members) -> None:
         try:
             clear()
             for member in copied_members:
-                existing.TargetsRS.Add(member)
+                _try_add_lex_rel_targets_rs_member(
+                    existing, member, rel_guid, dropped)
             return
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError) as exc:
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "LexReference %s TargetsRS rebuild (clear path) failed: %s",
+                rel_guid, exc, exc_info=True,
+            )
+            if dropped is not None and rel_guid:
+                _append_dropped_once(dropped, DroppedItemRecord(
+                    owner_kind="LexReference",
+                    owner_guid=rel_guid,
+                    owner_label="",
+                    field_name="TargetsRS",
+                    item_name="",
+                    item_guid=rel_guid,
+                    reason=f"TargetsRS rebuild failed: {exc}",
+                ))
     try:
         fresh = type(existing.TargetsRS)()
         for member in copied_members:
             fresh.Add(member)
         existing.TargetsRS = fresh
-    except (AttributeError, TypeError):
-        pass
+    except (AttributeError, TypeError) as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "LexReference %s TargetsRS rebuild (replace path) failed: %s",
+            rel_guid, exc, exc_info=True,
+        )
+        if dropped is not None and rel_guid:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexReference",
+                owner_guid=rel_guid,
+                owner_label="",
+                field_name="TargetsRS",
+                item_name="",
+                item_guid=rel_guid,
+                reason=f"TargetsRS rebuild failed: {exc}",
+            ))
 
 
 def _discard_empty_lazy_lex_ref_type(target, target_type, created_types,
@@ -8406,7 +8470,8 @@ def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
 
     existing = reproduced.get(rel_guid) if rel_guid else None
     if existing is not None:
-        _rebuild_targets_rs_in_source_order(existing, copied_members)
+        _rebuild_targets_rs_in_source_order(
+            existing, copied_members, dropped=dropped, rel_guid=rel_guid)
         return existing
 
     if __package__:
@@ -8443,10 +8508,7 @@ def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
         return None
 
     for member in copied_members:
-        try:
-            new_rel.TargetsRS.Add(member)
-        except (AttributeError, TypeError):
-            pass
+        _try_add_lex_rel_targets_rs_member(new_rel, member, rel_guid, dropped)
 
     # Issue #135: LexReference.Name / Comment (flexicon never carries them).
     _copy_supplemental_scalars(
