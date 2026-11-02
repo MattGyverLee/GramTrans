@@ -2624,7 +2624,7 @@ def _rules_missing_ref_warnings(
         """Guess stranded_ref_kind from the rule subclass fields."""
         try:
             from SIL.LCModel import ICmObject
-            class_name = ICmObject(getattr(rule_obj, "concrete", rule_obj)).ClassName
+            class_name = ICmObject(_shared_unwrap(rule_obj)).ClassName
         except Exception:
             class_name = getattr(rule_obj, "class_name",
                                  getattr(rule_obj, "ClassName", "")) or ""
@@ -3671,7 +3671,7 @@ def _plan_verb_vertical_inner(
 
     # ----- Templates + slots -----
     for src_template_wrap in source.MorphRules.GetAllAffixTemplatesForPOS(src_verb):
-        src_template = src_template_wrap.concrete
+        src_template = _shared_unwrap(src_template_wrap)
         tpl_guid = _guid_str(src_template)
 
         slots_present = any(

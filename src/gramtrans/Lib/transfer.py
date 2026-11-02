@@ -2263,7 +2263,7 @@ def _find_source_template_by_guid(source, guid_str: str, owner_pos_guid: str = N
             candidate_poses.append(_unwrap(pos))
     for src_pos in candidate_poses:
         for t in source.MorphRules.GetAllAffixTemplatesForPOS(src_pos):
-            concrete = t.concrete
+            concrete = _shared_unwrap(t)
             if _guid_str(concrete) == guid_str:
                 return t
     return None
@@ -2662,7 +2662,7 @@ def _find_target_env_by_guid(target, env_guid: str):
     except AttributeError:
         return None
     for e in envs:
-        concrete = e.concrete if hasattr(e, "concrete") else e
+        concrete = _shared_unwrap(e)
         if str(ICmObject(concrete).Guid).lower() == env_guid:
             return concrete
     return None
