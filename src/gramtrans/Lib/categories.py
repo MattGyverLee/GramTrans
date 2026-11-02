@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import dataclasses
 import types
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
 if __package__:
     from .models import (
@@ -9248,6 +9248,41 @@ def _appendix_drop_reason(scan_errors) -> str:
             "(030 link-by-GUID scope; not created)")
 
 
+def _report_sense_list_add_failure(
+    dropped,
+    owner_guid: str,
+    owner_label: str,
+    field_name: str,
+    item_name: str,
+    item_guid: str,
+    exc: Optional[BaseException] = None,
+) -> None:
+    """Issue #132: LINK-by-GUID / thesaurus LINK with a failed `.Add()` used to
+    swallow `AttributeError`/`TypeError` and leave a LINK row with no drop."""
+    if exc is None:
+        reason = (
+            f"{field_name} collection missing on target sense; "
+            "reference resolved in target but link not written"
+        )
+    else:
+        reason = (
+            f"{field_name} item present in target but could not be added "
+            f"({type(exc).__name__}: {exc})"
+        )
+    _append_dropped_once(
+        dropped,
+        DroppedItemRecord(
+            owner_kind="LexSense",
+            owner_guid=owner_guid,
+            owner_label=owner_label,
+            field_name=field_name,
+            item_name=item_name,
+            item_guid=item_guid,
+            reason=reason,
+        ),
+    )
+
+
 def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> tuple:
     """030 Section A (contracts/appendix-link-by-guid.md): link each source
     `AppendixesRC` reference to a target-owned `LexAppendix` by GUID; if the
@@ -9297,12 +9332,20 @@ def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> tuple:
             item_name=label, item_guid=guid))
         if new_sense is None:
             continue  # Preview: the LINK is recorded above; no write
+        coll = getattr(new_sense, "AppendixesRC", None)
+        if coll is None:
+            _report_sense_list_add_failure(
+                dropped, owner_guid, owner_label, "AppendixesRC",
+                label, guid)
+            continue
+        if _collection_already_has(coll, tgt_ap):
+            continue
         try:
-            coll = getattr(new_sense, "AppendixesRC", None)
-            if coll is not None and not _collection_already_has(coll, tgt_ap):
-                coll.Add(tgt_ap)
-        except (AttributeError, TypeError):
-            pass
+            coll.Add(tgt_ap)
+        except Exception as exc:  # noqa: BLE001 -- never silent (#132)
+            _report_sense_list_add_failure(
+                dropped, owner_guid, owner_label, "AppendixesRC",
+                label, guid, exc)
     return tuple(records)
 
 
@@ -9417,12 +9460,22 @@ def _resolve_sense_thesaurus_items(src_sense, new_sense, target, resolver_cache,
         )
         if not ok or resolved is None:
             continue
+        item_name = _references._item_label(src_item)
+        item_guid = _guid_str_from(src_item)
+        coll = getattr(new_sense, "ThesaurusItemsRC", None)
+        if coll is None:
+            _report_sense_list_add_failure(
+                dropped, owner_guid, owner_label, "ThesaurusItemsRC",
+                item_name, item_guid)
+            continue
+        if _collection_already_has(coll, resolved):
+            continue
         try:
-            coll = getattr(new_sense, "ThesaurusItemsRC", None)
-            if coll is not None and not _collection_already_has(coll, resolved):
-                coll.Add(resolved)
-        except (AttributeError, TypeError):
-            pass
+            coll.Add(resolved)
+        except Exception as exc:  # noqa: BLE001 -- never silent (#132)
+            _report_sense_list_add_failure(
+                dropped, owner_guid, owner_label, "ThesaurusItemsRC",
+                item_name, item_guid, exc)
     return tuple(records)
 
 
