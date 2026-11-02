@@ -56,9 +56,12 @@ terminal buckets by the lead and are now real `CLASSIFICATION` entries:
   027-complex-forms-variants for eventual reproduction.
 - `LexEntryRef.{ComponentLexemesRS, PrimaryLexemesRS, VariantEntryTypesRS,
   ComplexEntryTypesRS, ShowComplexFormsInRS}` -> DROP_REPORTED, SUBSUMED by
-  the parent `EntryRefsOS` record above -- no `LexEntryRef` is ever created,
-  so these 5 fields cannot exist independently of that drop. Each points at
-  the SAME emission site as `EntryRefsOS`; no double-counting.
+  the parent `EntryRefsOS` record above. Feature 027 DOES create a
+  `LexEntryRef` for each reproducible ref (`_run_entryref_create_pass`), so
+  these fields are COPIED for those; a not-reproducible ref gets no
+  separate record per field, only the one on its owning `EntryRefsOS` row.
+  Each points at the SAME emission site as `EntryRefsOS`; no
+  double-counting.
 - `LexEntry.MainEntriesOrSensesRS` -> OUT_OF_SCOPE_EXCLUDED
   (rationale-class "read-only-derived-aggregate"; see above).
 - `MoAffixAllomorph.{InflectionClassesRC, MsEnvFeaturesOA,
@@ -756,8 +759,10 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         Bucket.DROP_REPORTED,
         "SAME emission site as LexEntry.EntryRefsOS: "
         "categories._report_dropped_entry_refs (categories.py:8559); "
-        "reproducible refs are instead COPIED via "
-        "categories._run_entryref_create_pass (categories.py:12662)",
+        "reproducible refs are instead COPIED: the ref is created by "
+        "categories._run_entryref_create_pass (categories.py:12662) and "
+        "this field is wired with the components in "
+        "categories._run_post_pass_a (C2)",
         note="subsumed by the parent EntryRefsOS row -- "
              "027-complex-forms-variants added the LexEntryRef create site "
              "(_create_entryref_container, categories.py:12385, using "
