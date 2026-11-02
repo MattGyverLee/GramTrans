@@ -30,7 +30,19 @@ WS_EN = FakeWS("en", 2)
 
 def _target(pos_items=()):
     lp = FakeLangProject(pos_list=FakePossibilityList(pos_items))
-    return FakeProject(ws_list=[WS_VERN, WS_EN], lang_project=lp)
+    proj = FakeProject(ws_list=[WS_VERN, WS_EN], lang_project=lp)
+    # Issue #191: a same-GUID POS can plan as UPDATE, whose Move arm merges
+    # through `target.PossibilityLists`; the fake needs the (no-op) surface.
+    proj.PossibilityLists = _NoopPossibilityLists()
+    return proj
+
+
+class _NoopPossibilityLists:
+    def GetSyncableProperties(self, item):
+        return {}
+
+    def ApplySyncableProperties(self, item, props, ws_map=None):
+        return None
 
 
 def _run(analyses, source, target):
@@ -160,6 +172,9 @@ def test_category_present_resolved_and_set():
     # A matched POS resolves (LINK/UPDATE — source-preferring), never dropped.
     assert decision.action in (ReferenceAction.LINK, ReferenceAction.UPDATE)
     assert decision.action != ReferenceAction.REPORT_DROPPED
-    assert [d for d in dropped if d.field_name == "CategoryRA"] == []
+    # (the no-op PossibilityLists fake has no WS registry, so the UPDATE arm's
+    # own "writing system absent in target" notes are not under test here)
+    assert [d for d in dropped if d.field_name == "CategoryRA"
+            and "absent in target" not in d.reason] == []
     # The resolved POS is wired onto the target analysis.
     assert target.WfiAnalyses.created[0].CategoryRA is tgt_pos

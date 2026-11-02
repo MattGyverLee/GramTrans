@@ -1039,7 +1039,8 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
 
         # Category (resolve-or-report). Only wire on a resolved (LINK/CREATE/
         # UPDATE→has target_item) decision; REPORT_DROPPED leaves it unset.
-        _apply_category(plan, target, analysis_obj, wa_ops, resolver_cache, tag, ws_map, dropped)
+        _apply_category(plan, target, analysis_obj, wa_ops, resolver_cache, tag, ws_map, dropped,
+                        source=source)
 
         # Morph bundles (identity wiring).
         apply_morph_bundles(analysis_obj, plan.morph_bundles, target, ctx, dropped)
@@ -1073,7 +1074,8 @@ def _write_verdict(plan, wa_ops, analysis_obj, agent):
                    plan.source_guid)
 
 
-def _apply_category(plan, target, analysis_obj, wa_ops, resolver_cache, tag, ws_map, dropped):
+def _apply_category(plan, target, analysis_obj, wa_ops, resolver_cache, tag, ws_map, dropped,
+                    source=None):
     decision = plan.category_decision
     if decision is None or decision.action == ReferenceAction.REPORT_DROPPED:
         return  # already reported; leave category unset (FR-011)
@@ -1107,6 +1109,33 @@ def _apply_category(plan, target, analysis_obj, wa_ops, resolver_cache, tag, ws_
     # the uncast call raised FP_ParameterError, `_texts._safe` swallowed it and
     # every legitimate LINK left CategoryRA None, unreported. Cast first; if
     # the set still fails, report it at Move time instead of swallowing it.
+    if decision.action == ReferenceAction.UPDATE:
+        # Issue #191: Preview plans an UPDATE (the target POS diverges from the
+        # source's Name/Abbreviation/Description), so Move must apply it, not
+        # just link. `apply_reference`'s UPDATE arm is the same non-destructive
+        # merge every other reference site uses; `owner_obj=None` because the
+        # link itself is made below through the typed `SetCategory`. A failed
+        # merge is reported, and the link is still made (the POS exists).
+        try:
+            _references.apply_reference(
+                decision, target, None, _pos_spec(), resolver_cache, tag,
+                ws_map=ws_map or None, source=source, dropped=dropped)
+        except Exception as exc:  # noqa: BLE001 -- reported, never swallowed
+            src = getattr(decision, "source_item", None)
+            _log.warning(
+                "apply_analyses: category UPDATE failed for analysis %s "
+                "(%s: %s) -- linking without the update",
+                plan.source_guid, type(exc).__name__, exc)
+            dropped.append(DroppedItemRecord(
+                owner_kind="WfiAnalysis",
+                owner_guid=plan.source_guid or "?",
+                owner_label="",
+                field_name="CategoryRA",
+                item_name=_references._item_label(src) if src is not None else "",
+                item_guid=(_guid_str(src) if src is not None else "")
+                or _guid_str(target_item) or "",
+                reason=CATEGORY_UPDATE_FAILED_REASON,
+            ))
     category = _as_part_of_speech(target_item)
     try:
         wa_ops.SetCategory(analysis_obj, category)
@@ -1130,6 +1159,8 @@ def _apply_category(plan, target, analysis_obj, wa_ops, resolver_cache, tag, ws_
 # Issue #168: fixed reason for a Move-time CategoryRA set failure (the
 # exception text goes to the log, so the record's identity stays stable).
 CATEGORY_SET_FAILED_REASON = "category set failed in target"
+# Issue #191: a CategoryRA UPDATE decision whose field merge raised.
+CATEGORY_UPDATE_FAILED_REASON = "category update failed in target"
 
 
 def _as_part_of_speech(item):
