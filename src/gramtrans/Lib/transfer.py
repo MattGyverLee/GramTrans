@@ -617,6 +617,35 @@ def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips, post_pass_fail
             pass
 
 
+def _ensure_late_rule_refs(exec_ctx, target, exec_skips):
+    """Issue #134: repair phon-rule `InputPOSesRC` and adhoc-prohibition
+    member chains AFTER the leaf-dispatch loop (their targets -- POS,
+    allomorphs, MSAs -- are created by categories that dispatch later).
+    Own latch; never raises."""
+    if getattr(exec_ctx, "_did_late_rule_refs", False):
+        return
+    if getattr(exec_ctx, "_run_plan", None) is None:
+        return
+    if __package__:
+        from .categories import _run_late_rule_ref_repair_pass
+    else:
+        from categories import _run_late_rule_ref_repair_pass  # type: ignore
+    try:
+        object.__setattr__(exec_ctx, "_did_late_rule_refs", True)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        late_skips = _run_late_rule_ref_repair_pass(exec_ctx, target)
+    except Exception:
+        _log.exception("execute: late rule-reference repair FAILED (swallowed)")
+        return
+    if late_skips and exec_skips is not None:
+        try:
+            exec_skips.extend(late_skips)
+        except (AttributeError, TypeError):
+            pass
+
+
 def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             interactive_session=None) -> RunReport:
     """Apply `plan.actions` to `target` and return a finalized RunReport.
@@ -1198,6 +1227,10 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         post_pass_failures=_leaf_execution_failures,
     )
     leaf_failed += len(_leaf_execution_failures) - _post_pass_failure_start
+
+    # Issue #134: phon-rule InputPOSesRC + adhoc member chains, after every
+    # category (POS / STEMS dispatch after the rules that reference them).
+    _ensure_late_rule_refs(exec_ctx, target, _exec_skips)
 
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check

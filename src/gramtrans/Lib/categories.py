@@ -19790,3 +19790,230 @@ def closure_dependencies_for(context, selection=None, registry=None):
         return tuple(refs)
 
     return _dependencies
+
+
+# ---------------------------------------------------------------------------
+# Issue #134: end-of-run repair of create-time-only reference wiring
+# ---------------------------------------------------------------------------
+#
+# The #37/#108 pattern: a reference wired only when its owner is CREATED is
+# never revisited once the owner is ALREADY_PRESENT, and is wired against a
+# target that does not exist yet when the owner's category dispatches BEFORE
+# the target's. Two HIGH sites of #134, repaired here after every category:
+#
+# * `IPhSegRuleRHS.InputPOSesRC` -- PHONOLOGICAL_RULES dispatches before
+#   GRAM_CATEGORIES, so the POS is absent at create time; the miss was
+#   recorded as a drop and only repaired one run late.
+# * `IMoAlloAdhocProhib` `FirstAllomorphRA`/`RestOfAllosRS` and
+#   `IMoMorphAdhocProhib` `FirstMorphemeRA`/`RestOfMorphsRS` -- ADHOC
+#   dispatches before STEMS (allomorphs/MSAs), and the miss was SILENT.
+#
+# INSERT-ONLY: nothing already in the target is moved or removed. A target
+# chain that is not a prefix of the source chain is reported, not rewritten.
+# Idempotent: a second run finds every chain complete and writes nothing.
+
+def _late_ref_guid_chain(items):
+    return [g for g in (_guid_str_from(x) for x in items) if g]
+
+
+def _repair_adhoc_prohib_chain(src_rule, tgt_rule, class_name, target, dropped,
+                               skips):
+    """Complete one adhoc prohibition's `First*RA` + `RestOf*RS` members.
+
+    Measured live (Mbugwe -> Target): the create path wires the members that
+    already exist (here the `RestOf` ones) and silently skips the rest (the
+    `First` MSA, created later by STEMS), so First and Rest are repaired
+    separately. First is set only when null. Rest is insert-only: the target's
+    members must be an in-order subsequence of the source's (else NEEDS_MANUAL,
+    untouched) and each missing one is inserted at its source position.
+    Unresolvable members are `DroppedItemRecord`s. Returns writes made."""
+    if class_name == "MoAlloAdhocProhib":
+        first_attr, rest_attr, pool = (
+            "FirstAllomorphRA", "RestOfAllosRS", _iter_all_allomorphs)
+    else:
+        first_attr, rest_attr, pool = (
+            "FirstMorphemeRA", "RestOfMorphsRS", _iter_all_msas)
+    rule_guid = _guid_str_from(src_rule)
+    label = _owner_label_for(class_name, src_rule)
+    src_first = getattr(src_rule, first_attr, None)
+    src_rest = list(getattr(src_rule, rest_attr, None) or [])
+    tgt_first = getattr(tgt_rule, first_attr, None)
+    tgt_rest = getattr(tgt_rule, rest_attr)
+    src_rest_g = _late_ref_guid_chain(src_rest)
+    tgt_rest_g = _late_ref_guid_chain(tgt_rest)
+    it = iter(src_rest_g)
+    if not all(g in it for g in tgt_rest_g):  # not an in-order subsequence
+        skips.append(Skip(
+            category=GrammarCategory.ADHOC_COMPOUND_RULES,
+            source_guid=rule_guid, reason=SkipReason.NEEDS_MANUAL,
+            detail=(f"target {class_name} {rule_guid} {rest_attr} "
+                    f"{tgt_rest_g} is not an in-order subset of the source "
+                    f"{src_rest_g}; left as-is (review manually)")))
+        return 0
+    by_guid = {}
+    for obj in pool(target):
+        g = _guid_str_from(obj)
+        if g and g not in by_guid:
+            by_guid[g] = obj
+
+    def _drop(field, src_obj, g):
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind=class_name, owner_guid=rule_guid,
+                owner_label=label, field_name=field,
+                item_name=_rule_ref_display_name(src_obj)
+                or f"guid={_short_guid(g)}",
+                item_guid=g or "",
+                reason="member absent from target -- prohibition left "
+                       "incomplete"))
+
+    writes = 0
+    if src_first is not None and tgt_first is None:
+        g = _guid_str_from(src_first)
+        found = by_guid.get(g)
+        if found is None:
+            _drop(first_attr, src_first, g)
+        else:
+            setattr(tgt_rule, first_attr, found)
+            writes += 1
+    idx = 0
+    present = set(tgt_rest_g)
+    for src_obj in src_rest:
+        g = _guid_str_from(src_obj)
+        if g in present:
+            idx += 1
+            continue
+        found = by_guid.get(g)
+        if found is None:
+            _drop(rest_attr, src_obj, g)
+            continue
+        tgt_rest.Insert(idx, found)
+        idx += 1
+        writes += 1
+    return writes
+
+
+def _repair_adhoc_prohib_refs(context, target, picks, dropped, skips):
+    source = context.source_handle
+    tgt_by_guid = {}
+    for obj in _rules_enumerate_all(target):
+        g = _guid_str_from(obj)
+        if g:
+            tgt_by_guid[g] = obj
+    writes = 0
+    for src_rule in _rules_enumerate_all(source):
+        g = _guid_str_from(src_rule)
+        class_name = getattr(src_rule, "ClassName", None)
+        if class_name not in ("MoAlloAdhocProhib", "MoMorphAdhocProhib"):
+            continue
+        if picks is not None and g not in picks:
+            continue
+        tgt_rule = tgt_by_guid.get(g)
+        if tgt_rule is None:
+            continue
+        try:
+            writes += _repair_adhoc_prohib_chain(
+                src_rule, _cast_rule_concrete(tgt_rule), class_name, target,
+                dropped, skips)
+        except Exception as exc:  # noqa: BLE001 -- one rule must not abort
+            skips.append(Skip(
+                category=GrammarCategory.ADHOC_COMPOUND_RULES,
+                source_guid=g, reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"adhoc member repair failed "
+                        f"({type(exc).__name__}: {exc})")))
+    return writes
+
+
+def _repair_rule_input_poses(context, target, picks, dropped, skips):
+    """Add the `InputPOSesRC` members a PHONOLOGICAL_RULES-time wiring missed
+    (POS created later in the run), and retire the stale drop record."""
+    source = context.source_handle
+    try:
+        phon_data = target.Cache.LangProject.PhonologicalDataOA
+    except (AttributeError, TypeError):
+        return 0
+    from SIL.LCModel import IPhRegularRule
+    index = _build_rule_rc_index(target, phon_data)
+    tgt_rules = {}
+    for r in target.PhonRules.GetAll():
+        g = _guid_str_from(r)
+        if g:
+            tgt_rules[g] = getattr(r, "_obj", r)  # unwrap flexicon wrapper
+    writes = 0
+    for src_rule in (getattr(x, "_obj", x) for x in source.PhonRules.GetAll()):
+        rule_guid = _guid_str_from(src_rule)
+        if picks is not None and rule_guid not in picks:
+            continue
+        tgt_rule = tgt_rules.get(rule_guid)
+        if tgt_rule is None or getattr(src_rule, "ClassName", None) != "PhRegularRule":
+            continue
+        try:
+            tgt_rhs = {_guid_str_from(x): x for x in
+                       IPhRegularRule(tgt_rule).RightHandSidesOS}
+            for src_rhs in IPhRegularRule(src_rule).RightHandSidesOS:
+                rhs_guid = _guid_str_from(src_rhs)
+                new_rhs = tgt_rhs.get(rhs_guid)
+                if new_rhs is None:
+                    continue
+                have = set(_late_ref_guid_chain(new_rhs.InputPOSesRC))
+                for src_item in list(src_rhs.InputPOSesRC):
+                    ig = _guid_str_from(src_item)
+                    found = _resolve_rule_rc_item(
+                        context, "InputPOSesRC", src_item, index)
+                    if found is None:
+                        continue  # still absent: the create-time drop stands
+                    if _guid_str_from(found) not in have:
+                        new_rhs.InputPOSesRC.Add(found)
+                        have.add(_guid_str_from(found))
+                        writes += 1
+                    if dropped is not None:
+                        stale = []
+                        _report_dropped_rule_ref(
+                            stale, rule_guid, rhs_guid, "InputPOSesRC", ig,
+                            src_item)
+                        key = _dropped_key(stale[0])
+                        dropped[:] = [d for d in dropped
+                                      if _dropped_key(d) != key]
+        except Exception as exc:  # noqa: BLE001 -- one rule must not abort
+            skips.append(Skip(
+                category=GrammarCategory.PHONOLOGICAL_RULES,
+                source_guid=rule_guid, reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"InputPOSesRC repair failed "
+                        f"({type(exc).__name__}: {exc})")))
+    return writes
+
+
+def _run_late_rule_ref_repair_pass(context, target, tag=None):
+    """Issue #134: repair phon-rule `InputPOSesRC` and adhoc-prohibition
+    member chains after every category exists. Returns Skips; write counts
+    are left on the context (`_late_rule_ref_writes`) as live-gate evidence."""
+    plan = getattr(context, "_run_plan", None)
+    selection = getattr(plan, "selection", None)
+
+    def _picks(cat):
+        try:
+            return selection.leaf_picks_for(cat) if selection else None
+        except (AttributeError, TypeError):
+            return None
+
+    dropped = getattr(context, "_dropped", None)
+    skips: list = []
+    counts = {"input_poses": 0, "adhoc": 0}
+    for key, fn, cat in (
+            ("input_poses", _repair_rule_input_poses,
+             GrammarCategory.PHONOLOGICAL_RULES),
+            ("adhoc", _repair_adhoc_prohib_refs,
+             GrammarCategory.ADHOC_COMPOUND_RULES)):
+        try:
+            counts[key] = fn(context, target, _picks(cat), dropped, skips)
+        except Exception as exc:  # noqa: BLE001 -- keep the run's writes
+            skips.append(Skip(
+                category=cat, source_guid="",
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=f"late reference repair failed "
+                       f"({type(exc).__name__}: {exc})"))
+    try:
+        object.__setattr__(context, "_late_rule_ref_writes", counts)
+    except (AttributeError, TypeError):
+        pass
+    return skips
