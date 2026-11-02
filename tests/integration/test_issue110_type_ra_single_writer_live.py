@@ -110,15 +110,19 @@ def _restore_around():
     _restore()
 
 
-def _sel(*cats):
+def _sel(*cats, closure=True):
     from gramtrans.Lib.models import GrammarCategory, Selection
 
     def _transform(_full):
-        return Selection(categories={getattr(GrammarCategory, c): True for c in cats})
+        return Selection(categories={getattr(GrammarCategory, c): True for c in cats},
+                         include_closure=closure)
     return _transform
 
 
-_TYPES_ONLY = _sel("FEATURE_STRUCT_TYPES")
+# closure=False: since #138 a struct-types-only selection WITH closure pulls in
+# the member features (and, via #109, their complex features), which would
+# defeat this run's "types without their complex features".
+_TYPES_ONLY = _sel("FEATURE_STRUCT_TYPES", closure=False)
 _FEATURES_AND_TYPES = _sel("INFLECTION_FEATURES", "FEATURE_STRUCT_TYPES")
 
 

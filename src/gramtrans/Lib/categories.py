@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import dataclasses
 import types
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
 if __package__:
     from .models import (
@@ -2874,6 +2874,14 @@ def feature_struct_types_dependencies(piece):
     return _feat_struc_type_member_deps(piece, GrammarCategory.INFLECTION_FEATURES)
 
 
+def feature_struct_types_infl_feature_dependencies(piece):
+    """NARROW producer for `DependencyKind.STRUCT_TYPE_TO_INFL_FEATURE`
+    (issue #138, FR-018): `(INFLECTION_FEATURES, defn_guid)` per `FeaturesRS`
+    member. Same edge set as `feature_struct_types_dependencies`, kept a
+    separate callable so no registry row names the category's composite."""
+    return _feat_struc_type_member_deps(piece, GrammarCategory.INFLECTION_FEATURES)
+
+
 def feature_struct_types_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
     return ()
 
@@ -3111,6 +3119,13 @@ def phon_feat_types_dependencies(piece):
     owning side (`phonemes_dependencies` / `natural_classes_dependencies`),
     not here.
     """
+    return _feat_struc_type_member_deps(piece, GrammarCategory.PHONOLOGICAL_FEATURES)
+
+
+def phon_feat_types_phon_feature_dependencies(piece):
+    """NARROW producer for `DependencyKind.PHON_STRUCT_TYPE_TO_PHON_FEATURE`
+    (issue #138, FR-018): the phonological twin of
+    `feature_struct_types_infl_feature_dependencies`."""
     return _feat_struc_type_member_deps(piece, GrammarCategory.PHONOLOGICAL_FEATURES)
 
 
@@ -3632,6 +3647,20 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                     writes += 1
                     log.info("struct-type %s: FeaturesRS repaired, inserted "
                              "%s", type_guid, inserted)
+                    # Issue #138 cycle-3: insert-only repair does not move
+                    # existing members, so a sequence that was both missing
+                    # members and reordered can still be reordered afterward.
+                    post_outcome, _, _, _, _ = _classify_struct_type_features_rs(
+                        target, system, type_guid, ref["members"])
+                    if post_outcome == FEATURES_RS_REORDERED:
+                        skips.append(Skip(
+                            category=types_cat, source_guid=type_guid,
+                            reason=SkipReason.NEEDS_MANUAL,
+                            detail=(f"struct-type {type_guid} FeaturesRS "
+                                    "missing members were inserted but shared "
+                                    "members remain in a different order than "
+                                    f"the source; {FEATURES_RS_REORDERED_NOTE}"),
+                        ))
             if unresolved:
                 for g, _label in unresolved:
                     log.warning("struct-type %s: FeaturesRS member %s has no "
@@ -4384,6 +4413,16 @@ _ENTRY_TYPE_MULTISTRINGS = (
 )
 
 
+def _copy_infl_type_glosses(src_obj, new_obj, factory_label, context,
+                            ws_mapping, src_guid):
+    """Issue #135: LexEntryInflType.GlossPrepend / GlossAppend, only for an
+    object created through `ILexEntryInflTypeFactory`."""
+    if factory_label != "ILexEntryInflTypeFactory":
+        return
+    _copy_supplemental_scalars_ctx(
+        "LexEntryInflType", src_obj, new_obj, context, ws_mapping, src_guid)
+
+
 def variant_types_execute_action(action, context, ws_mapping, tag):
     """Create variant type with GUID preserved.
 
@@ -4490,6 +4529,8 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
                 src_obj, new_vt, _ENTRY_TYPE_MULTISTRINGS,
                 source=source, target=target, ws_map=ws_mapping,
             )
+            _copy_infl_type_glosses(src_obj, new_vt, factory_label, context,
+                                    ws_mapping, src_guid)
             apply_carrier_b(new_vt, ws, tag)
             return new_vt
         _safe_add_to_owner(
@@ -4507,6 +4548,8 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
         src_obj, new_vt, _ENTRY_TYPE_MULTISTRINGS,
         source=source, target=target, ws_map=ws_mapping,
     )
+    _copy_infl_type_glosses(src_obj, new_vt, factory_label, context,
+                            ws_mapping, src_guid)
     apply_carrier_b(new_vt, ws, tag)
     return new_vt
 
@@ -4682,6 +4725,8 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
         src_obj, new_cft, _ENTRY_TYPE_MULTISTRINGS,
         source=source, target=target, ws_map=ws_mapping,
     )
+    _copy_infl_type_glosses(src_obj, new_cft, factory_label, context,
+                            ws_mapping, src_guid)
     apply_carrier_b(new_cft, ws, tag)
     return new_cft
 
@@ -5408,18 +5453,16 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
         target.MorphRules.ApplySyncableProperties(new_rule, props, ws_map=ws_mapping)
     except (AttributeError, TypeError):
         pass
+    # Issue #135: adhoc prohibition Adjacency / Disabled (no-op for compound rules).
+    _copy_supplemental_scalars_ctx(
+        class_name, src_rule, new_rule, context, ws_mapping, src_guid)
 
-    # Wire StratumRA manually (mirrors phonological_rules_execute_action)
-    try:
-        src_stratum = getattr(src_rule, "StratumRA", None)
-        if src_stratum is not None:
-            src_stratum_guid = str(ICmObject(src_stratum).Guid).lower()
-            for tgt_stratum in target.Strata.GetAll():
-                if str(ICmObject(tgt_stratum).Guid).lower() == src_stratum_guid:
-                    new_rule.StratumRA = tgt_stratum
-                    break
-    except (AttributeError, TypeError):
-        pass
+    # StratumRA (FR-336) -- shared never-silent helper (issue #132 batch 2).
+    _wire_stratum(
+        src_rule, new_rule, target, context,
+        category=GrammarCategory.ADHOC_COMPOUND_RULES,
+        source_guid=src_guid,
+    )
 
     # --- T009: adhoc reference wiring ----------------------------------------
     if class_name == "MoAlloAdhocProhib":
@@ -7062,6 +7105,51 @@ def _collection_already_has(owner_coll, resolved) -> bool:
         return False
 
 
+def _add_resolved_to_reference_collection(
+    owner_coll, resolved, *, dropped, owner_class, owner_guid, src_obj,
+    field_name, source_item=None,
+):
+    """Issue #132 batch 2 (#161 GenresRC pattern): after `apply_reference`
+    resolves an item, `.Add` it onto the owner's reference collection.
+    Records a `DroppedItemRecord` when Add fails instead of swallowing."""
+    if owner_coll is None or resolved is None:
+        return
+    if _collection_already_has(owner_coll, resolved):
+        return
+    try:
+        owner_coll.Add(resolved)
+    except (AttributeError, TypeError) as exc:
+        import logging as _logging
+        item = source_item if source_item is not None else resolved
+        item_guid = _guid_str_from(item)
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_add_resolved_to_reference_collection: %s adding %s.%s "
+            "(item=%s): %s",
+            type(exc).__name__, owner_class, field_name, item_guid, exc,
+            exc_info=True,
+        )
+        _append_dropped_once(
+            dropped,
+            _enrich_dropped(
+                owner_class,
+                owner_guid,
+                src_obj,
+                DroppedItemRecord(
+                    owner_kind=owner_class,
+                    owner_guid="",
+                    owner_label="",
+                    field_name=field_name,
+                    item_name=_references_item_label(item),
+                    item_guid=item_guid,
+                    reason=(
+                        f"reference collection Add failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                ),
+            ),
+        )
+
+
 def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
                              resolver_cache, dropped, skip_fields=(), ws_map=None,
                              source=None, owner_guid="", clear_before_add=False):
@@ -7179,11 +7267,12 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
                             except (AttributeError, TypeError):
                                 pass
                         cleared_fields.add(spec.field_name)
-                    if not _collection_already_has(owner_coll, resolved):
-                        try:
-                            owner_coll.Add(resolved)
-                        except (AttributeError, TypeError):
-                            pass
+                    _add_resolved_to_reference_collection(
+                        owner_coll, resolved, dropped=dropped,
+                        owner_class=owner_class, owner_guid=owner_guid,
+                        src_obj=src_obj, field_name=spec.field_name,
+                        source_item=item,
+                    )
 
 
 def _plan_entry_reference_decisions(src_entry, context, target):
@@ -8191,7 +8280,42 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
     return (rel_guid, target_type, copied_members)
 
 
-def _rebuild_targets_rs_in_source_order(existing, copied_members) -> None:
+def _try_add_lex_rel_targets_rs_member(rel, member, rel_guid, dropped):
+    """Issue #132: never-silent `TargetsRS.Add` on lexical-relation reproduce.
+
+    When ``apply_reference``-style resolution has already succeeded but the
+    owning sequence rejects ``Add`` (pythonnet / LCM binding gaps), the
+    relation must not finish with a partial or empty ``TargetsRS`` and no
+    report line."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    m_guid = _guid_str_from(member)
+    try:
+        rel.TargetsRS.Add(member)
+        return True
+    except (AttributeError, TypeError) as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "LexReference %s TargetsRS.Add failed for member %s: %s",
+            rel_guid, m_guid, exc, exc_info=True,
+        )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexReference",
+                owner_guid=rel_guid,
+                owner_label="",
+                field_name="TargetsRS",
+                item_name=_references._item_label(member),
+                item_guid=m_guid,
+                reason=f"TargetsRS.Add failed: {exc}",
+            ))
+        return False
+
+
+def _rebuild_targets_rs_in_source_order(existing, copied_members, *,
+                                        dropped=None, rel_guid="") -> None:
     """Make `existing.TargetsRS` match `copied_members` (already source-
     ordered by `_evaluate_lexical_relation`) exactly, in place -- used ONLY
     by `reproduce_lexical_relation`'s cache-hit branch, which (per that
@@ -8210,17 +8334,46 @@ def _rebuild_targets_rs_in_source_order(existing, copied_members) -> None:
         try:
             clear()
             for member in copied_members:
-                existing.TargetsRS.Add(member)
+                _try_add_lex_rel_targets_rs_member(
+                    existing, member, rel_guid, dropped)
             return
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError) as exc:
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "LexReference %s TargetsRS rebuild (clear path) failed: %s",
+                rel_guid, exc, exc_info=True,
+            )
+            if dropped is not None and rel_guid:
+                _append_dropped_once(dropped, DroppedItemRecord(
+                    owner_kind="LexReference",
+                    owner_guid=rel_guid,
+                    owner_label="",
+                    field_name="TargetsRS",
+                    item_name="",
+                    item_guid=rel_guid,
+                    reason=f"TargetsRS rebuild failed: {exc}",
+                ))
     try:
         fresh = type(existing.TargetsRS)()
         for member in copied_members:
             fresh.Add(member)
         existing.TargetsRS = fresh
-    except (AttributeError, TypeError):
-        pass
+    except (AttributeError, TypeError) as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "LexReference %s TargetsRS rebuild (replace path) failed: %s",
+            rel_guid, exc, exc_info=True,
+        )
+        if dropped is not None and rel_guid:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexReference",
+                owner_guid=rel_guid,
+                owner_label="",
+                field_name="TargetsRS",
+                item_name="",
+                item_guid=rel_guid,
+                reason=f"TargetsRS rebuild failed: {exc}",
+            ))
 
 
 def _discard_empty_lazy_lex_ref_type(target, target_type, created_types,
@@ -8358,7 +8511,8 @@ def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
 
     existing = reproduced.get(rel_guid) if rel_guid else None
     if existing is not None:
-        _rebuild_targets_rs_in_source_order(existing, copied_members)
+        _rebuild_targets_rs_in_source_order(
+            existing, copied_members, dropped=dropped, rel_guid=rel_guid)
         return existing
 
     if __package__:
@@ -8395,10 +8549,12 @@ def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
         return None
 
     for member in copied_members:
-        try:
-            new_rel.TargetsRS.Add(member)
-        except (AttributeError, TypeError):
-            pass
+        _try_add_lex_rel_targets_rs_member(new_rel, member, rel_guid, dropped)
+
+    # Issue #135: LexReference.Name / Comment (flexicon never carries them).
+    _copy_supplemental_scalars(
+        "LexReference", src_relation, new_rel, ctx,
+        getattr(ctx, "_ws_map", None), dropped, rel_guid)
 
     try:
         cache = getattr(target, "Cache", None)
@@ -9248,6 +9404,41 @@ def _appendix_drop_reason(scan_errors) -> str:
             "(030 link-by-GUID scope; not created)")
 
 
+def _report_sense_list_add_failure(
+    dropped,
+    owner_guid: str,
+    owner_label: str,
+    field_name: str,
+    item_name: str,
+    item_guid: str,
+    exc: Optional[BaseException] = None,
+) -> None:
+    """Issue #132: LINK-by-GUID / thesaurus LINK with a failed `.Add()` used to
+    swallow `AttributeError`/`TypeError` and leave a LINK row with no drop."""
+    if exc is None:
+        reason = (
+            f"{field_name} collection missing on target sense; "
+            "reference resolved in target but link not written"
+        )
+    else:
+        reason = (
+            f"{field_name} item present in target but could not be added "
+            f"({type(exc).__name__}: {exc})"
+        )
+    _append_dropped_once(
+        dropped,
+        DroppedItemRecord(
+            owner_kind="LexSense",
+            owner_guid=owner_guid,
+            owner_label=owner_label,
+            field_name=field_name,
+            item_name=item_name,
+            item_guid=item_guid,
+            reason=reason,
+        ),
+    )
+
+
 def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> tuple:
     """030 Section A (contracts/appendix-link-by-guid.md): link each source
     `AppendixesRC` reference to a target-owned `LexAppendix` by GUID; if the
@@ -9297,12 +9488,20 @@ def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> tuple:
             item_name=label, item_guid=guid))
         if new_sense is None:
             continue  # Preview: the LINK is recorded above; no write
+        coll = getattr(new_sense, "AppendixesRC", None)
+        if coll is None:
+            _report_sense_list_add_failure(
+                dropped, owner_guid, owner_label, "AppendixesRC",
+                label, guid)
+            continue
+        if _collection_already_has(coll, tgt_ap):
+            continue
         try:
-            coll = getattr(new_sense, "AppendixesRC", None)
-            if coll is not None and not _collection_already_has(coll, tgt_ap):
-                coll.Add(tgt_ap)
-        except (AttributeError, TypeError):
-            pass
+            coll.Add(tgt_ap)
+        except Exception as exc:  # noqa: BLE001 -- never silent (#132)
+            _report_sense_list_add_failure(
+                dropped, owner_guid, owner_label, "AppendixesRC",
+                label, guid, exc)
     return tuple(records)
 
 
@@ -9417,12 +9616,22 @@ def _resolve_sense_thesaurus_items(src_sense, new_sense, target, resolver_cache,
         )
         if not ok or resolved is None:
             continue
+        item_name = _references._item_label(src_item)
+        item_guid = _guid_str_from(src_item)
+        coll = getattr(new_sense, "ThesaurusItemsRC", None)
+        if coll is None:
+            _report_sense_list_add_failure(
+                dropped, owner_guid, owner_label, "ThesaurusItemsRC",
+                item_name, item_guid)
+            continue
+        if _collection_already_has(coll, resolved):
+            continue
         try:
-            coll = getattr(new_sense, "ThesaurusItemsRC", None)
-            if coll is not None and not _collection_already_has(coll, resolved):
-                coll.Add(resolved)
-        except (AttributeError, TypeError):
-            pass
+            coll.Add(resolved)
+        except Exception as exc:  # noqa: BLE001 -- never silent (#132)
+            _report_sense_list_add_failure(
+                dropped, owner_guid, owner_label, "ThesaurusItemsRC",
+                item_name, item_guid, exc)
     return tuple(records)
 
 
@@ -9570,9 +9779,23 @@ def _copy_supplemental_scalars(owner_class, src, new, context, ws_map, dropped,
     else:  # pragma: no cover
         from scalar_fields import copy_supplemental_fields  # type: ignore
     copy_supplemental_fields(
-        owner_class, src, new, source=context.source_handle,
-        target=context.target_handle, ws_map=ws_map, dropped=dropped,
+        owner_class, src, new, source=getattr(context, "source_handle", None),
+        target=getattr(context, "target_handle", None), ws_map=ws_map,
+        dropped=dropped,
         owner_guid=owner_guid, owner_label=_owner_label_for(owner_class, src))
+
+
+def _copy_supplemental_scalars_ctx(owner_class, src, new, context, ws_mapping,
+                                   owner_guid):
+    """Issue #135 slice 2: `_copy_supplemental_scalars` for execute-actions
+    that have no `dropped` parameter -- failures land on `context._dropped`
+    (attached by `transfer.execute`). Never raises."""
+    dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
+    _copy_supplemental_scalars(
+        owner_class, src, new, context, _ws_map_dict(ws_mapping), dropped,
+        owner_guid)
 
 
 def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
@@ -9621,6 +9844,8 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         dropped = getattr(context, "_dropped", None)
     if dropped is None:
         dropped = []
+
+    object.__setattr__(context, "_closure_category", category)
 
     target = context.target_handle
     src_guid = _guid_str_from(src_entry)
@@ -11654,7 +11879,7 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
             new_msa = _create_via_wrapper_or_reuse(
                 lambda: target.MSA.CreateStem(new_sense, tgt_pos),
                 new_entry, subclass, pos_fields, src_msa, dropped, src_entry, new_sense=new_sense)
-        _wire_stratum(src_msa, new_msa, target)
+        _wire_stratum(src_msa, new_msa, target, context, source_guid=src_g)
     elif subclass == "MoDerivAffMsa":
         from_pos = _resolve_or_none("FromPartOfSpeechRA", "FromPartOfSpeechRA")
         to_pos = _resolve_or_none("ToPartOfSpeechRA", "ToPartOfSpeechRA")
@@ -11846,21 +12071,48 @@ def _create_entry_owned_msas_without_sense(src_entry, new_entry, context, tag,
             msa_by_src_guid[m_guid] = new_msa
 
 
-def _wire_stratum(src_msa, new_msa, target):
-    """Wire MoStemMsa.StratumRA to the Phase 3a-transferred Stratum by GUID
-    lookup (FR-336). No-op / silent when unresolved."""
+def _wire_stratum(src_piece, new_piece, target, context=None, *,
+                    category=None, source_guid=None):
+    """Wire ``StratumRA`` to a Phase 3a-transferred stratum by GUID (FR-336).
+
+    When the source names a stratum that is not in the target, append a
+    ``Skip(DEPENDENCY_UNRESOLVED)`` to ``context._exec_skips`` when wired
+    (issue #132 never-silent batch) instead of leaving the reference dangling
+    with no report line."""
     from SIL.LCModel import ICmObject
     try:
-        src_stratum = getattr(src_msa, "StratumRA", None)
+        src_stratum = getattr(src_piece, "StratumRA", None)
         if src_stratum is None:
             return
         sg = str(ICmObject(src_stratum).Guid).lower()
         for tgt_stratum in target.Strata.GetAll():
             if str(ICmObject(tgt_stratum).Guid).lower() == sg:
-                new_msa.StratumRA = tgt_stratum
+                new_piece.StratumRA = tgt_stratum
                 return
     except (AttributeError, TypeError):
-        pass
+        return
+    cat = category
+    if cat is None and context is not None:
+        cat = getattr(context, "_closure_category", None)
+    guid = source_guid
+    if guid is None:
+        try:
+            guid = _guid_str_from(src_piece)
+        except Exception:  # noqa: BLE001
+            guid = None
+    if context is None or cat is None or not guid:
+        return
+    exec_skips = getattr(context, "_exec_skips", None)
+    if exec_skips is None:
+        return
+    exec_skips.append(Skip(
+        category=cat,
+        source_guid=str(guid).lower(),
+        reason=SkipReason.DEPENDENCY_UNRESOLVED,
+        detail=(
+            f"StratumRA references stratum {sg} but that stratum is not in the "
+            "target; reference left unwired (FR-336)"),
+    ))
 
 
 # ----- 17.1 MSA-slot wiring sub-pass (FR-333) ------------------------------
@@ -14679,7 +14931,9 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
                 except (AttributeError, TypeError):
                     pass
             # StratumRA (FR-336).
-            _wire_stratum(src_tpl, new_typed, target)
+            _wire_stratum(src_tpl, new_typed, target, context,
+                          category=GrammarCategory.AFFIX_TEMPLATES,
+                          source_guid=src_guid)
             try:
                 apply_carrier_b(new_typed, ws, tag, strict=False)
             except Exception:
@@ -19860,6 +20114,48 @@ CLOSURE_EDGES_VERIFIED: dict = {
             "tests/integration/test_issue109_infl_type_closure_live.py"
         ),
     },
+    # Issue #138 (FR-018) -- struct type -> the feature defns its `FeaturesRS`
+    # names (the reverse of #109). EXPLICIT dependency_category. The producers
+    # are already narrow (`_feat_struc_type_member_deps` emits ONE far
+    # category). Selection edge only; INFLECTION_FEATURES <-> FEATURE_STRUCT_TYPES
+    # is now a 2-cycle in the pull-in graph, which `closure.walk` tolerates.
+    DependencyKind.STRUCT_TYPE_TO_INFL_FEATURE: {
+        "category": GrammarCategory.FEATURE_STRUCT_TYPES,
+        "producer": feature_struct_types_infl_feature_dependencies,
+        "dependency_category": GrammarCategory.INFLECTION_FEATURES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-11-02) over "
+            "'Mbugwe Lizzie', 'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.STRUCT_TYPE_TO_INFL_FEATURE = CONFIRMED on ALL "
+            "THREE (12 edges over 5 distinct feature defns / 9 over 8 / "
+            "6 over 4, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0, unkeyed_pieces 0 -- every far GUID "
+            "resolves against inflection_features_enumerate_source) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, "
+            "asserted by tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered; live "
+            "single-run proof in "
+            "tests/integration/test_issue138_struct_type_closure_live.py"
+        ),
+    },
+    DependencyKind.PHON_STRUCT_TYPE_TO_PHON_FEATURE: {
+        "category": GrammarCategory.PHON_FEAT_TYPES,
+        "producer": phon_feat_types_phon_feature_dependencies,
+        "dependency_category": GrammarCategory.PHONOLOGICAL_FEATURES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-11-02): "
+            "relationships.PHON_STRUCT_TYPE_TO_PHON_FEATURE = CONFIRMED on "
+            "'Mbugwe Lizzie' (2 edges over 2 distinct feature defns) and "
+            "'Mbugwe LizzieHC practice' (15 over 15), foreign_edges 0, "
+            "unresolved 0, resolved_as_owned_value 0, unkeyed_pieces 0, and "
+            "NO_DATA on 'Ejagham Mini', which holds no phonological feature "
+            "types -- TWO-corpus evidence, stated rather than rounded up. "
+            "Snapshots tests/integration/_snapshots/"
+            "closure-edge-audit-038-*.json, asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
     DependencyKind.STEM_NAME_TO_POS: {
         "category": GrammarCategory.STEM_NAMES,
         "producer": stem_names_pos_dependencies,
@@ -20607,6 +20903,152 @@ def _run_late_rule_ref_repair_pass(context, target, tag=None):
                        f"({type(exc).__name__}: {exc})"))
     try:
         object.__setattr__(context, "_late_rule_ref_writes", counts)
+    except (AttributeError, TypeError):
+        pass
+    return skips
+
+
+# ---------------------------------------------------------------------------
+# Issue #15 / spec 041: opt-in LINK stale-reference re-point
+# ---------------------------------------------------------------------------
+#
+# LINK writes nothing to an object already present by GUID. A create-time-only
+# reference on such an object is therefore never revisited. #134 repairs a
+# fixed list of fields on every run; this pass is the OPT-IN, ref-only,
+# allow-listed counterpart (`Selection.repoint_stale_refs`, default OFF).
+#
+# P1 slice: ONE single-valued RA -- `IMoAffixAllomorph.MsEnvPartOfSpeechRA`
+# (allomorph -> category). Chosen because no #134 pass touches it.
+#
+# "Provably stale" (spec 041 s3c) = the target ref is NULL, or resolves to an
+# object whose class differs from the source referent's class. (LCM referential
+# integrity nulls a ref when its referent is deleted, so "dangling" collapses to
+# null in practice; typed RAs make "different class" effectively unreachable
+# live -- the predicate is still total over it.) A non-null ref to a valid
+# same-class object that merely differs is NEVER touched (that is UPDATE's job).
+# The source referent must have exactly one GUID-matched counterpart in the
+# target (GUID lookup is unique by construction) of the SAME class.
+#
+# One function, `compute_ref_repoints`, is consumed by Preview
+# (`preview.render_ref_repoints`) and Move (`_run_ref_repoint_pass`), so the
+# two agree by construction. Only runs under conflict mode LINK for AFFIXES
+# (never ADD_NEW; UPDATE/OVERWRITE already have their own write paths).
+
+REPOINT = "repoint"
+REPOINT_NOOP = "noop"
+REPOINT_SKIP_NOT_STALE = "skip_not_stale"
+REPOINT_SKIP_UNRESOLVED = "skip_unresolved"
+
+REPOINT_REASONS = {
+    REPOINT_SKIP_NOT_STALE: "reference differs, not provably stale",
+    REPOINT_SKIP_UNRESOLVED: "intended referent not resolvable in target",
+}
+
+_REPOINT_FIELD = "MsEnvPartOfSpeechRA"
+
+
+def classify_ref_repoint(src_ref, tgt_ref, tgt_by_guid):
+    """Pure predicate for spec 041. Returns `(outcome, referent)`.
+
+    `src_ref` / `tgt_ref` are the source / target referent objects (or None);
+    `tgt_by_guid` maps lower-cased GUID -> target object. `referent` is the
+    object to point at (REPOINT only)."""
+    if src_ref is None:
+        return REPOINT_NOOP, None
+    src_g = _guid_str_from(src_ref)
+    src_cls = getattr(src_ref, "ClassName", None)
+    if tgt_ref is not None:
+        if _guid_str_from(tgt_ref) == src_g:
+            return REPOINT_NOOP, None
+        if getattr(tgt_ref, "ClassName", None) == src_cls:
+            return REPOINT_SKIP_NOT_STALE, None
+    referent = tgt_by_guid.get(src_g)
+    if referent is None or getattr(referent, "ClassName", None) != src_cls:
+        return REPOINT_SKIP_UNRESOLVED, None
+    return REPOINT, referent
+
+
+def compute_ref_repoints(source, target, selection):
+    """Read-only: `[(owner_guid, owner_label, outcome, referent, tgt_allo)]`
+    for every in-scope present-by-GUID affix allomorph with a source
+    `MsEnvPartOfSpeechRA`. NOOP rows are omitted. Empty unless the flag is on,
+    AFFIXES is selected, and its conflict mode is LINK."""
+    if selection is None or not getattr(selection, "repoint_stale_refs", False):
+        return []
+    if __package__:
+        from .models import ConflictMode as _CM
+    else:
+        from models import ConflictMode as _CM  # type: ignore
+    try:
+        if not selection.is_on(GrammarCategory.AFFIXES):
+            return []
+        if selection.conflict_mode_for(GrammarCategory.AFFIXES) != _CM.LINK:
+            return []
+        picks = selection.leaf_picks_for(GrammarCategory.AFFIXES)
+    except (AttributeError, TypeError):
+        return []
+    tgt_pos = {}
+    for pos in _iter_all_pos(target):
+        g = _guid_str_from(pos)
+        if g:
+            tgt_pos[g] = pos
+    tgt_allos = {}
+    for a in _iter_all_allomorphs(target):
+        g = _guid_str_from(a)
+        if g and g not in tgt_allos:
+            tgt_allos[g] = a
+    if __package__:
+        from .owned import _cast_moaffix_allomorph
+    else:
+        from owned import _cast_moaffix_allomorph  # type: ignore
+    rows = []
+    for entry in list(source.Cache.LangProject.LexDbOA.Entries):
+        if picks is not None and _guid_str_from(entry) not in picks:
+            continue
+        forms = list(getattr(entry, "AlternateFormsOS", None) or [])
+        lf = getattr(entry, "LexemeFormOA", None)
+        if lf is not None:
+            forms.append(lf)
+        for src_form in forms:
+            g = _guid_str_from(src_form)
+            tgt_form = tgt_allos.get(g)
+            if tgt_form is None or getattr(src_form, "ClassName", None) != "MoAffixAllomorph":
+                continue
+            src_ref = getattr(_cast_moaffix_allomorph(src_form), _REPOINT_FIELD, None)
+            tgt_ref = getattr(_cast_moaffix_allomorph(tgt_form), _REPOINT_FIELD, None)
+            outcome, referent = classify_ref_repoint(src_ref, tgt_ref, tgt_pos)
+            if outcome == REPOINT_NOOP:
+                continue
+            rows.append((g, _owner_label_for("MoForm", src_form), outcome,
+                         referent, tgt_form))
+    return rows
+
+
+def _run_ref_repoint_pass(context, target):
+    """Move: apply `compute_ref_repoints`. Returns Skips (one per non-REPOINT
+    row); write count is left on `context._ref_repoint_writes`. Idempotent: a
+    repointed ref classifies NOOP on the next run."""
+    plan = getattr(context, "_run_plan", None)
+    selection = getattr(plan, "selection", None)
+    skips = []
+    writes = 0
+    if __package__:
+        from .owned import _cast_moaffix_allomorph
+    else:
+        from owned import _cast_moaffix_allomorph  # type: ignore
+    for g, label, outcome, referent, tgt_form in compute_ref_repoints(
+            context.source_handle, target, selection):
+        if outcome != REPOINT:
+            skips.append(Skip(
+                category=GrammarCategory.AFFIXES, source_guid=g,
+                reason=SkipReason.NEEDS_MANUAL,
+                detail=(f"{_REPOINT_FIELD} on allomorph {label or g}: "
+                        f"{REPOINT_REASONS[outcome]}")))
+            continue
+        setattr(_cast_moaffix_allomorph(tgt_form), _REPOINT_FIELD, referent)
+        writes += 1
+    try:
+        object.__setattr__(context, "_ref_repoint_writes", writes)
     except (AttributeError, TypeError):
         pass
     return skips

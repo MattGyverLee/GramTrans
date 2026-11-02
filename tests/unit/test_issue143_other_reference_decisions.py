@@ -72,3 +72,31 @@ def test_json_serializer_carries_planned_and_ancestors():
     d = _reference_decision_json(rec)
     assert d["planned"] is True and d["new_ancestors"] == [["p", "pi"]]
     json.dumps(d)
+
+
+def test_lexical_relation_decisions_flow_into_report_json_issue165():
+    """Issue #165 item 2: plan-level lexrel decisions reach the run report."""
+    from gramtrans.Lib.models import (
+        RunContext, RunMode, RunPlan, RunReport, Selection,
+        WSMapping)
+    import gramtrans.Lib.report  # noqa: F401  (attaches build_from_plan)
+
+    rec = ReferenceDecisionRecord(
+        owner_kind="LexReference", owner_guid="lr", field_name="Targets",
+        action=ReferenceAction.CREATE, item_name="n", item_guid="i",
+        type_guid="tg")
+    ctx = RunContext(
+        source_handle=object(), source_project_name="S",
+        source_project_path="s", target_handle=object(),
+        target_project_name="T", target_project_path="t",
+        run_id="GT-20260820-090000", started_at="2026-08-20T09:00:00")
+    plan = RunPlan(
+        context=ctx, selection=Selection(categories={}),
+        ws_mapping=WSMapping(entries=()), lexical_relation_decisions=(rec,))
+    payload = json.loads(
+        RunReport.build_from_plan(plan, RunMode.MOVE).to_snapshot_json())
+    rows = payload["reference_decisions"]
+    assert [r["owner_kind"] for r in rows] == ["LexReference"]
+    assert rows[0]["type_guid"] == "tg"
+    assert "type_guid" not in _reference_decision_json(
+        _rec("f", ReferenceAction.LINK))
