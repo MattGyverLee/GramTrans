@@ -20737,3 +20737,149 @@ def _run_late_rule_ref_repair_pass(context, target, tag=None):
     except (AttributeError, TypeError):
         pass
     return skips
+
+
+# ---------------------------------------------------------------------------
+# Issue #15 / spec 041: opt-in LINK stale-reference re-point
+# ---------------------------------------------------------------------------
+#
+# LINK writes nothing to an object already present by GUID. A create-time-only
+# reference on such an object is therefore never revisited. #134 repairs a
+# fixed list of fields on every run; this pass is the OPT-IN, ref-only,
+# allow-listed counterpart (`Selection.repoint_stale_refs`, default OFF).
+#
+# P1 slice: ONE single-valued RA -- `IMoAffixAllomorph.MsEnvPartOfSpeechRA`
+# (allomorph -> category). Chosen because no #134 pass touches it.
+#
+# "Provably stale" (spec 041 s3c) = the target ref is NULL, or resolves to an
+# object whose class differs from the source referent's class. (LCM referential
+# integrity nulls a ref when its referent is deleted, so "dangling" collapses to
+# null in practice; typed RAs make "different class" effectively unreachable
+# live -- the predicate is still total over it.) A non-null ref to a valid
+# same-class object that merely differs is NEVER touched (that is UPDATE's job).
+# The source referent must have exactly one GUID-matched counterpart in the
+# target (GUID lookup is unique by construction) of the SAME class.
+#
+# One function, `compute_ref_repoints`, is consumed by Preview
+# (`preview.render_ref_repoints`) and Move (`_run_ref_repoint_pass`), so the
+# two agree by construction. Only runs under conflict mode LINK for AFFIXES
+# (never ADD_NEW; UPDATE/OVERWRITE already have their own write paths).
+
+REPOINT = "repoint"
+REPOINT_NOOP = "noop"
+REPOINT_SKIP_NOT_STALE = "skip_not_stale"
+REPOINT_SKIP_UNRESOLVED = "skip_unresolved"
+
+REPOINT_REASONS = {
+    REPOINT_SKIP_NOT_STALE: "reference differs, not provably stale",
+    REPOINT_SKIP_UNRESOLVED: "intended referent not resolvable in target",
+}
+
+_REPOINT_FIELD = "MsEnvPartOfSpeechRA"
+
+
+def classify_ref_repoint(src_ref, tgt_ref, tgt_by_guid):
+    """Pure predicate for spec 041. Returns `(outcome, referent)`.
+
+    `src_ref` / `tgt_ref` are the source / target referent objects (or None);
+    `tgt_by_guid` maps lower-cased GUID -> target object. `referent` is the
+    object to point at (REPOINT only)."""
+    if src_ref is None:
+        return REPOINT_NOOP, None
+    src_g = _guid_str_from(src_ref)
+    src_cls = getattr(src_ref, "ClassName", None)
+    if tgt_ref is not None:
+        if _guid_str_from(tgt_ref) == src_g:
+            return REPOINT_NOOP, None
+        if getattr(tgt_ref, "ClassName", None) == src_cls:
+            return REPOINT_SKIP_NOT_STALE, None
+    referent = tgt_by_guid.get(src_g)
+    if referent is None or getattr(referent, "ClassName", None) != src_cls:
+        return REPOINT_SKIP_UNRESOLVED, None
+    return REPOINT, referent
+
+
+def compute_ref_repoints(source, target, selection):
+    """Read-only: `[(owner_guid, owner_label, outcome, referent, tgt_allo)]`
+    for every in-scope present-by-GUID affix allomorph with a source
+    `MsEnvPartOfSpeechRA`. NOOP rows are omitted. Empty unless the flag is on,
+    AFFIXES is selected, and its conflict mode is LINK."""
+    if selection is None or not getattr(selection, "repoint_stale_refs", False):
+        return []
+    if __package__:
+        from .models import ConflictMode as _CM
+    else:
+        from models import ConflictMode as _CM  # type: ignore
+    try:
+        if not selection.is_on(GrammarCategory.AFFIXES):
+            return []
+        if selection.conflict_mode_for(GrammarCategory.AFFIXES) != _CM.LINK:
+            return []
+        picks = selection.leaf_picks_for(GrammarCategory.AFFIXES)
+    except (AttributeError, TypeError):
+        return []
+    tgt_pos = {}
+    for pos in _iter_all_pos(target):
+        g = _guid_str_from(pos)
+        if g:
+            tgt_pos[g] = pos
+    tgt_allos = {}
+    for a in _iter_all_allomorphs(target):
+        g = _guid_str_from(a)
+        if g and g not in tgt_allos:
+            tgt_allos[g] = a
+    if __package__:
+        from .owned import _cast_moaffix_allomorph
+    else:
+        from owned import _cast_moaffix_allomorph  # type: ignore
+    rows = []
+    for entry in list(source.Cache.LangProject.LexDbOA.Entries):
+        if picks is not None and _guid_str_from(entry) not in picks:
+            continue
+        forms = list(getattr(entry, "AlternateFormsOS", None) or [])
+        lf = getattr(entry, "LexemeFormOA", None)
+        if lf is not None:
+            forms.append(lf)
+        for src_form in forms:
+            g = _guid_str_from(src_form)
+            tgt_form = tgt_allos.get(g)
+            if tgt_form is None or getattr(src_form, "ClassName", None) != "MoAffixAllomorph":
+                continue
+            src_ref = getattr(_cast_moaffix_allomorph(src_form), _REPOINT_FIELD, None)
+            tgt_ref = getattr(_cast_moaffix_allomorph(tgt_form), _REPOINT_FIELD, None)
+            outcome, referent = classify_ref_repoint(src_ref, tgt_ref, tgt_pos)
+            if outcome == REPOINT_NOOP:
+                continue
+            rows.append((g, _owner_label_for("MoForm", src_form), outcome,
+                         referent, tgt_form))
+    return rows
+
+
+def _run_ref_repoint_pass(context, target):
+    """Move: apply `compute_ref_repoints`. Returns Skips (one per non-REPOINT
+    row); write count is left on `context._ref_repoint_writes`. Idempotent: a
+    repointed ref classifies NOOP on the next run."""
+    plan = getattr(context, "_run_plan", None)
+    selection = getattr(plan, "selection", None)
+    skips = []
+    writes = 0
+    if __package__:
+        from .owned import _cast_moaffix_allomorph
+    else:
+        from owned import _cast_moaffix_allomorph  # type: ignore
+    for g, label, outcome, referent, tgt_form in compute_ref_repoints(
+            context.source_handle, target, selection):
+        if outcome != REPOINT:
+            skips.append(Skip(
+                category=GrammarCategory.AFFIXES, source_guid=g,
+                reason=SkipReason.NEEDS_MANUAL,
+                detail=(f"{_REPOINT_FIELD} on allomorph {label or g}: "
+                        f"{REPOINT_REASONS[outcome]}")))
+            continue
+        setattr(_cast_moaffix_allomorph(tgt_form), _REPOINT_FIELD, referent)
+        writes += 1
+    try:
+        object.__setattr__(context, "_ref_repoint_writes", writes)
+    except (AttributeError, TypeError):
+        pass
+    return skips
