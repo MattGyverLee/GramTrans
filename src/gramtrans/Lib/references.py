@@ -62,6 +62,11 @@ else:
 # data-model.md's single worked example (`lp.LexDbOA.SenseTypesOA`) is NOT a
 # blanket rule. Each row below uses the exact accessor confirmed live.
 
+#: `ItemClsid` of the morph-types list (`LexDb.MorphTypesOA`) -- see the issue
+#: #119 note in `decide_reference`.
+_MORPH_TYPE_CLSID = 5042
+
+
 def _lp(target):
     """Return the target's ILangProject (`target.Cache.LangProject`)."""
     return target.Cache.LangProject
@@ -824,6 +829,33 @@ def decide_reference(source_item, target, spec: "ReferenceFieldSpec", cache: dic
 
     target_item = _find_in_possibility_list(target_list, guid)
 
+    if target_item is None and getattr(target_list, "ItemClsid", None) == _MORPH_TYPE_CLSID:
+        # Issue #119 decision: a morph type absent from the target is REPORTED,
+        # never created. The morph-types list is FLEx's fixed canonical set (all
+        # 19 GUIDs are byte-identical across every project measured; the FLEx
+        # UI offers no way to add one), and CREATE here copies only
+        # Name/Abbreviation/Description -- it would lose the Prefix/Postfix
+        # markers and SecondaryOrder that DEFINE a morph type, minting a
+        # degraded type the parser and the affix/stem split cannot interpret.
+        # Same stance as `matcher.NATURAL_KEY_BINDINGS["MoMorphType"]`
+        # (create_on_miss=False).
+        dropped = DroppedItemRecord(
+            owner_kind=spec.owner_class,
+            owner_guid="",
+            owner_label="",
+            field_name=spec.field_name,
+            item_name=_item_label(source_item),
+            item_guid=guid,
+            reason=(
+                "morph type not in target's morph-types list; not created "
+                "(the list is FLEx's fixed set and a created copy would lose "
+                "its Prefix/Postfix markers)"
+            ),
+        )
+        return ReferenceDecision(
+            action=ReferenceAction.REPORT_DROPPED, source_item=source_item, dropped=dropped,
+        )
+
     if target_item is None:
         # CREATE. `ancestors_to_create` is always populated so `apply_reference`
         # has a uniform "create each of these, top-down" loop: the full
@@ -959,6 +991,37 @@ def _default_analysis_ws_id(ops, target_ws_by_id: dict):
         if ws_handle == handle:
             return ws_id
     return None
+
+
+# Issue #175: script of a writing-system tag. Only the script is compared
+# (never language family). An explicit ISO 15924 subtag wins; otherwise the
+# language subtag's customary default script. Anything unlisted is UNKNOWN.
+_LANG_DEFAULT_SCRIPT = {
+    **dict.fromkeys((
+        "en", "fr", "es", "pt", "de", "it", "nl", "sv", "da", "no", "nb", "nn",
+        "fi", "pl", "cs", "sk", "ro", "hu", "tr", "id", "ms", "sw", "tl", "vi",
+        "ca", "eo", "la", "af", "zu", "xh", "ha", "yo", "ig", "lg", "rw", "mg",
+        "hr", "sl", "lt", "lv", "et", "sq", "is", "cy", "ga", "eu", "gl"), "Latn"),
+    **dict.fromkeys(("ru", "uk", "bg", "sr", "mk", "be", "kk", "ky", "mn"), "Cyrl"),
+    **dict.fromkeys(("ar", "fa", "ur", "ps", "ku"), "Arab"),
+    "he": "Hebr", "el": "Grek", "hi": "Deva", "ne": "Deva", "mr": "Deva",
+    "bn": "Beng", "ta": "Taml", "te": "Telu", "th": "Thai", "ko": "Hang",
+    "ja": "Jpan", "zh": "Hans", "am": "Ethi", "ka": "Geor", "hy": "Armn",
+    "km": "Khmr", "lo": "Laoo", "my": "Mymr", "si": "Sinh",
+}
+
+
+def _ws_script(ws_id):
+    """ISO 15924 script of writing-system tag `ws_id`, or ``None`` (unknown)."""
+    if not isinstance(ws_id, str) or not ws_id:
+        return None
+    parts = ws_id.replace("_", "-").split("-")
+    for sub in parts[1:]:
+        if sub.lower() == "x":
+            break
+        if len(sub) == 4 and sub.isalpha():
+            return sub.title()
+    return _LANG_DEFAULT_SCRIPT.get(parts[0].lower())
 
 
 def _source_vernacular_ids(source):
@@ -1433,7 +1496,12 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                             if (best_text and dest_id is not None
                                     and best_src_id is not None
                                     and source_vern_ids is not None
-                                    and best_src_id not in source_vern_ids):
+                                    and best_src_id not in source_vern_ids
+                                    # Issue #175: only relocate within one
+                                    # script; unknown script -> skip.
+                                    and _ws_script(best_src_id) is not None
+                                    and _ws_script(best_src_id)
+                                    == _ws_script(dest_id)):
                                 field_props = {dest_id: best_text}
                                 item_relocations.append(DroppedItemRecord(
                                     owner_kind=spec.owner_class,

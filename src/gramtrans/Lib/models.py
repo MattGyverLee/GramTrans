@@ -604,7 +604,21 @@ class Selection:
         back-compatible). A frozenset ⇒ transfer only those GUIDs; an empty
         frozenset ⇒ transfer none. See `leaf_item_picks`.
         """
-        return self.leaf_item_picks.get(category)
+        explicit = self.leaf_item_picks.get(category)
+        if explicit is not None:
+            return explicit
+        # Issue #117: the dedicated pick sets are honoured by the same
+        # enumeration filter. A non-empty `stem_picks` / `affix_picks` narrows
+        # STEMS / AFFIXES to those entries; empty means "no picks set" and
+        # keeps the transfer-all default. (An explicit `leaf_item_picks`
+        # entry, e.g. the wizard's STEMS fold, wins.)
+        dedicated = {
+            GrammarCategory.STEMS: self.stem_picks,
+            GrammarCategory.AFFIXES: self.affix_picks,
+        }.get(category)
+        if dedicated:
+            return frozenset(str(g).lower() for g in dedicated)
+        return None
 
     def similar_resolution_for(self, guid: str) -> "Optional[SimilarResolution]":
         """FR-008 — return the SimilarResolution for source `guid`, or None.
@@ -3560,16 +3574,20 @@ class RunPlan:
     # additive sibling keyed the same way costs them nothing.
     # Ephemeral per run; not serialised into the run snapshot.
     msa_owner_entry: dict = field(default_factory=dict)  # Guid -> Guid
-    # Phase 3c (FR-340): LexEntryRef component-lexeme bindings deferred
-    # to post-pass A. Shape: {src_entry_guid: {"ComponentLexemesRS": [...],
-    # "PrimaryLexemesRS": [...]}}.
+    # Phase 3c (FR-340): LexEntryRef component-lexeme bindings, one UNION
+    # dict per entry. Shape: {src_entry_guid: {"ComponentLexemesRS": [...],
+    # "PrimaryLexemesRS": [...]}}. Since issue #32 post-pass A (C2,
+    # `_run_post_pass_a`) wires each target ref from its own per-ref record
+    # in `entryref_create_bindings` (matched by ref GUID); this union dict
+    # is only the FALLBACK for a plan without per-ref records.
     lexentry_ref_bindings: dict = field(default_factory=dict)
     # Feature 027 (Complex Forms & Variants, US1/US2/US3, contract C1):
     # per-ref LexEntryRef CREATION bindings -- a parallel, richer sibling of
     # `lexentry_ref_bindings` above (data-model.md's binding extension). One
     # source entry may own multiple refs, so the value is a LIST of per-ref
-    # records (`lexentry_ref_bindings` above stays a single dict per entry
-    # and is kept unchanged so `_run_post_pass_a` (C2) needs no migration).
+    # records (`lexentry_ref_bindings` above stays a single dict per entry;
+    # `_run_post_pass_a` (C2) now prefers these per-ref records and falls
+    # back to that dict only when none exist, see issue #32).
     # Gathered read-only at plan time (`Lib/categories.py._stash_entry_
     # bindings`, extended) and consumed by the Move wiring post-pass
     # `Lib/categories.py._run_entryref_create_pass` (C1, registered via
@@ -3677,6 +3695,10 @@ class RunPlan:
     # post-loop Move tail `categories._run_complex_feature_type_ra_pass` and
     # rendered by `preview.render_complex_feature_type_refs`. Ephemeral per run.
     complex_feature_type_refs: dict = field(default_factory=dict)  # str -> str
+    # Issue #139: how many TYPE_RA "Wire" rows Preview classified at plan time;
+    # the Move tail logs a warning if its write count differs. None = unknown
+    # (hand-built plan), no check.
+    expected_type_ra_writes: Optional[int] = None
     # Issue #84: how build_run_plan reinterpreted the caller's selection
     # before dispatch (ENTRY/SENSE/MSA/ALLOMORPH -> AFFIXES/STEMS, see
     # `preview.expand_lexicon_categories`). One plain sentence per note;
@@ -3914,13 +3936,21 @@ DROP_SEVERITIES = ("info", "warning")
 DROP_ORIGIN_PREVIEW_TEXTS = "preview:texts"
 
 
-def move_blind_plan_drops(plan) -> tuple:
+def move_blind_plan_drops(plan, skipped_text_guids=()) -> tuple:
     """Issue #167: the `plan.dropped_items` a Move never re-emits itself --
     the Preview-decided text-walk drops (`origin == DROP_ORIGIN_PREVIEW_TEXTS`).
     Every other plan drop is re-decided at Move, so folding it would report a
-    drop Move may have resolved."""
-    return tuple(d for d in (getattr(plan, "dropped_items", ()) or ())
-                 if getattr(d, "origin", "") == DROP_ORIGIN_PREVIEW_TEXTS)
+    drop Move may have resolved.
+
+    Issue #192: a drop whose owning text (`text_guid`) is in
+    `skipped_text_guids` is NOT carried -- Move skipped that whole text, and
+    its Skip already says so. Records with no `text_guid` are always carried."""
+    skipped = {str(g).lower() for g in (skipped_text_guids or ()) if g}
+    return tuple(
+        d for d in (getattr(plan, "dropped_items", ()) or ())
+        if getattr(d, "origin", "") == DROP_ORIGIN_PREVIEW_TEXTS
+        and not (skipped and str(getattr(d, "text_guid", "") or "").lower()
+                 in skipped))
 
 
 @dataclass(frozen=True)
@@ -4006,6 +4036,10 @@ class DroppedItemRecord:
     and from equality, so a stamped record still equals (and de-duplicates
     against) the same drop without a stamp.
 
+    text_guid (issue #192): source GUID of the text whose walk decided a
+    `preview:texts` drop ("" otherwise). Lets Move leave out the planned drops
+    of a text it skipped whole. Provenance only (compare=False).
+
     relocated (issue #169): True for a `relocated:` record (#158) -- text that
     was NOT lost but written into the target default analysis writing system
     because none of its source writing systems exists in the target. It is a
@@ -4024,6 +4058,7 @@ class DroppedItemRecord:
     severity: str = "info"
     origin: str = field(default="", compare=False)
     relocated: bool = False
+    text_guid: str = field(default="", compare=False)
 
     def __post_init__(self) -> None:
         if not self.owner_kind:

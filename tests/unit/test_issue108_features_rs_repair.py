@@ -519,3 +519,53 @@ class TestInsertOnly:
         assert ctx._struct_type_features_rs_writes == 1
         assert [s.source_guid for s in skips
                 if s.reason == SkipReason.DEPENDENCY_UNRESOLVED] == [T1]
+
+
+# ============================================================================
+# Issue #138 leftovers
+# ============================================================================
+
+class TestIssue138:
+
+    def test_several_target_only_members_aggregate_to_one_skip_per_type(self) -> None:
+        a, x, y = _Defn(A), _Defn(X), _Defn("y-guid")
+        t1 = _Type(T1, [a, x, y])
+        tgt = _Proj(ms_feats=[a, x, y], ms_types=[t1])
+        ctx = _ctx(_Proj(), tgt, {T1: _ref([A])})
+        skips = categories._run_struct_type_features_rs_pass(ctx, tgt)
+        assert len(skips) == 1
+        assert skips[0].reason == SkipReason.NEEDS_MANUAL
+        assert X in skips[0].detail and "y-guid" in skips[0].detail
+        assert "2 member(s)" in skips[0].detail
+
+    def test_unresolved_member_without_drop_sink_becomes_skip(self) -> None:
+        a = _Defn(A)
+        t1 = _Type(T1, [a])
+        tgt = _Proj(ms_feats=[a], ms_types=[t1])
+        ctx = _ctx(_Proj(), tgt, {T1: _ref([A, B, C])})
+        object.__setattr__(ctx, "_dropped", None)
+        skips = categories._run_struct_type_features_rs_pass(ctx, tgt)
+        assert len(skips) == 1
+        assert skips[0].reason == SkipReason.DEPENDENCY_UNRESOLVED
+        assert B in skips[0].detail and C in skips[0].detail
+
+    def test_unresolved_member_with_sink_stays_a_dropped_record(self) -> None:
+        a = _Defn(A)
+        t1 = _Type(T1, [a])
+        tgt = _Proj(ms_feats=[a], ms_types=[t1])
+        ctx = _ctx(_Proj(), tgt, {T1: _ref([A, B])})
+        skips = categories._run_struct_type_features_rs_pass(ctx, tgt)
+        assert skips == [] and len(ctx._dropped) == 1
+
+    def test_feature_category_dispatches_before_type_category(self) -> None:
+        # Preview/Move parity: "Wire at create" is only true while each
+        # feature category runs before its types category in BOTH dispatch
+        # lists (a member created after the type would need a repair).
+        import inspect
+        for mod in (preview, transfer):
+            src = inspect.getsource(mod)
+            for feats, types in (("PHONOLOGICAL_FEATURES", "PHON_FEAT_TYPES"),
+                                 ("INFLECTION_FEATURES", "FEATURE_STRUCT_TYPES")):
+                i = src.index(f"        GrammarCategory.{feats},\n")
+                j = src.index(f"        GrammarCategory.{types},\n")
+                assert i < j, (mod.__name__, feats, types)

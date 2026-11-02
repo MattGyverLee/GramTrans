@@ -351,9 +351,9 @@ def test_create_fires_only_when_the_key_finds_nothing(monkeypatch):
     src = _ProxyRefType("src-guid", "Ngoreme Custom Relation", 10)
     ctx = _Ctx(src_handle, tgt)
 
-    found = categories._resolve_target_lex_ref_type(
-        tgt, "src-guid", source_type=src, ctx=ctx, allow_create=True,
-        dropped=[])
+    assert categories._resolve_target_lex_ref_type(
+        tgt, "src-guid", source_type=src, ctx=ctx, dropped=[]) is None
+    found = categories._create_target_lex_ref_type(src, ctx, [])
 
     assert found is not None
     # GUID-preserving: the next run resolves it by IDENTITY, not by key.
@@ -363,15 +363,13 @@ def test_create_fires_only_when_the_key_finds_nothing(monkeypatch):
 
 
 def test_create_does_not_fire_when_the_key_matches(monkeypatch):
-    tgt_list = _RefList([_ProxyRefType("canonical", "Calendar", 4)])
+    tgt_proxy = _ProxyRefType("canonical", "Calendar", 4)
+    tgt_list = _RefList([tgt_proxy])
     created = _fake_create(monkeypatch, tgt_list)
-    tgt = _Handle(tgt_list)
-    ctx = _Ctx(_Handle(_RefList([])), tgt)
+    ctx = _Ctx(_Handle(_RefList([])), _Handle(tgt_list))
     src = _ProxyRefType("src-guid", "Calendar", 4)
 
-    found = categories._resolve_target_lex_ref_type(
-        tgt, "src-guid", source_type=src, ctx=ctx, allow_create=True,
-        dropped=[])
+    found, _ = _resolve(src, [tgt_proxy])
 
     assert found is not None
     assert found.Guid == "canonical"
@@ -394,8 +392,7 @@ def test_the_seven_flex_default_types_are_not_doubled(monkeypatch):
     for name, mt, src_guid, tgt_guid in _SEVEN:
         src = _ProxyRefType(src_guid, name, mt)
         found = categories._resolve_target_lex_ref_type(
-            tgt, src_guid, source_type=src, ctx=ctx, allow_create=True,
-            dropped=[])
+            tgt, src_guid, source_type=src, ctx=ctx, dropped=[])
         assert found is not None, name
         assert found.Guid == tgt_guid, name
         resolved.append(name)
@@ -417,9 +414,7 @@ def test_a_create_failure_is_reported_not_raised(monkeypatch):
     src = _ProxyRefType("src-guid", "Odd Relation", 10)
     dropped: list = []
 
-    found = categories._resolve_target_lex_ref_type(
-        tgt, "src-guid", source_type=src, ctx=ctx, allow_create=True,
-        dropped=dropped)
+    found = categories._create_target_lex_ref_type(src, ctx, dropped)
 
     assert found is None
     assert len(dropped) == 1
@@ -441,7 +436,7 @@ def test_preview_predicts_the_create_and_writes_nothing(monkeypatch):
 
     found = categories._resolve_target_lex_ref_type(
         tgt, "src-guid", source_type=src, ctx=ctx, plan_time=True,
-        allow_create=False, dropped=[])
+        dropped=[])
 
     assert found is categories.PLAN_TIME_PENDING
     assert created == []
@@ -467,9 +462,7 @@ def test_preview_and_move_agree_on_a_key_matched_type(monkeypatch):
     ctx = _Ctx(_Handle(_RefList([])), tgt)
     src = _ProxyRefType("src-guid", "Calendar", 4)
 
-    move = categories._resolve_target_lex_ref_type(
-        tgt, "src-guid", source_type=src, ctx=ctx, allow_create=True,
-        dropped=[])
+    move, _ = _resolve(src, tgt_types)
     preview = categories._resolve_target_lex_ref_type(
         tgt, "src-guid", source_type=src, ctx=ctx, plan_time=True, dropped=[])
 

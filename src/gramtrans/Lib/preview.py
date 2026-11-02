@@ -23,6 +23,7 @@ if __package__:
     from .models import (
         CategoryScope,
         ClosureEdge,
+        ConflictMode,
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
@@ -50,6 +51,7 @@ else:
     from models import (
         CategoryScope,
         ClosureEdge,
+        ConflictMode,
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
@@ -467,6 +469,44 @@ def _materialise_closure_edges(visit_order, pulled_in_by, registry) -> tuple:
                 verified_by=verified_by,
             ))
     return tuple(edges)
+
+
+def _link_mode_skip(result, selection):
+    """Issue #22 Part 3 (preview/move agreement under LINK).
+
+    A GUID-matched ``write_mode="merge"`` overwrite is what the category
+    planners emit whenever source and target fields differ; it is the right
+    plan under UPDATE (Merge). Under ``ConflictMode.LINK`` Move writes nothing
+    to an existing item (``transfer.execute``: "LINK mode -- item present, no
+    field writes"), so Preview must not promise the merge. Returns a
+    ``Skip(ALREADY_PRESENT_BY_GUID)`` that says the item is linked and that
+    the compared differences are deliberately not written, or ``None`` when
+    the overwrite must stay in the plan (any other mode, or a match that is
+    not a plain GUID merge: natural-key matches carry the identity the
+    executor resolves references through, and other write modes are not
+    field merges).
+    """
+    if getattr(result, "write_mode", "") != "merge":
+        return None
+    if getattr(result, "match_via", "guid") != "guid":
+        return None
+    try:
+        mode = selection.conflict_mode_for(result.category)
+    except Exception:  # noqa: BLE001 -- unknown category: leave the plan alone
+        return None
+    if mode != ConflictMode.LINK:
+        return None
+    return Skip(
+        category=result.category,
+        source_guid=result.source_guid,
+        reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+        detail=(
+            f"GUID {str(result.source_guid)[:8]}... present in target; LINK "
+            "mode links by GUID and writes no fields, so the differences "
+            f"found are NOT applied ({result.summary})"
+        ),
+    )
+
 
 
 def _walk_verified_closure(context, selection, actions, overwrites) -> tuple:
@@ -1168,6 +1208,34 @@ def expand_lexicon_categories(selection: Selection):
     return dataclasses.replace(selection, categories=categories), (note,)
 
 
+def lexicon_pick_notes(selection: Selection) -> tuple:
+    """Issue #117: say, in Preview, whether AFFIXES / STEMS are narrowed.
+
+    Per-item picks (`affix_picks` / `stem_picks` / `leaf_item_picks`) filter
+    `affixes_enumerate_source` / `stems_enumerate_source`. A selected lexicon
+    carrier with NO picks transfers every entry; that is stated, so an empty
+    pick set is never mistaken for "nothing picked, nothing transferred" or
+    for a filter that silently failed.
+    """
+    notes = []
+    for cat, noun in ((GrammarCategory.AFFIXES, "affix"),
+                      (GrammarCategory.STEMS, "stem")):
+        if not selection.is_on(cat):
+            continue
+        picks = selection.leaf_picks_for(cat)
+        if picks is None:
+            notes.append(
+                f"{cat.value}: no {noun} picks set -- every {noun} entry in "
+                "the source is planned")
+        else:
+            n = len(picks)
+            notes.append(
+                f"{cat.value}: only the {n} picked {noun} "
+                f"entr{'y' if n == 1 else 'ies'} planned (plus the "
+                "dependencies they need); other source entries are left out")
+    return tuple(notes)
+
+
 # Issue #126: mirrors `transfer._ENRICHMENT_CATEGORIES` (POS is aliased to
 # gram_categories); the categories whose ADD runs `_fill_created_pos_collections`.
 _POS_ADD_CATEGORIES = frozenset({
@@ -1237,6 +1305,7 @@ def build_run_plan(
     effective selection and a note saying so (`RunPlan.category_notes`).
     """
     selection, _category_notes = expand_lexicon_categories(selection)
+    _category_notes = tuple(_category_notes) + lexicon_pick_notes(selection)
     actions: List[PlannedAction] = []
     skips: List[Skip] = []
     overwrites: List[PlannedOverwrite] = []
@@ -1518,7 +1587,11 @@ def build_run_plan(
             if isinstance(result, Skip):
                 skips.append(result)
             elif isinstance(result, PlannedOverwrite):
-                overwrites.append(result)
+                _linked = _link_mode_skip(result, selection)
+                if _linked is not None:
+                    skips.append(_linked)
+                else:
+                    overwrites.append(result)
             elif isinstance(result, (PlannedAction, CreateDefinitionAction)):
                 # CreateDefinitionAction (custom-field schema create) is a
                 # standalone dataclass, NOT a PlannedAction subclass. Without
@@ -1670,6 +1743,15 @@ def build_run_plan(
     # `_resolver_cache` (genres/tags) and `_dropped` collectors as the rest of
     # the walk so the never-silent guarantee is uniform (FR-023).
     _text_plans: list = []
+    # Issue #166: the source GUIDs of every POS this run will CREATE, so a
+    # wordform analysis whose CategoryRA is one of them plans a LINK (rebound at
+    # Move once the grammar leg has created it) instead of a drop. POS creation
+    # preserves the source GUID, so the GUID is the join key.
+    object.__setattr__(context, '_planned_pos_guids', {
+        str(a.source_guid).lower() for a in actions
+        if getattr(a, 'category', None) in (GrammarCategory.GRAM_CATEGORIES,
+                                            GrammarCategory.POS)
+        and getattr(a, 'source_guid', None)})
     if selection.is_on(GrammarCategory.TEXTS):
         if __package__:
             from .texts import plan_texts as _plan_texts
@@ -1795,7 +1877,7 @@ def build_run_plan(
         len(actions), len(skips), len(overwrites), len(excluded_lossy), len(_dropped),
         len(_closure_edges), len(_incompleteness), len(_enrichments),
     )
-    return RunPlan(
+    _plan = RunPlan(
         context=context,
         selection=selection,
         ws_mapping=ws_mapping,
@@ -1857,6 +1939,13 @@ def build_run_plan(
         # Issues #141/#142: lexical-relation + new relation-type CREATEs.
         lexical_relation_decisions=tuple(_lexical_relation_records or ()),
     )
+    # Issue #139: remember Preview's Wire count so the Move tail can check it.
+    try:
+        object.__setattr__(_plan, "expected_type_ra_writes",
+                           count_complex_feature_type_ra_wires(_plan))
+    except Exception:  # noqa: BLE001 -- bookkeeping must never break planning
+        pass
+    return _plan
 
 
 # ============================================================================
@@ -2114,6 +2203,13 @@ def render_complex_feature_type_refs(plan: RunPlan) -> Tuple[str, ...]:
         lines.append(f"    {label}  feature {feat_guid}"
                      f" -> type {type_guid}")
     return tuple(lines)
+
+
+def count_complex_feature_type_ra_wires(plan: RunPlan) -> int:
+    """Number of "Wire" rows `render_complex_feature_type_refs` shows (issue
+    #139): the TypeRA write count Preview promises Move."""
+    return sum(1 for r in render_complex_feature_type_refs(plan)
+               if r.strip().startswith("Wire"))
 
 
 def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:

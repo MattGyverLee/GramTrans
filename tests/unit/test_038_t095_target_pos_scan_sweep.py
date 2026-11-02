@@ -446,6 +446,10 @@ _ALLOWED_TARGET_POS_SCANS = {
         "_execute_overwrite":
             "the SLOTS fallback scans every category's affix slots for a SLOT "
             "guid; the category is walked, not resolved",
+        "_wire_enriched_template_slots":
+            "#137: fallback scan of every category's AffixSlotsOC for a SLOT "
+            "guid (the owning POS is tried first); the category is walked, "
+            "not resolved",
     },
 }
 

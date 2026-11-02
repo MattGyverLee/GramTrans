@@ -7,17 +7,12 @@ LIVE and MCP-verified via the closure/plan path, NOT through this module:
     Lib/transfer.py._execute_layer3            (LexEntry/Sense/MSA/Allomorph)
     Lib/categories.py._create_msa_for_closure  (MSA wiring)
 
-That path walks affixes as part of the POS closure and plans ALL affix
-entries for a POS. The one thing it does NOT do is consume per-item picks
-(`selection.affix_picks` / `selection.stem_picks`). This module is the
-placeholder for that acknowledged, human-flagged design gap: a pick-aware
-`enumerate_source` that would honour affix_picks/stem_picks. Whether to
-build it is an open DESIGN decision (see the xfail
-`test_stem_picks_flow_into_compute_plan_owned_children` in
-tests/unit/test_selection_ui.py), not a scheduled task.
-
-The bodies deliberately raise NotImplementedError; that xfail test relies on
-it to document the gap. The former `categories_templates.py` /
+Per-item picks (`selection.affix_picks` / `selection.stem_picks`) are honoured
+by the live path (issue #117, decided: honour them): `Selection.
+leaf_picks_for` falls back to them, `categories.affixes_enumerate_source` /
+`stems_enumerate_source` filter on it, and Preview states whether picks are
+set (`preview.lexicon_pick_notes`). This module stays an unused placeholder;
+its bodies deliberately raise NotImplementedError. The former `categories_templates.py` /
 `categories_msas.py` sibling stubs were the same abandoned "generic-walker
 refactor" and were deleted once the closure/plan path proved sufficient.
 """
