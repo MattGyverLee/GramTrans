@@ -115,7 +115,8 @@ def test_default_set_dispatches_affixes_and_stems_once(monkeypatch):
     assert not any(c in LEX for c in calls)
     assert not any("not dispatched" in s.detail for s in plan.skips)
     assert plan.selection.is_on(GC.AFFIXES) and plan.selection.is_on(GC.STEMS)
-    assert len(plan.category_notes) == 1
+    # alias note + one "no picks set" note per carrier (issue #117)
+    assert len([n for n in plan.category_notes if "picks" not in n.split(";")[0]]) == 1
 
 
 def test_full_selection_without_stems_does_not_pull_stems(monkeypatch):

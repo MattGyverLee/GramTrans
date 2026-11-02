@@ -604,7 +604,21 @@ class Selection:
         back-compatible). A frozenset ⇒ transfer only those GUIDs; an empty
         frozenset ⇒ transfer none. See `leaf_item_picks`.
         """
-        return self.leaf_item_picks.get(category)
+        explicit = self.leaf_item_picks.get(category)
+        if explicit is not None:
+            return explicit
+        # Issue #117: the dedicated pick sets are honoured by the same
+        # enumeration filter. A non-empty `stem_picks` / `affix_picks` narrows
+        # STEMS / AFFIXES to those entries; empty means "no picks set" and
+        # keeps the transfer-all default. (An explicit `leaf_item_picks`
+        # entry, e.g. the wizard's STEMS fold, wins.)
+        dedicated = {
+            GrammarCategory.STEMS: self.stem_picks,
+            GrammarCategory.AFFIXES: self.affix_picks,
+        }.get(category)
+        if dedicated:
+            return frozenset(str(g).lower() for g in dedicated)
+        return None
 
     def similar_resolution_for(self, guid: str) -> "Optional[SimilarResolution]":
         """FR-008 — return the SimilarResolution for source `guid`, or None.
