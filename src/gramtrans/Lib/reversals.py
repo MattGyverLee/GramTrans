@@ -699,6 +699,21 @@ def _find_existing_entry_by_form(entries, target, ws_id, text):
     return None
 
 
+def _report_formless_entry(decision: "ReversalDecision", dropped) -> None:
+    """Report a top-level entry with no populated form alt (nothing to
+    create it from). Shared by `_apply_one_entry`'s pre-index guard and
+    `_create_top_level_entry`'s defensive one."""
+    dropped.append(DroppedItemRecord(
+        owner_kind="ReversalIndexEntry",
+        owner_guid=decision.source_entry_guid,
+        owner_label="",
+        field_name="ReversalForm",
+        item_name="",
+        item_guid=decision.source_entry_guid,
+        reason="no reversal form alt to create entry from",
+    ))
+
+
 def _create_top_level_entry(target, target_index, primary_ws_id, primary_text, first_sense,
                              decision, dropped):
     """Create -- or REUSE, if an entry with the same `ReversalForm` already
@@ -717,15 +732,7 @@ def _create_top_level_entry(target, target_index, primary_ws_id, primary_text, f
     afterwards via `_link_remaining_senses`, so both the create and reuse
     paths leave `first_sense` linked before returning."""
     if not primary_text:
-        dropped.append(DroppedItemRecord(
-            owner_kind="ReversalIndexEntry",
-            owner_guid=decision.source_entry_guid,
-            owner_label="",
-            field_name="ReversalForm",
-            item_name="",
-            item_guid=decision.source_entry_guid,
-            reason="no reversal form alt to create entry from",
-        ))
+        _report_formless_entry(decision, dropped)
         return None
     existing = _find_existing_entry_by_form(
         getattr(target_index, "EntriesOC", None) or [], target, primary_ws_id, primary_text)
@@ -997,6 +1004,15 @@ def _apply_one_entry(decision: "ReversalDecision", target, ctx, tag, resolver_ca
     # idempotent (per-run cache keyed by `target_ws_id`), so re-deriving it
     # here for every sub-entry in the same tree is a cheap cache hit, never
     # a second `ReversalIndexes.Create` call.
+    # Issue #188 (#163 pattern): a top-level entry with no form can never
+    # be created, so it must not be the one that creates the target index --
+    # otherwise an index whose only entries are formless is left empty in
+    # the target. Drop it BEFORE `_ensure_target_index`. (Sub-entries reuse
+    # the index their surviving parent already made.)
+    if parent_target_entry is None and not primary_text:
+        _report_formless_entry(decision, dropped)
+        return None
+
     target_index = _ensure_target_index(decision, target, tag, resolver_cache, dropped)
 
     if parent_target_entry is None:
