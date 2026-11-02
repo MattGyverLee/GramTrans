@@ -2094,5 +2094,6 @@
       "step": "implement"
     }
   ],
-  "last_action": "T025-T034 done -- 34/67; Phase 4 offline work complete, frontier is T035 (live batch 1, needs an attended run)"
+  "last_action": "T025-T034 done -- 34/67; Phase 4 offline work complete, frontier is T035 (live batch 1, needs an attended run)",
+  "telemetryInstanceId": "a56f6c0c-6aba-4070-8175-f95a068b4498"
 }

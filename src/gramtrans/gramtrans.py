@@ -57,7 +57,8 @@ from flexicon import (  # noqa: F401 — flexicon provides the grammar wrappers
 )
 
 # Helpers under Lib/ (resolved via site.addsitedir above).
-from preview import build_run_plan, render_preview_extra_lines
+from preview import (build_run_plan, render_preview_extra_lines,
+                     safe_preview_extra_lines)
 from transfer import execute
 from residue import ImportResidueTag
 from report import render_text_summary, to_snapshot_json
@@ -399,8 +400,12 @@ def _headless_phase0(project, report, modifyAllowed):
             # the same `render_preview_extra_lines` seam the GUI Preview
             # renders. Without this the module Preview omitted them entirely,
             # breaking Principle III (show it before Move writes it).
-            for line in render_preview_extra_lines(plan):
+            _extra, _extra_warn = safe_preview_extra_lines(
+                plan, render_preview_extra_lines)
+            for line in _extra:
                 report.Info(line)
+            if _extra_warn:  # Issue #164: a renderer bug must not abort Move
+                report.Warning(_extra_warn)
             report.Blank()
 
             if not modifyAllowed:
@@ -566,8 +571,12 @@ def phase2_interactive_move(
                                f"'{d.owner_label}': {d.reason}")
         # Issue #145: the Preview-only extra lines, shown BEFORE the conflict
         # dialog and the Move -- see the matching block in `_headless_phase0`.
-        for line in render_preview_extra_lines(plan):
+        _extra, _extra_warn = safe_preview_extra_lines(
+            plan, render_preview_extra_lines)
+        for line in _extra:
             report.Info(f"[Phase 2] [Preview] {line}")
+        if _extra_warn:  # Issue #164: a renderer bug must not abort Move
+            report.Warning(f"[Phase 2] [Preview] {_extra_warn}")
 
         # 3. Conflict detection + resolver
         prompts = collect_overwrite_conflicts(plan, source, project)

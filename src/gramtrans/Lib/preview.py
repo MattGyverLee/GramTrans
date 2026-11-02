@@ -2125,7 +2125,9 @@ def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
 # would swamp the pane); see the #116 implementation report.
 _SENSE_LIST_REF_FIELDS = ("AppendixesRC", "ThesaurusItemsRC")
 
-_SENSE_LIST_REF_LABELS = (
+# Shared by the #116/#147 sense-list renderer and the #144 reversal/text
+# renderer (issue #164: one vocabulary, one order).
+_REF_ACTION_LABELS = (
     ("create", "Create"),
     ("update", "Update"),
     ("link", "Link"),
@@ -2176,6 +2178,35 @@ def _capped_rows(lines, cap: int, noun: str, indent: str = "    ",
     return out
 
 
+def _aggregate_ref_rows(decisions, extract) -> dict:
+    """Shared aggregator (issue #164) behind both Preview renderers: one row
+    per ``(field, action, guid)``.
+
+    `extract(d)` returns ``((field, guid), name, ancestors, owner)``. `owner`
+    is added to the row's `owners` set; when None the row's `count` is bumped
+    instead (decisions without a stable owner GUID)."""
+    rows: dict = {}
+    for d in decisions:
+        act = getattr(getattr(d, "action", None), "value", "")
+        (field, guid), name, ancestors, owner = extract(d)
+        key = (field, act, guid)
+        row = rows.get(key)
+        if row is None:
+            rows[key] = row = {
+                "name": name,
+                "ancestors": ancestors,
+                "owners": set(),
+                "count": 0,
+                "planned": False,
+            }
+        if owner is None:
+            row["count"] += 1
+        else:
+            row["owners"].add(owner)
+        row["planned"] = row["planned"] or bool(getattr(d, "planned", False))
+    return rows
+
+
 def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
     """Issue #116 (030 FR-008, Principle III): render the CREATE / LINK /
     UPDATE / not-transferred decisions the 030 sense resolvers
@@ -2199,27 +2230,17 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
     A LINK to an item this run creates (`planned`) is labelled as such, and
     counted on its own collapse line, so it never reads as already in the
     target."""
-    rows: dict = {}
-    for action in getattr(plan, "actions", ()) or ():
-        for d in getattr(action, "reference_decisions", ()) or ():
-            if getattr(d, "field_name", "") not in _SENSE_LIST_REF_FIELDS:
-                continue
-            act = getattr(getattr(d, "action", None), "value", "")
-            key = (d.field_name, act, d.item_guid)
-            row = rows.get(key)
-            if row is None:
-                rows[key] = row = {
-                    "name": d.item_name,
-                    "ancestors": tuple(getattr(d, "new_ancestors", ()) or ()),
-                    "owners": set(),
-                    "planned": False,
-                }
-            row["owners"].add(d.owner_guid)
-            row["planned"] = row["planned"] or bool(getattr(d, "planned", False))
+    decisions = [
+        d for action in getattr(plan, "actions", ()) or ()
+        for d in getattr(action, "reference_decisions", ()) or ()
+        if getattr(d, "field_name", "") in _SENSE_LIST_REF_FIELDS]
+    rows = _aggregate_ref_rows(decisions, lambda d: (
+        (d.field_name, d.item_guid), d.item_name,
+        tuple(getattr(d, "new_ancestors", ()) or ()), d.owner_guid))
     if not rows:
         return ()
     lines: List[str] = ["  Sense appendix / thesaurus references:"]
-    for act, label in _SENSE_LIST_REF_LABELS:
+    for act, label in _REF_ACTION_LABELS:
         keys = sorted(k for k in rows if k[1] == act)
         if act == "link" and len(keys) > SENSE_LIST_REF_ROW_CAP:
             # Issue #147: collapse to one count line per field. Items this
@@ -2266,77 +2287,67 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
 # reference decisions
 # ============================================================================
 
-# Row cap: shares `SENSE_LIST_REF_ROW_CAP` (single source of truth). Rows past
-# it collapse into one "+N more" line. #147's `_capped_rows` is NOT reused
-# because it emits a different string ("... and N more ... not shown here").
-
-# Same vocabulary and order as `_SENSE_LIST_REF_LABELS`.
-_REF_DECISION_LABELS = (
-    ("create", "Create"),
-    ("update", "Update"),
-    ("link", "Link"),
-    ("report_dropped", "Not transferred"),
-)
-
+# Row cap: shares `SENSE_LIST_REF_ROW_CAP` and `_capped_rows` with the #147
+# sense-list renderer, PER ACTION KIND (issue #164), so a flood of Link rows
+# cannot push Create / Not-transferred rows (which carry reasons) out of the
+# pane. Both renderers emit the same "... and N more ... not shown here" line.
 
 def _ref_decision_rows(decisions) -> dict:
     """Aggregate live `ReferenceDecision`s to one row per (action, item GUID)
     with the number of owners that reference it. The item is named from
     `source_item` (a CREATE has no `target_item`); a CREATE row also carries
     the ancestors in its chain (`ancestors_to_create[:-1]`), which Move
-    creates only when the target lacks them."""
+    creates only when the target lacks them.
+
+    Issue #164: same aggregation core as the sense-list renderer
+    (`_aggregate_ref_rows`); only the key/name extraction differs."""
     if __package__:
         from . import references as _references
     else:
         import references as _references  # type: ignore
-    rows: dict = {}
-    for d in decisions:
-        act = getattr(getattr(d, "action", None), "value", "")
+
+    def _extract(d):
         item = getattr(d, "source_item", None)
         guid = _references._guid_str(item) if item is not None else ""
         if not guid and getattr(d, "dropped", None) is not None:
             guid = d.dropped.item_guid
-        row = rows.get((act, guid))
-        if row is None:
-            name = _references._item_label(item) if item is not None else ""
-            if not name and getattr(d, "dropped", None) is not None:
-                name = d.dropped.item_name
-            chain = tuple(getattr(d, "ancestors_to_create", ()) or ())[:-1]
-            rows[(act, guid)] = row = {
-                "name": name,
-                "ancestors": tuple(_references._item_label(a) for a in chain),
-                "count": 0,
-                "planned": False,
-            }
-        row["count"] += 1
-        row["planned"] = row["planned"] or bool(getattr(d, "planned", False))
-    return rows
+        name = _references._item_label(item) if item is not None else ""
+        if not name and getattr(d, "dropped", None) is not None:
+            name = d.dropped.item_name
+        chain = tuple(getattr(d, "ancestors_to_create", ()) or ())[:-1]
+        return (("", guid), name,
+                tuple(_references._item_label(x) for x in chain), None)
+
+    rows = _aggregate_ref_rows(decisions, _extract)
+    return {(k[1], k[2]): v for k, v in rows.items()}
 
 
 def _render_ref_decision_section(title: str, rows: dict, unit: str,
                                  units: str) -> List[str]:
     """One titled block of Create/Update/Link/Not-transferred rows, capped at
-    `SENSE_LIST_REF_ROW_CAP` rows."""
+    `SENSE_LIST_REF_ROW_CAP` rows PER ACTION KIND (issue #164)."""
     if not rows:
         return []
     body: List[str] = []
-    for act, label in _REF_DECISION_LABELS:
+    for act, label in _REF_ACTION_LABELS:
+        kind_lines: List[str] = []
         for key in sorted(k for k in rows if k[0] == act):
             row = rows[key]
             n = row["count"]
             line = (f"    {label}  '{row['name']}' {{{key[1]}}}"
                     f"  ({n} {unit if n == 1 else units})")
             if act == "create" and row["ancestors"]:
-                line += (" -- under " + " > ".join(f"'{a}'" for a in row["ancestors"])
+                line += (" -- under " + " > ".join(f"'{x}'" for x in row["ancestors"])
                          + " (created too if absent)")
             if act == "link" and row["planned"]:
                 line += PLANNED_LINK_ROW_SUFFIX
             if act == "report_dropped":
                 line += " -- see dropped items for the reason"
-            body.append(line)
-    if len(body) > SENSE_LIST_REF_ROW_CAP:
-        extra = len(body) - SENSE_LIST_REF_ROW_CAP
-        body = body[:SENSE_LIST_REF_ROW_CAP] + [f"    +{extra} more"]
+            kind_lines.append(line)
+        body.extend(_capped_rows(
+            kind_lines, SENSE_LIST_REF_ROW_CAP, f"{label} rows",
+            suffix=("; the dropped-items list names every one"
+                    if act == "report_dropped" else "")))
     lines = [f"  {title}:"] + body
     # A Create row with planned Link rows for the same GUID: Move creates the
     # item once and the other references link to it.
@@ -2457,6 +2468,34 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_reversal_and_text_decisions(plan))
         + tuple(render_lexical_relation_decisions(plan))
     )
+
+
+def safe_preview_extra_lines(plan: RunPlan, render=None) -> Tuple[Tuple[str, ...], str]:
+    """Issue #164 (Principle I): run the Preview extra-lines renderer without
+    letting a renderer bug abort the Preview -- and, on the module paths, the
+    Move that follows it.
+
+    Returns ``(lines, warning)``: `lines` is the renderer's output (``()`` on
+    failure) and `warning` is ``""`` on success, else one line naming the
+    failure for the caller to surface (`report.Warning` / the stats panel).
+    `render` defaults to `render_preview_extra_lines`; callers pass their own
+    module-level name so a patched renderer is honoured. Preview is
+    read-only, so degrading to "no extra lines + a warning" loses nothing
+    that Move depends on."""
+    renderer = render if render is not None else render_preview_extra_lines
+    try:
+        return tuple(renderer(plan)), ""
+    except Exception as exc:  # noqa: BLE001 - boundary: report, don't abort
+        return (), (f"Preview detail lines could not be rendered "
+                    f"({type(exc).__name__}: {exc}); the preview above is "
+                    f"incomplete.")
+
+
+def preview_extra_lines_or_warning(plan: RunPlan, render=None) -> Tuple[str, ...]:
+    """GUI form of `safe_preview_extra_lines` (issue #164): the extra lines,
+    with a trailing ``[WARN]`` line when the renderer failed."""
+    lines, warning = safe_preview_extra_lines(plan, render)
+    return lines + (("[WARN] " + warning,) if warning else ())
 
 
 # ============================================================================

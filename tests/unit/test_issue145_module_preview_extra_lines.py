@@ -177,6 +177,49 @@ def test_empty_extra_lines_add_nothing(monkeypatch):
 
 
 # ============================================================================
+# Issue #164: a renderer failure is a reported warning, not an abort
+# ============================================================================
+
+def _boom(plan):
+    raise RuntimeError("renderer exploded")
+
+
+def _warnings(report):
+    return [m for k, m in report.lines if k == "warning"]
+
+
+def test_headless_renderer_failure_warns_and_preview_continues(monkeypatch):
+    monkeypatch.setattr(_gt, "render_preview_extra_lines", _boom)
+    report = _run_headless(monkeypatch, _StubPlan())  # must not raise
+    warns = _warnings(report)
+    assert any("RuntimeError: renderer exploded" in w for w in warns), report.text
+    assert "(Preview-only run: no writes performed.)" in _info(report)
+
+
+def test_phase2_renderer_failure_warns_and_preview_continues(monkeypatch):
+    monkeypatch.setattr(_gt, "render_preview_extra_lines", _boom)
+    report = _run_phase2(monkeypatch, _StubPlan())  # must not raise
+    warns = _warnings(report)
+    assert any("[Phase 2] [Preview]" in w and "renderer exploded" in w
+               for w in warns), report.text
+    # The conflict step after the seam still ran.
+    assert any("No conflicts in plan" in m for m in _info(report)), report.text
+
+
+def test_safe_seam_returns_lines_and_empty_warning_on_success():
+    from gramtrans.Lib import preview
+    assert preview.safe_preview_extra_lines(
+        object(), lambda p: SENTINEL) == (SENTINEL, "")
+
+
+def test_safe_seam_swallows_renderer_exception():
+    from gramtrans.Lib import preview
+    lines, warning = preview.safe_preview_extra_lines(object(), _boom)
+    assert lines == ()
+    assert "RuntimeError" in warning and "renderer exploded" in warning
+
+
+# ============================================================================
 # Real renderer: the #116 appendix row reaches the module's Preview text
 # ============================================================================
 

@@ -235,7 +235,32 @@ def test_rows_are_capped_per_section():
     lines = render(_plan(reversal_decisions=decisions))
     rows = [ln for ln in lines if ln.startswith("    Create")]
     assert len(rows) == preview.SENSE_LIST_REF_ROW_CAP
-    assert "    +7 more" in lines
+    assert ("    ... and 7 more Create rows not shown here "
+            "(%d total)" % n) in lines
+
+
+def test_link_flood_cannot_crowd_out_create_and_not_transferred_rows():
+    """Issue #164: the cap is PER ACTION KIND, so a flood of Link rows cannot
+    push Create / Not-transferred rows (which carry the reasons) out."""
+    cap = preview.SENSE_LIST_REF_ROW_CAP
+    links = [_rev("l%d" % i, _link(_poss("l%03d" % i, "L%d" % i)))
+             for i in range(cap + 5)]
+    creates = [_rev("c%d" % i, _create(_poss("c%03d" % i, "C%d" % i)))
+               for i in range(2)]
+    dropped = [_rev("d0", _dropped(_poss("d000", "D0")))]
+    lines = render(_plan(reversal_decisions=links + creates + dropped))
+    assert sum(ln.startswith("    Create  ") for ln in lines) == 2
+    assert sum(ln.startswith("    Not transferred  ") for ln in lines) == 1
+    assert sum(ln.startswith("    Link  ") for ln in lines) == cap
+    assert ("    ... and 5 more Link rows not shown here (%d total)"
+            % (cap + 5)) in lines
+
+
+def test_both_renderers_share_one_label_table_and_more_string():
+    assert not hasattr(preview, "_REF_DECISION_LABELS")
+    assert not hasattr(preview, "_SENSE_LIST_REF_LABELS")
+    assert [a for a, _ in preview._REF_ACTION_LABELS] == [
+        "create", "update", "link", "report_dropped"]
 
 
 # ============================================================================

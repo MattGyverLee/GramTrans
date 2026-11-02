@@ -202,5 +202,6 @@
       "at": "2026-07-20T01:56:59.930Z"
     }
   ],
-  "currentTask": "T020"
+  "currentTask": "T020",
+  "telemetryInstanceId": "0bdd3ba8-8008-4225-9966-66ba7e029389"
 }
