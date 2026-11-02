@@ -111,7 +111,7 @@ class TestTheBoundIsRead:
         bound = census_cli.matched_tally_bound_from_report(path)
         assert bound.unbounded is False
         assert bound.withheld == frozenset({
-            "FsClosedFeature", "FsComplexFeature",
+            "FsClosedFeature", "FsComplexFeature", "FsOpenFeature",
             "LexEntryType", "LexEntryInflType"})
 
     def test_the_exact_run_2_breakdown_bounds_to_five_classes(self, tmp_path):
@@ -125,7 +125,7 @@ class TestTheBoundIsRead:
                           "VARIANT_TYPES": 1})})
         bound = census_cli.matched_tally_bound_from_report(path)
         assert bound.withheld == frozenset({
-            "PartOfSpeech", "FsClosedFeature", "FsComplexFeature",
+            "PartOfSpeech", "FsClosedFeature", "FsComplexFeature", "FsOpenFeature",
             "LexEntryType", "LexEntryInflType"})
         assert "PhPhoneme" not in bound.withheld
         assert "PhNCSegments" not in bound.withheld
@@ -294,5 +294,5 @@ class TestTheBoundIsNotTheSkipBound:
         # Disjoint concerns, and the union is what the row gate must use.
         assert skips.withheld == frozenset()
         assert bound.withheld == frozenset(
-            {"FsClosedFeature", "FsComplexFeature"})
+            {"FsClosedFeature", "FsComplexFeature", "FsOpenFeature"})
         assert "PhPhoneme" not in (skips.withheld | bound.withheld)

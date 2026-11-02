@@ -18,6 +18,7 @@ report is allowed to say about how much its sameness claims are worth.
 from __future__ import annotations
 
 import json
+import re
 from typing import Iterable
 
 if __package__:
@@ -2100,6 +2101,41 @@ def not_dispatched_categories(report) -> list:
     return cats
 
 
+_COMPONENT_SKIP_RE = re.compile(
+    r"^(ComponentLexemesRS|PrimaryLexemesRS|ShowComplexFormsInRS) component "
+    r"(\S+) unresolved$")
+
+
+def _component_key(skip):
+    """Issue #174: (category, component guid) for a per-field LexEntryRef
+    unresolved-component skip, else None."""
+    if getattr(skip, "reason", None) is not SkipReason.DEPENDENCY_UNRESOLVED:
+        return None
+    m = _COMPONENT_SKIP_RE.match(str(getattr(skip, "detail", "")))
+    return (skip.category, m.group(2)) if m else None
+
+
+def _collapse_component_skips(skips):
+    """Issue #174: {key: one rendered line per missing component}. The
+    underlying skips (counts, JSON) are untouched; only the listing collapses."""
+    groups = {}
+    for s in skips:
+        k = _component_key(s)
+        if k is not None:
+            groups.setdefault(k, []).append(s)
+    out = {}
+    for (cat, guid), items in groups.items():
+        fields = sorted({_COMPONENT_SKIP_RE.match(str(i.detail)).group(1)
+                         for i in items})
+        owners = {str(i.source_guid) for i in items}
+        out[(cat, guid)] = (
+            f"    - [BLOCKED] [{cat.value}] component {guid} missing in the "
+            f"destination: {len(items)} reference(s) from {len(owners)} "
+            f"entr{'y' if len(owners) == 1 else 'ies'} not wired "
+            f"({', '.join(fields)})")
+    return out
+
+
 def _is_source_missing(skip) -> bool:
     """Issue #85: a blocked skip whose SOURCE object was not found -- a source
     data error, worded so by every `ActionOutcome.skipped` site that hits it."""
@@ -2191,7 +2227,18 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
         yield f"  [skip] no items in source for {cat.value}"
     if report.skips:
         yield "  Skips:"
+        # Issue #174: collapse per-field unresolved-component skips to one
+        # line per missing component (first occurrence position).
+        _comp = _collapse_component_skips(report.skips)
+        _comp_done = set()
         for s in report.skips:
+            _ck = _component_key(s)
+            if _ck is not None:
+                if _ck in _comp_done:
+                    continue
+                _comp_done.add(_ck)
+                yield _comp[_ck]
+                continue
             _tag = "[BLOCKED] " if is_blocked_skip(s) else ""
             yield f"    - {_tag}[{s.category.value}] {s.source_guid}  {s.reason.value}: {s.detail}"
     if getattr(report, "excluded_lossy", ()):

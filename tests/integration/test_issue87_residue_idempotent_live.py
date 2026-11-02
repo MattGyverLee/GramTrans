@@ -54,15 +54,35 @@ if os.environ.get("FLEXLIBS_REQUIRE_LIVE") != "1":
 
 SOURCE_NAME = "Mbugwe LizzieHC practice"   # READ-ONLY, exact spelling
 # The ONLY project this module writes (a throwaway, restored before and after).
-TARGET_NAME = os.environ.get("GT_ISSUE87_TARGET", "Target")
+_PROJECTS_DIR = Path("C:/ProgramData/SIL/FieldWorks/Projects")
+
+
+def _validate_target_name(name):
+    """Write-safety guard for the (only) project this module writes (#137).
+
+    Explicit raises, not `assert`: `python -O` strips asserts, and a stripped
+    guard on a WRITE path is no guard. The unset default (the restored
+    throwaway `Target`) is allowed; an override must be a single private
+    `GT-Sandbox-*` path component -- no separators, no `..` -- whose resolved
+    project directory is directly under the Projects directory.
+    """
+    if name in ("Esperanto", SOURCE_NAME):
+        raise RuntimeError("refusing to write %r" % name)
+    if name == "Target":
+        return name
+    if (not name.startswith("GT-Sandbox-") or "/" in name or "\\" in name
+            or ".." in name or name != Path(name).name):
+        raise RuntimeError(
+            "GT_ISSUE87_TARGET must be 'Target' or a bare 'GT-Sandbox-*' "
+            "name, got %r" % name)
+    if (_PROJECTS_DIR / name).resolve().parent != _PROJECTS_DIR.resolve():
+        raise RuntimeError("target %r escapes the Projects directory" % name)
+    return name
+
+
+TARGET_NAME = _validate_target_name(os.environ.get("GT_ISSUE87_TARGET", "Target"))
 TARGET_PATH = "C:/ProgramData/SIL/FieldWorks/Projects/%s/%s.fwdata" % (
     TARGET_NAME, TARGET_NAME)
-assert TARGET_NAME not in ("Esperanto", SOURCE_NAME), TARGET_NAME
-# Write-safety: an override may only name a private GT-Sandbox-* project (the
-# unset default, the restored throwaway `Target`, is unchanged).
-assert (TARGET_NAME == "Target"
-        or TARGET_NAME.startswith("GT-Sandbox-")), (
-    "GT_ISSUE87_TARGET must start with 'GT-Sandbox-', got %r" % TARGET_NAME)
 BACKUP_NAME = "Target 2026-07-06 0218.fwbackup"
 N_TEXTS = 4
 
@@ -72,6 +92,19 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Slot/template/FsFeatStruc re-creation on a 0-action re-run (fixed).
 ISSUE_REF = "#107"
+
+# Issue #137: the diff below is a hard zero-diff contract (#107). If UNRELATED
+# #87-class churn (an object some other open issue legitimately rewrites on
+# re-run) must not fail #107's gate, list it here as
+# `(object class, "#<issue>", reason)`. It is EMPTY on purpose: every entry is
+# a known, issue-referenced exception and must be removed when that issue
+# closes. An entry silences that whole CLASS in checks (2) and (3) only; the
+# [GT-Tag] check (1) is never excluded.
+KNOWN_RERUN_CHURN: tuple = ()
+
+
+def _excluded(cls):
+    return cls in {c for c, _issue, _why in KNOWN_RERUN_CHURN}
 _TAG_LINE = re.compile(r"\[GT-Tag\]: GT\|[^\r\n<]*")
 
 
@@ -178,13 +211,14 @@ def test_rerun_leaves_objects_it_did_not_create_or_change_untouched():
                 (c, g[:8]) for c, g in tag_changes])
 
         # (2) Nothing new, nothing deleted (#107: no exclusions).
-        new = [(run2[g][0], g[:8]) for g in run2 if g not in run1]
+        new = [(run2[g][0], g[:8]) for g in run2
+               if g not in run1 and not _excluded(run2[g][0])]
         assert not new, "run 2 created objects (%s): %s" % (ISSUE_REF, new[:10])
         assert not [g for g in run1 if g not in run2], "run 2 deleted objects"
 
         # (3) No field change on any pre-existing object.
         changed = [(cls, g[:8]) for g, (cls, x1) in run1.items()
-                   if g in run2 and x1 != run2[g][1]]
+                   if g in run2 and x1 != run2[g][1] and not _excluded(cls)]
         assert not changed, (
             "run 2 changed objects it did not create/update (%s): %s" % (
                 ISSUE_REF, changed[:20]))

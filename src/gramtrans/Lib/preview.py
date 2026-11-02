@@ -1208,6 +1208,34 @@ def expand_lexicon_categories(selection: Selection):
     return dataclasses.replace(selection, categories=categories), (note,)
 
 
+def lexicon_pick_notes(selection: Selection) -> tuple:
+    """Issue #117: say, in Preview, whether AFFIXES / STEMS are narrowed.
+
+    Per-item picks (`affix_picks` / `stem_picks` / `leaf_item_picks`) filter
+    `affixes_enumerate_source` / `stems_enumerate_source`. A selected lexicon
+    carrier with NO picks transfers every entry; that is stated, so an empty
+    pick set is never mistaken for "nothing picked, nothing transferred" or
+    for a filter that silently failed.
+    """
+    notes = []
+    for cat, noun in ((GrammarCategory.AFFIXES, "affix"),
+                      (GrammarCategory.STEMS, "stem")):
+        if not selection.is_on(cat):
+            continue
+        picks = selection.leaf_picks_for(cat)
+        if picks is None:
+            notes.append(
+                f"{cat.value}: no {noun} picks set -- every {noun} entry in "
+                "the source is planned")
+        else:
+            n = len(picks)
+            notes.append(
+                f"{cat.value}: only the {n} picked {noun} "
+                f"entr{'y' if n == 1 else 'ies'} planned (plus the "
+                "dependencies they need); other source entries are left out")
+    return tuple(notes)
+
+
 # Issue #126: mirrors `transfer._ENRICHMENT_CATEGORIES` (POS is aliased to
 # gram_categories); the categories whose ADD runs `_fill_created_pos_collections`.
 _POS_ADD_CATEGORIES = frozenset({
@@ -1277,6 +1305,7 @@ def build_run_plan(
     effective selection and a note saying so (`RunPlan.category_notes`).
     """
     selection, _category_notes = expand_lexicon_categories(selection)
+    _category_notes = tuple(_category_notes) + lexicon_pick_notes(selection)
     actions: List[PlannedAction] = []
     skips: List[Skip] = []
     overwrites: List[PlannedOverwrite] = []
@@ -1848,7 +1877,7 @@ def build_run_plan(
         len(actions), len(skips), len(overwrites), len(excluded_lossy), len(_dropped),
         len(_closure_edges), len(_incompleteness), len(_enrichments),
     )
-    return RunPlan(
+    _plan = RunPlan(
         context=context,
         selection=selection,
         ws_mapping=ws_mapping,
@@ -1910,6 +1939,13 @@ def build_run_plan(
         # Issues #141/#142: lexical-relation + new relation-type CREATEs.
         lexical_relation_decisions=tuple(_lexical_relation_records or ()),
     )
+    # Issue #139: remember Preview's Wire count so the Move tail can check it.
+    try:
+        object.__setattr__(_plan, "expected_type_ra_writes",
+                           count_complex_feature_type_ra_wires(_plan))
+    except Exception:  # noqa: BLE001 -- bookkeeping must never break planning
+        pass
+    return _plan
 
 
 # ============================================================================
@@ -2167,6 +2203,13 @@ def render_complex_feature_type_refs(plan: RunPlan) -> Tuple[str, ...]:
         lines.append(f"    {label}  feature {feat_guid}"
                      f" -> type {type_guid}")
     return tuple(lines)
+
+
+def count_complex_feature_type_ra_wires(plan: RunPlan) -> int:
+    """Number of "Wire" rows `render_complex_feature_type_refs` shows (issue
+    #139): the TypeRA write count Preview promises Move."""
+    return sum(1 for r in render_complex_feature_type_refs(plan)
+               if r.strip().startswith("Wire"))
 
 
 def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:

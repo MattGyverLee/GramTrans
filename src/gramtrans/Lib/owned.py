@@ -753,6 +753,16 @@ def _copy_one_owned_child(spec, src_child, new_owner, ctx, tag, resolver_cache, 
             reason=f"child content not copied: {exc}",
         ))
 
+    # Issue #135: text fields GetSyncableProperties omits (sub-senses,
+    # pronunciations, etymologies).
+    if __package__:
+        from .scalar_fields import copy_supplemental_fields as _copy_supp
+    else:
+        from scalar_fields import copy_supplemental_fields as _copy_supp  # type: ignore
+    _copy_supp(child_class_name, src_child, new_child, source=source,
+               target=target, ws_map=ws_map, dropped=dropped, owner_guid=guid,
+               owner_label=_references._item_label(src_child))
+
     child_refs = spec.child_refs
     if spec.create_kind == OwnedCreateKind.OWNER_PLUS_TYPE and spec.type_ref_field:
         # The type-determining ref was already resolved BEFORE create

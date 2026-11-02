@@ -1510,7 +1510,10 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
 # swallowed TypeError before the 1-arg path ran anyway.
 
 def inflection_features_enumerate_source(context: RunContext, selection: Selection):
-    """Walk source.InflectionFeatures.FeatureGetAll()."""
+    """Walk source.InflectionFeatures.FeatureGetAll().
+
+    Deliberately NOT filtered by `leaf_picks_for(INFLECTION_FEATURES)`; see the
+    "PICKS ASYMMETRY" note in `_stash_complex_feature_type_ref` (issue #139)."""
     source = context.source_handle
     if not hasattr(source, "InflectionFeatures"):
         return ()
@@ -2075,6 +2078,14 @@ def _stash_complex_feature_type_ref(piece, context):
     feat_guid = _guid_str_from(piece)
     if not feat_guid:
         return
+    # PICKS ASYMMETRY (issue #139, latent): this stash honours an
+    # INFLECTION_FEATURES leaf-pick subset, but `inflection_features_enumerate_source`
+    # does NOT filter by picks. Nothing produces such picks today (selection.py
+    # / ui/ never write INFLECTION_FEATURES into `leaf_item_picks`), so the two
+    # agree. If picks are ever produced, a feature created outside them (e.g.
+    # pulled in by closure) would get no TypeRA edge from the tail. Change the
+    # stash and the enumerator TOGETHER; `test_picks_asymmetry_is_pinned`
+    # fails when either side moves alone.
     selection = getattr(context, "_selection", None)
     if selection is not None:
         try:
@@ -2148,6 +2159,35 @@ def _classify_complex_type_ra(target, feat_guid, type_guid, *,
     return (TYPE_RA_WIRE, tgt_feat, tgt_type, "")
 
 
+def _derive_complex_feature_type_refs(context):
+    """Fallback for plans not built by `build_run_plan` (issue #139):
+    `{complex_feature_guid: struct_type_guid}` read straight from the source for
+    every INFLECTION_FEATURES action in `context._run_plan`. Never raises;
+    returns `{}` when the source or plan cannot be read."""
+    plan = getattr(context, "_run_plan", None)
+    source = getattr(context, "source_handle", None)
+    if plan is None or not hasattr(source, "InflectionFeatures"):
+        return {}
+    wanted = {str(a.source_guid).lower()
+              for a in (getattr(plan, "actions", ()) or ())
+              if a.category == GrammarCategory.INFLECTION_FEATURES}
+    if not wanted:
+        return {}
+    out = {}
+    try:
+        for piece in source.InflectionFeatures.FeatureGetAll():
+            guid = _guid_str_from(piece)
+            if not guid or str(guid).lower() not in wanted:
+                continue
+            scratch = {}
+            holder = type("_Scratch", (), {"_complex_feature_type_refs": scratch})()
+            _stash_complex_feature_type_ref(piece, holder)
+            out.update(scratch)
+    except Exception:  # noqa: BLE001 -- fallback must never break Move
+        return {}
+    return out
+
+
 def _run_complex_feature_type_ra_pass(context, target, tag=None):
     """Wire `IFsComplexFeature.TypeRA` from `plan.complex_feature_type_refs`
     once every feature and struct-type of the run exists (issue #37).
@@ -2160,6 +2200,13 @@ def _run_complex_feature_type_ra_pass(context, target, tag=None):
     import logging as _logging
     log = _logging.getLogger("gramtrans.Lib.categories")
     refs = _binding_map(context, "complex_feature_type_refs") or {}
+    if not refs:
+        # A plan assembled by hand rather than by `build_run_plan` carries no
+        # gathered edges (issue #139). Derive them from the source for the
+        # INFLECTION_FEATURES actions the plan does carry, so TypeRA is not
+        # left null. A `build_run_plan` plan with no complex features derives
+        # nothing, so this is inert for production plans.
+        refs = _derive_complex_feature_type_refs(context)
     skips = []
     writes = 0
     for feat_guid in sorted(refs):
@@ -2187,6 +2234,16 @@ def _run_complex_feature_type_ra_pass(context, target, tag=None):
         object.__setattr__(context, "_complex_type_ra_writes", writes)
     except (AttributeError, TypeError):
         pass
+    # Runtime Preview-vs-Move check (issue #139). Preview recorded how many
+    # "Wire" rows it showed; a different number of writes means the two
+    # diverged (a second writer, or the target changed between Preview and
+    # Move). Warn rather than raise: the data is not at risk, the report is.
+    expected = getattr(getattr(context, "_run_plan", None),
+                       "expected_type_ra_writes", None)
+    if expected is not None and expected != writes:
+        log.warning(
+            "complex-feature TypeRA: Preview promised %d Wire row(s) but Move "
+            "wrote %d", expected, writes)
     return skips
 
 
@@ -3568,19 +3625,40 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                     writes += 1
                     log.info("struct-type %s: FeaturesRS repaired, inserted "
                              "%s", type_guid, inserted)
-            if dropped is not None:
-                for g, label in unresolved:
+            if unresolved:
+                for g, _label in unresolved:
                     log.warning("struct-type %s: FeaturesRS member %s has no "
                                 "target defn in %s.FeaturesOC -- reported as "
                                 "dropped", type_guid, g, attr)
-                    _append_dropped_once(
-                        dropped, _features_rs_drop(type_guid, ref, g, label))
-            for g in target_only:
+                if dropped is not None:
+                    for g, label in unresolved:
+                        _append_dropped_once(
+                            dropped,
+                            _features_rs_drop(type_guid, ref, g, label))
+                else:
+                    # No drop sink on this context: a log line alone would let
+                    # Preview show drops the Move report never mentions.
+                    # Surface them as ONE Skip per type instead (issue #138).
+                    skips.append(Skip(
+                        category=types_cat, source_guid=type_guid,
+                        reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                        detail=(f"struct-type {type_guid} FeaturesRS: "
+                                f"{len(unresolved)} member feature "
+                                f"definition(s) not in the target {attr}."
+                                f"FeaturesOC ("
+                                f"{', '.join(g for g, _ in unresolved)}); "
+                                "FeaturesRS left incomplete"),
+                    ))
+            if target_only:
+                # One Skip per type, not per member (issue #138): a target-only
+                # member is re-reported on every in-scope run, so per-member
+                # rows drown the report.
                 skips.append(Skip(
                     category=types_cat, source_guid=type_guid,
                     reason=SkipReason.NEEDS_MANUAL,
                     detail=(f"target struct-type {type_guid} FeaturesRS holds "
-                            f"{g}, which the source type does not; preserved, "
+                            f"{len(target_only)} member(s) the source type "
+                            f"does not ({', '.join(target_only)}); preserved, "
                             "not removed (review manually)"),
                 ))
         except Exception as exc:  # noqa: BLE001 -- one bad type must not abort
@@ -9476,6 +9554,20 @@ def _wire_subsense_msas(src_parent_sense, src_entry, new_entry, context, tag,
             msa_by_src_guid, dropped, copy_set)
 
 
+def _copy_supplemental_scalars(owner_class, src, new, context, ws_map, dropped,
+                               owner_guid):
+    """Issue #135: copy the text fields flexicon's GetSyncableProperties omits
+    (see `Lib/scalar_fields.py`). Never raises."""
+    if __package__:
+        from .scalar_fields import copy_supplemental_fields
+    else:  # pragma: no cover
+        from scalar_fields import copy_supplemental_fields  # type: ignore
+    copy_supplemental_fields(
+        owner_class, src, new, source=context.source_handle,
+        target=context.target_handle, ws_map=ws_map, dropped=dropped,
+        owner_guid=owner_guid, owner_label=_owner_label_for(owner_class, src))
+
+
 def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     """Atomic owned-child closure write for one LexEntry (E2), shared by
     AFFIXES + STEMS execute_action.
@@ -9548,6 +9640,8 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         target.LexEntry.ApplySyncableProperties(new_entry, props, ws_map=ws_map)
     except (AttributeError, TypeError):
         pass
+    _copy_supplemental_scalars(
+        "LexEntry", src_entry, new_entry, context, ws_map, dropped, src_guid)
     apply_residue(new_entry, ws, tag)
     if in_plan_entries is not None:
         try:
@@ -9624,6 +9718,8 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
             target.Senses.ApplySyncableProperties(new_sense, sprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
+        _copy_supplemental_scalars(
+            "LexSense", src_sense, new_sense, context, ws_map, dropped, s_guid)
         # Feature 024 (T030, US3): sense-owned children -- ExamplesOS (+ each
         # example's TranslationsOC) and recursive sub-senses (Sense.SensesOS,
         # `OwnedObjectSpec.recurse=True`), both via the SAME
