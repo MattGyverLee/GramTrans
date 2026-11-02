@@ -1845,6 +1845,11 @@ def render_reversal_decisions(plan: RunPlan) -> Tuple[str, ...]:
         return ()
     by_ws: dict = {}
     for decision in plan.reversal_decisions:
+        if not decision.reversal_form_alts:
+            # Issue #188 parity: Move drops a formless top-level entry
+            # before creating/linking its index, so Preview must not
+            # announce an index (or an entry) that Move will never write.
+            continue
         by_ws.setdefault(decision.target_ws_id, []).append(decision)
 
     lines: List[str] = []
