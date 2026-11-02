@@ -169,10 +169,12 @@ def test_owner_pos_rows_introduce_no_cycle():
     for node in list(graph):
         visit(node)
 
-    # POS's own (unregistered) outgoing arrows: only these two far categories,
-    # neither of which is a source of a registered row.
-    pos_far = {GrammarCategory.FEATURE_STRUCT_TYPES,
-               GrammarCategory.INFLECTION_FEATURES}
+    # POS's own (unregistered) outgoing arrows: only these two far categories.
+    # Issue #109 registered INFLECTION_FEATURES -> FEATURE_STRUCT_TYPES, so
+    # INFLECTION_FEATURES is now a source; FEATURE_STRUCT_TYPES (the sink,
+    # whose `FeaturesRS` points back at features) must stay a non-source or
+    # that edge would close a cycle.
+    pos_far = {GrammarCategory.FEATURE_STRUCT_TYPES}
     produced = gram_categories_dependencies(
         SimpleNamespace(DefaultFeaturesOA=None))
     assert produced == ()

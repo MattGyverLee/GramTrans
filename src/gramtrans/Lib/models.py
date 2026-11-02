@@ -2794,6 +2794,12 @@ class DependencyKind(enum.Enum):
     STEM_NAME_TO_POS = "stem_name_to_pos"
     INFLECTION_CLASS_TO_POS = "inflection_class_to_pos"
     POS_INFLECTABLE_FEAT_TO_POS = "pos_inflectable_feat_to_pos"
+    #: Issue #109. A complex `IFsComplexFeature`'s `TypeRA` names an
+    #: `IFsFeatStrucType` owned by FEATURE_STRUCT_TYPES. SELECTION edge only:
+    #: dispatch order stays INFLECTION_FEATURES before FEATURE_STRUCT_TYPES
+    #: (the types' `FeaturesRS` points back at feature defns); `TypeRA` is
+    #: wired by the #37 Move tail once both exist.
+    INFLECTION_FEATURE_TO_STRUCT_TYPE = "inflection_feature_to_struct_type"
 
 
 @dataclass(frozen=True)
@@ -4323,6 +4329,7 @@ class ReferenceDecisionRecord:
     item_guid: str = ""
     new_ancestors: tuple = ()  # tuple[tuple[str, str], ...]
     planned: bool = False  # issue #146: LINK produced from a PlannedCreate
+    type_guid: str = ""  # issue #165: LexReference records -- source GUID of the relation type
 
 
 # ============================================================================
@@ -4782,6 +4789,10 @@ class RunReport:
     # `PlannedAction.owned_children`; Move overwrites it with the counts the
     # writes measured. Additive, empty default.
     created_pos_children: tuple = ()  # tuple[CreatedPosChildren, ...]
+    # Issue #143: every ReferenceDecisionRecord the plan's actions/overwrites
+    # carry, flattened, so the run-report JSON serializes them (Preview
+    # computed them but nothing rendered or serialized them).
+    reference_decisions: tuple = ()  # tuple[ReferenceDecisionRecord, ...]
 
     def __post_init__(self) -> None:
         # ---- T080 (SC-010 audit): the ADD bucket's first invariant.

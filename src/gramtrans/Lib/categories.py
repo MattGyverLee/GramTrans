@@ -88,6 +88,7 @@ if __package__:
     )
     from .residue import ImportResidueTag, strip_residue_text
     from . import matcher as _matcher
+    from .lcm_unwrap import unwrap as _shared_unwrap
     from .models import MatchBasis as _MatchBasis
 else:
     from models import (  # type: ignore
@@ -122,6 +123,7 @@ else:
     )
     from residue import ImportResidueTag, strip_residue_text  # type: ignore
     import matcher as _matcher  # type: ignore
+    from lcm_unwrap import unwrap as _shared_unwrap  # type: ignore
     from models import MatchBasis as _MatchBasis  # type: ignore
 
 
@@ -268,15 +270,16 @@ _FEAT_STRUC_MAX_DEPTH = 8
 
 
 def _unwrap_lcm(obj):
-    """The LCM object behind a flexicon wrapper (`._obj`), else `obj` itself.
+    """The LCM object behind a flexicon wrapper, else `obj` itself (#173).
+
+    Delegates to `lcm_unwrap.unwrap` (`.concrete` -> `_concrete` -> `_obj`).
 
     `*_enumerate_source` yields raw LCM objects for some categories and
     flexicon `RuleCollection`-style wrappers for others (see `_guid_str_from`'s
     branch 2). A wrapper does not forward `Cache` or the typed `Fs*` members,
     so unwrap before any structural `getattr`.
     """
-    inner = getattr(obj, "_obj", None)
-    return obj if inner is None else inner
+    return _shared_unwrap(obj)
 
 
 def _cast_to_concrete(obj):
@@ -1525,6 +1528,23 @@ def inflection_features_dependencies(piece):
     # Values are co-created in execute_action, not separately planned.
     # Return empty here — the execute step handles value creation atomically.
     return ()
+
+
+def inflection_features_type_dependencies(piece):
+    """NARROW producer for `DependencyKind.INFLECTION_FEATURE_TO_STRUCT_TYPE`
+    (issue #109): `(FEATURE_STRUCT_TYPES, type_guid)` for a complex feature
+    whose `TypeRA` is set; nothing for any other feature class.
+
+    CAST DISCIPLINE: `FeatureGetAll()` yields base `IFsFeatDefn` proxies, on
+    which the complex-only `TypeRA` is invisible until cast."""
+    raw = _unwrap_lcm(piece)
+    if getattr(raw, "ClassName", None) != "FsComplexFeature":
+        return ()
+    src_type = getattr(_cast_lcm(raw, "IFsComplexFeature"), "TypeRA", None)
+    type_guid = _guid_str_from(src_type) if src_type is not None else ""
+    if not type_guid:
+        return ()
+    return ((GrammarCategory.FEATURE_STRUCT_TYPES, type_guid),)
 
 
 def inflection_features_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
@@ -3566,7 +3586,7 @@ def pos_inflectable_feats_enumerate_source(context: RunContext, selection: Selec
     source = context.source_handle
     results = []
     for pos in _iter_pos(source):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         pos_guid = _guid_str_from(concrete)
         # Issue #58: cast OUTSIDE the read's try, with a duck fallback
         # (`_as_pos`). A cast inside the try silently dropped every fake POS
@@ -3620,7 +3640,7 @@ def pos_inflectable_feats_plan_action(piece, context: RunContext, ws_mapping: WS
     # Check whether the target POS already has this feature defn wired.
     target = context.target_handle
     for pos in _iter_pos(target):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         if _guid_str_from(concrete) != pos_guid:
             continue
         pos_obj_tgt = _as_pos(concrete)  # #58: duck fallback, cast outside try
@@ -3807,7 +3827,7 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
     src_owner_pos = None
     src_owner_pos_guid = None
     for pos in source.POS.GetAll(recursive=True):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         pos_obj = _as_pos(concrete)  # #58: duck fallback, cast outside try
         try:
             for sn in pos_obj.StemNamesOC:
@@ -3890,7 +3910,7 @@ def exception_features_enumerate_source(context: RunContext, selection: Selectio
         return ()
     results = []
     for pos in source.POS.GetAll(recursive=True):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         pos_obj = _as_pos(concrete)  # #58: duck fallback, cast outside try
         try:
             for val in pos_obj.ExceptionFeaturesOC:
@@ -4747,7 +4767,7 @@ def _rule_subclass_info(obj):
     Raises RuntimeError loudly for any unrecognised ClassName (FR-006/SC-008).
     """
     # Unwrap flexicon wrapper if present
-    concrete = getattr(obj, "concrete", obj)
+    concrete = _shared_unwrap(obj)
     try:
         from SIL.LCModel import (
             ICmObject,
@@ -4921,7 +4941,7 @@ def _rules_enumerate_all(source):
     # LCM object to its concrete subclass so subclass-only slots are visible
     # (base-interface-typed OS/OC elements hide them — see _cast_rule_concrete).
     def _unwrap(obj):
-        return _cast_rule_concrete(getattr(obj, "concrete", obj))
+        return _cast_rule_concrete(_shared_unwrap(obj))
 
     # Recurse into an adhoc collection (list-like or OS)
     def _recurse_adhoc(coll):
@@ -5047,7 +5067,7 @@ def adhoc_compound_rules_dependencies(piece):
     # ExcludedLossy warnings, so while it read nothing, a rule referencing a
     # morpheme absent from the target transferred with NO warning -- a silent
     # incompleteness Principle I forbids.
-    concrete = _cast_to_concrete(getattr(piece, "concrete", piece))
+    concrete = _cast_to_concrete(_shared_unwrap(piece))
 
     def _pos_guid_from_msa(msa):
         """Return normalized POS GUID from an owned IMoStemMsa, or None."""
@@ -5605,7 +5625,7 @@ def _as_pos(pos):
     """Unwrap a flexicon wrapper (`.concrete`) and cast to IPartOfSpeech when
     a live LCM host is present; otherwise return the concrete/duck object so
     callbacks run host-free."""
-    concrete = pos.concrete if hasattr(pos, "concrete") else pos
+    concrete = _shared_unwrap(pos)
     try:
         from SIL.LCModel import IPartOfSpeech
         return IPartOfSpeech(concrete)
@@ -7049,6 +7069,9 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         # before Move writes.
         records.extend(_plan_entryref_type_decisions(
             src_entry, target, resolver_cache, dropped, source=source))
+        # Issue #127: Update rows for refs already on the target.
+        records.extend(_plan_entryref_update_decisions(
+            src_entry, context, target))
         # Feature 024 (T031, US3, FR-008): register the entry into
         # `ctx._copy_set` (the SAME convention `owned.py`'s APR gate uses --
         # `True` is a placeholder marker, Preview never needs a real target
@@ -7321,6 +7344,12 @@ _LEXREF_TYPE_PENDING_KEY = "__categories_lexreftype_pending__"
 # `_LEXREF_TYPE_PENDING_KEY`, so it never collides with the relation caches.
 _LEXREF_TYPE_CREATED_KEY = "__categories_lexreftype_created__"
 
+# Issue #185: set the first time `reproduce_all_lexical_relations` runs against
+# a given `resolver_cache`; a second call raises. The end-of-run sweep deletes
+# an empty lazily-created type, and a later call that re-created that type
+# with the same GUID in the same unit of work loses the object (live, #163).
+_LEXREL_ALL_RAN_KEY = "__categories_lexrel_all_ran__"
+
 
 def _lex_ref_type_label(lex_ref_type) -> str:
     """A human-readable name for a `LexRefType` (`Specific`, `Synonyms`,
@@ -7503,7 +7532,7 @@ def _target_lex_ref_types(target):
     return types, by_guid
 
 
-def _create_target_lex_ref_type(source_type, ctx, dropped):
+def _create_target_lex_ref_type(source_type, ctx, dropped, *, record_failure=True):
     """Create the destination counterpart of `source_type` -- the second half
     of T123's closing ruling, and the leg REACHED ONLY when the natural key
     found nothing.
@@ -7554,16 +7583,17 @@ def _create_target_lex_ref_type(source_type, ctx, dropped):
             "_create_target_lex_ref_type: create failed for %s: %s",
             type_guid, exc, exc_info=True,
         )
-        _append_dropped_once(dropped, DroppedItemRecord(
-            owner_kind="LexRefType",
-            owner_guid=type_guid,
-            owner_label=_lex_ref_type_label(source_type),
-            field_name="MembersOC",
-            item_name=_lex_ref_type_label(source_type),
-            item_guid=type_guid,
-            reason=(f"lexical relation type absent from target and could not "
-                    f"be created: {type(exc).__name__}"),
-        ))
+        if record_failure:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexRefType",
+                owner_guid=type_guid,
+                owner_label=_lex_ref_type_label(source_type),
+                field_name="MembersOC",
+                item_name=_lex_ref_type_label(source_type),
+                item_guid=type_guid,
+                reason=(f"lexical relation type absent from target and could not "
+                        f"be created: {type(exc).__name__}"),
+            ))
         return None
 
     typed = _as_lex_ref_type(new_type) or new_type
@@ -7978,18 +8008,11 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
                     type_guid, _lex_ref_type_label(source_type))
         else:
             target_type = _create_target_lex_ref_type(
-                source_type, ctx, dropped)
+                source_type, ctx, dropped, record_failure=False)
             if target_type is None:
-                # KNOWN P2 (issue #163 QC cycle 1; comment only, behaviour
-                # deliberately unchanged): when the type create ITSELF fails
-                # here, Move emits TWO records for one loss --
-                # `_create_target_lex_ref_type`'s LexRefType "could not be
-                # created" record (keyed by type_guid) AND
-                # `_append_type_not_found`'s per-relation record (keyed by
-                # rel_guid) -- while Preview, which only records
-                # `pending_types` and never attempts the create, emits NONE
-                # for the same relation. The two modes' drop lists therefore
-                # differ on this (unpredictable, factory-failure) path.
+                # Issue #186: lazy create failure is reported once via
+                # `_append_type_not_found` (per-relation key). The create
+                # helper must not also append its type-keyed record.
                 _append_type_not_found(dropped, source_type, type_guid,
                                        rel_guid)
                 return None
@@ -8045,7 +8068,8 @@ def _rebuild_targets_rs_in_source_order(existing, copied_members) -> None:
         pass
 
 
-def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
+def _discard_empty_lazy_lex_ref_type(target, target_type, created_types,
+                                     dropped=None):
     """Issue #163 (QC cycle 1): undo a lazy type create whose relation then
     failed to be created, so the failure leaves no EMPTY relation type behind.
 
@@ -8065,6 +8089,11 @@ def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
     Fail-soft like `_discard_partial_process_rule`: a delete that raised must
     not replace the relation's reported loss with a crash; it is logged and
     the type is left as it was. Returns True only when the type was deleted.
+
+    Issue #185 (never silent): when `dropped` is given, a successful delete
+    appends an info `DroppedItemRecord` (Preview announced this type as a
+    create; Move did not create it), and a delete that raised appends a
+    warning record (an empty type was left in the target).
     """
     type_guid = _guid_str_from(target_type)
     if not type_guid or created_types.get(type_guid) is None:
@@ -8083,17 +8112,45 @@ def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
             "lexical relation type %s created this run: %s",
             type_guid, exc, exc_info=True,
         )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexRefType",
+                owner_guid=type_guid,
+                owner_label=_lex_ref_type_label(target_type),
+                field_name="MembersOC",
+                item_name=_lex_ref_type_label(target_type),
+                item_guid=type_guid,
+                reason=("lexical relation type created this run has no "
+                        "relations (all failed to create) and could not be "
+                        f"removed; an empty type remains: {type(exc).__name__}"),
+                severity="warning",
+            ))
         return False
     created_types.pop(type_guid, None)
+    if dropped is not None:
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexRefType",
+            owner_guid=type_guid,
+            owner_label=_lex_ref_type_label(target_type),
+            field_name="MembersOC",
+            item_name=_lex_ref_type_label(target_type),
+            item_guid=type_guid,
+            reason=("lexical relation type was not created: none of its "
+                    "relations could be created, so the empty type was "
+                    "removed (Preview announced it as a create)"),
+        ))
     return True
 
 
-def _sweep_empty_lazy_lex_ref_types(target, created_types) -> None:
+def _sweep_empty_lazy_lex_ref_types(target, created_types, dropped=None) -> None:
     """Issue #163: after the relation walk, delete every relation type
     lazily created this run that STILL has no relations (all its relation
-    creates failed). Pre-existing types are never in `created_types`."""
+    creates failed). Pre-existing types are never in `created_types`.
+    Issue #185: each deleted type is reported to `dropped`. Run ONCE per run
+    (`reproduce_all_lexical_relations` enforces it)."""
     for type_guid, target_type in list(created_types.items()):
-        _discard_empty_lazy_lex_ref_type(target, target_type, created_types)
+        _discard_empty_lazy_lex_ref_type(
+            target, target_type, created_types, dropped)
 
 
 def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
@@ -8239,9 +8296,7 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
 
     # Issue #141: name the relation so Preview can show it -- the relation
     # type's label, the same one the drop records use.
-    src_type = getattr(src_relation, "Owner", None)
-    if src_type is not None:
-        src_type = _as_lex_ref_type(src_type) or src_type
+    src_type = _relation_type_of(src_relation)
     record = ReferenceDecisionRecord(
         owner_kind="LexReference",
         owner_guid=rel_guid,
@@ -8249,6 +8304,7 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
         action=ReferenceAction.CREATE,
         item_name=_lex_ref_type_label(src_type),
         item_guid=rel_guid,
+        type_guid=_guid_str_from(src_type) if src_type is not None else "",
     )
     if rel_guid:
         planned[rel_guid] = record
@@ -8298,6 +8354,17 @@ def _as_lex_ref_type(obj):
         return ILexRefType(obj)
     except Exception:
         return None
+
+
+def _relation_type_of(src_relation):
+    """The relation's owning `LexRefType`, cast via `_as_lex_ref_type` (raw
+    `Owner` when no cast is possible), or `None`. Single helper for the
+    Preview planners so the type GUID is derived the same way everywhere
+    (issue #165)."""
+    owner = getattr(src_relation, "Owner", None)
+    if owner is None:
+        return None
+    return _as_lex_ref_type(owner) or owner
 
 
 def _iter_lex_ref_types(ref_list):
@@ -8398,15 +8465,43 @@ def reproduce_all_lexical_relations(context, tag, resolver_cache, dropped):
     there is no other call site left anywhere in the closure walk. Per-
     MappingType structural rulings (pair exactly-2-else-drop-whole, tree
     root=TargetsRS[0], collection/sequence/unidirectional copied-subset) are
-    UNCHANGED."""
+    UNCHANGED.
+
+    Issue #185: the sweep runs in a `finally` so a raising walk still
+    cleans up empty types. The once-per-run rule is enforced at the
+    production call site by `reproduce_all_lexical_relations_once` (this
+    function stays re-callable because unit tests drive it repeatedly over a
+    growing copy_set)."""
     source = context.source_handle
     copy_set = getattr(context, "_copy_set", None) or {}
-    for src_relation in _iter_relations_touching_copy_set(
-            source, copy_set, dropped):
-        reproduce_lexical_relation(src_relation, context, tag, resolver_cache, dropped)
-    _sweep_empty_lazy_lex_ref_types(
-        context.target_handle,
-        resolver_cache.setdefault(_LEXREF_TYPE_CREATED_KEY, {}))
+    try:
+        for src_relation in _iter_relations_touching_copy_set(
+                source, copy_set, dropped):
+            reproduce_lexical_relation(
+                src_relation, context, tag, resolver_cache, dropped)
+    finally:
+        _sweep_empty_lazy_lex_ref_types(
+            context.target_handle,
+            resolver_cache.setdefault(_LEXREF_TYPE_CREATED_KEY, {}),
+            dropped)
+
+
+def reproduce_all_lexical_relations_once(context, tag, resolver_cache, dropped):
+    """Issue #185: the production entry point (`transfer.execute`) for
+    `reproduce_all_lexical_relations`. Enforces that it runs ONCE per run
+    (per `resolver_cache`): the end-of-run sweep deletes empty lazily-created
+    relation types, and a second pass that re-created one with the same GUID
+    in the same unit of work loses the object in LCM (shown live, #163).
+    A second call raises RuntimeError before touching the project."""
+    if resolver_cache.get(_LEXREL_ALL_RAN_KEY):
+        raise RuntimeError(
+            "reproduce_all_lexical_relations ran twice in one run: the "
+            "end-of-run sweep deletes empty lazily-created relation types, "
+            "and re-creating one with the same GUID in the same unit of work "
+            "loses the object (issue #185)")
+    resolver_cache[_LEXREL_ALL_RAN_KEY] = True
+    return reproduce_all_lexical_relations(
+        context, tag, resolver_cache, dropped)
 
 
 def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
@@ -8420,11 +8515,10 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
     Preview/Move-each-get-their-own-resolver_cache convention), so the two
     modes converge on the same relations in, same decisions out. Returns
     the list of `ReferenceDecisionRecord` for every relation that WOULD be
-    reproduced -- callers fold this into `RunPlan`-level bookkeeping
-    (`Lib/preview.py` currently threads reference decisions per-action; this
-    single pass is not owned by any one action, so its records are surfaced
-    via `context._dropped`/a dedicated plan-level collector at the call
-    site rather than one action's `reference_decisions` tuple).
+    reproduced. This single pass is not owned by any one action, so
+    `Lib/preview.py.build_run_plan` folds the list into
+    `RunPlan.lexical_relation_decisions` rather than one action's
+    `reference_decisions` tuple (drops go to `dropped`).
 
     Issue #142: a relation type absent from the target (predicted
     `PLAN_TIME_PENDING`, which Move will CREATE) also yields one
@@ -8445,7 +8539,7 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
             source, copy_set, dropped):
         record = plan_lexical_relation_decision(
             src_relation, context, resolver_cache, dropped)
-        src_type = getattr(src_relation, "Owner", None)
+        src_type = _relation_type_of(src_relation)
         type_guid = _guid_str_from(src_type) if src_type is not None else ""
         if type_guid in pending and type_guid not in announced:
             announced.add(type_guid)
@@ -12736,7 +12830,7 @@ def _tss_remap_ws_runs(src_tss, tgt_handle, src_id_by_handle, tgt_handle_by_id,
 
 
 def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
-                                 existing=False):
+                                 existing=False, plan=None):
     """Issue #114: write a LexEntryRef's two VALUE fields -- `HideMinorEntry`
     (Int32) and `Summary` (IMultiString) -- from the per-ref record stashed by
     `_stash_entry_bindings`.
@@ -12761,7 +12855,13 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
     alternative with no target writing system, a raising write, or a write the
     read-back does not show is a `DroppedItemRecord` on the ref -- never
     silent. Returns the list of field labels actually written (for tests and
-    the log)."""
+    the log).
+
+    Issue #127 (Principle III): when `plan` is a list this is the READ-ONLY
+    Preview twin -- the SAME decisions run, but each would-be write is
+    appended to `plan` as `(field_label, old_text, new_text)` instead of
+    written (same labels as the Move return value), so Preview's Update rows
+    equal Move's writes by construction."""
     if __package__:
         from .conflict import _merge_delta
     else:  # pragma: no cover - script-mode import shim
@@ -12791,7 +12891,9 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
                   "HideMinorEntry unreadable on the target (%s: %s)"
                   % (type(exc).__name__, exc))
             do_write = False
-        if do_write:
+        if do_write and plan is not None:
+            plan.append(("HideMinorEntry", str(tgt_hide), str(src_hide)))
+        elif do_write:
             try:
                 target_ref.HideMinorEntry = src_hide
                 back = getattr(target_ref, "HideMinorEntry", None)
@@ -12829,6 +12931,10 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
                 _drop("Summary", tgt_ws,
                       "no target writing system for Summary alternative %r "
                       "(mapped from source %r)" % (tgt_ws, src_ws))
+                continue
+            if plan is not None:
+                plan.append(("Summary@%s" % tgt_ws,
+                             str(tgt_alts.get(tgt_ws, "")), str(text)))
                 continue
             try:
                 new_tss = None
@@ -12878,6 +12984,76 @@ def _plan_entryref_type_decisions(src_entry, target, resolver_cache, dropped,
             "LexEntryRef", ref_guid, type_src, target, resolver_cache, dropped,
             skip_fields=type_skip, source=source))
     return records
+
+
+def _plan_entryref_update_decisions(src_entry, context, target):
+    """Issue #127 (Principle III): Preview twin of what Move's INV-1 arm does
+    to a source `LexEntryRef` ALREADY present on the target -- the value merge
+    (`_merge_entryref_value_fields`, run in its read-only `plan` mode) and the
+    C2 link additions (`_run_post_pass_a`: Component/Primary/ShowComplexForms
+    lexemes missing from the existing ref). Returns one UPDATE
+    `ReferenceDecisionRecord` per change, `item_name` = "old -> new" for a
+    value, or the lexeme GUID for a link addition. Read-only."""
+    entry_guid = _guid_str_from(src_entry)
+    recs = (_binding_map(context, "entryref_create_bindings") or {}).get(
+        entry_guid) or ()
+    if not recs:
+        return []
+    remap = getattr(context, "identity_remap", None) or {}
+    target_entry = _resolve_target_by_guid(
+        target, remap.get(entry_guid, entry_guid))
+    if target_entry is None:
+        return []
+    entry_refs = getattr(_cast_lcm(target_entry, "ILexEntry"),
+                         "EntryRefsOS", None)
+    if entry_refs is None:
+        return []
+    existing = {}
+    for r in entry_refs:
+        r_typed = _cast_lcm(r, "ILexEntryRef")
+        existing[_guid_str_from(r_typed)] = r_typed
+    dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
+    ws_map = getattr(context, "_ws_map", None)
+    copy_set = getattr(context, "_copy_set", None) or {}
+    out = []
+    for rec in recs:
+        ref_guid = rec.get("ref_guid")
+        tgt_ref = existing.get(ref_guid) if ref_guid else None
+        if tgt_ref is None:
+            continue  # Move creates it; the create rows cover that
+        changes = []
+        _merge_entryref_value_fields(
+            rec, tgt_ref, target, ws_map, dropped, existing=True, plan=changes)
+        for field, old, new in changes:
+            out.append(ReferenceDecisionRecord(
+                owner_kind="LexEntryRef", owner_guid=ref_guid,
+                field_name=field, action=ReferenceAction.UPDATE,
+                item_name="%s -> %s" % (old, new)))
+        for field, key in (("ComponentLexemesRS", "components"),
+                           ("PrimaryLexemesRS", "primaries"),
+                           ("ShowComplexFormsInRS", "show_complex_forms_in")):
+            seq = getattr(tgt_ref, field, None)
+            if seq is None:
+                continue
+            have = {_guid_str_from(x) for x in seq}
+            for g in rec.get(key) or []:
+                tg = remap.get(g, g)
+                # Move: unresolvable lexemes are Skips, never added; a lexeme
+                # this run creates (in `_copy_set`) is added. LCM's Primary
+                # side effect already puts a primary into ShowComplexFormsIn.
+                if (tg in have
+                        or (field == "ShowComplexFormsInRS"
+                            and g in (rec.get("primaries") or []))
+                        or (_resolve_target_by_guid(target, tg) is None
+                            and g not in copy_set)):
+                    continue
+                out.append(ReferenceDecisionRecord(
+                    owner_kind="LexEntryRef", owner_guid=ref_guid,
+                    field_name=field, action=ReferenceAction.UPDATE,
+                    item_name="add " + g, item_guid=g))
+    return out
 
 
 def _run_entryref_create_pass(context, target, tag=None):
@@ -16302,7 +16478,7 @@ def phonological_rules_dependencies(piece):
     except ImportError:
         return ()
 
-    raw = getattr(piece, "_obj", getattr(piece, "concrete", piece))
+    raw = _shared_unwrap(piece)
     refs: list[str] = []
 
     def _add(obj):
@@ -16531,7 +16707,7 @@ def _build_rule_rc_index(target, phon_data):
             for pos in pos_ops.GetAll():
                 pg = _guid_str_from(pos)
                 if pg:
-                    pos_by_guid[pg] = getattr(pos, "_obj", pos)
+                    pos_by_guid[pg] = _shared_unwrap(pos)
         except (AttributeError, TypeError):
             pass
     prf_list = getattr(phon_data, "PhonRuleFeatsOA", None) if phon_data is not None else None
@@ -16719,7 +16895,7 @@ def _phon_rule_source_projection(context, target):
             for obj in accessor.GetAll():
                 g = _guid_str_from(obj)
                 if g:
-                    out[g] = getattr(obj, "_obj", obj)
+                    out[g] = _shared_unwrap(obj)
         except (AttributeError, TypeError):
             pass
         return out
@@ -16980,8 +17156,8 @@ def phonological_rules_plan_action(piece, context, ws_mapping):
             target_iter = ()
         tgt_wrapped = _find_target_obj_by_guid(target_iter, src_guid)
         if tgt_wrapped is not None:
-            raw_src = getattr(piece, "_obj", piece)
-            raw_tgt = getattr(tgt_wrapped, "_obj", tgt_wrapped)
+            raw_src = _shared_unwrap(piece)
+            raw_tgt = _shared_unwrap(tgt_wrapped)
             # Issue #52: compare the source rule PROJECTED into the target's
             # identity space (see `_phon_rule_source_projection`), not by raw
             # source GUIDs -- otherwise a rule whose references were wired to
@@ -17411,7 +17587,7 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
     for r in source.PhonRules.GetAll():
         if _guid_str_from(r) == src_guid:
             # PhonRules.GetAll() yields flexicon wrappers; unwrap to raw LCM.
-            src_rule = getattr(r, "_obj", r)
+            src_rule = _shared_unwrap(r)
             break
     if src_rule is None:
         return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
@@ -18371,7 +18547,7 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
         tgt_strat_by_guid = {}
         try:
             for ts in target.Strata.GetAll():
-                tgt_strat_by_guid[_guid_str_from(ts)] = getattr(ts, "_obj", ts)
+                tgt_strat_by_guid[_guid_str_from(ts)] = _shared_unwrap(ts)
         except (AttributeError, TypeError):
             pass
         resolved_initial = (
@@ -18631,7 +18807,7 @@ def _execute_phon_rule_structural_update(overwrite, source, target, report_sink,
     src_rule = None
     for r in source.PhonRules.GetAll():
         if _guid_str_from(r) == src_guid:
-            src_rule = getattr(r, "_obj", r)
+            src_rule = _shared_unwrap(r)
             break
     if src_rule is None:
         report_sink.Warning(
@@ -19388,6 +19564,29 @@ CLOSURE_EDGES_VERIFIED: dict = {
     # of the objects, so read NO_DATA), stated rather than rounded up.
     # EXCEPTION_FEATURES is NOT registered: NO_DATA on every corpus.
     # -----------------------------------------------------------------------
+    # Issue #109 -- complex feature -> its struct type. EXPLICIT
+    # dependency_category (no `(INFLECTION_FEATURES, None)` wildcard).
+    # SELECTION edge only: the walker never reorders dispatch, so
+    # INFLECTION_FEATURES still dispatches before FEATURE_STRUCT_TYPES.
+    DependencyKind.INFLECTION_FEATURE_TO_STRUCT_TYPE: {
+        "category": GrammarCategory.INFLECTION_FEATURES,
+        "producer": inflection_features_type_dependencies,
+        "dependency_category": GrammarCategory.FEATURE_STRUCT_TYPES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-11-01) over "
+            "'Mbugwe Lizzie', 'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.INFLECTION_FEATURE_TO_STRUCT_TYPE = CONFIRMED on "
+            "ALL THREE (4 edges over 4 distinct struct types / 2 over 2 / "
+            "1 over 1, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0, unkeyed_pieces 0 -- every far GUID "
+            "resolves against feature_struct_types_enumerate_source) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, "
+            "asserted by tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered; live "
+            "single-run proof in "
+            "tests/integration/test_issue109_infl_type_closure_live.py"
+        ),
+    },
     DependencyKind.STEM_NAME_TO_POS: {
         "category": GrammarCategory.STEM_NAMES,
         "producer": stem_names_pos_dependencies,

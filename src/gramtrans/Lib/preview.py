@@ -337,7 +337,7 @@ _OVERWRITE_ENTRY_REF_FIELDS = frozenset(
 
 
 def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
-                                    keep_fields, source=None):
+                                    keep_fields, source=None, resolver_cache=None):
     """Read-only `decide_reference` pass over `keep_fields` only (the
     OVERWRITE-path resolver's actual scope, see `_OVERWRITE_*_REF_FIELDS`
     above) for a single ENTRY/SENSE `PlannedOverwrite` -- populates
@@ -345,7 +345,8 @@ def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
     Update/Report *before* Move ever writes (Principle III), the same
     guarantee `PlannedAction.reference_decisions` gives the ADD path.
 
-    Uses a call-local `resolver_cache`/`dropped` (this function has no
+    Uses the caller's run-wide `resolver_cache` when given (issue #165; else a
+    call-local one) and a call-local `dropped` (this function has no
     `RunContext` to read a per-run collector from -- the verb-vertical
     planner functions that call this predate the context-based leaf-category
     plan_action functions). Never raises: any resolver failure yields an
@@ -364,7 +365,8 @@ def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
         ) - keep_fields
         return _decide_reference_fields(
             owner_class, owner_guid, src_obj, target,
-            resolver_cache={}, dropped=[], skip_fields=skip_fields, source=source,
+            resolver_cache=resolver_cache if resolver_cache is not None else {},
+            dropped=[], skip_fields=skip_fields, source=source,
         )
     except (AttributeError, TypeError, KeyError):
         return ()
@@ -1241,6 +1243,16 @@ def build_run_plan(
     excluded_lossy: List[ExcludedLossy] = []
     identity_remap: dict = {}
 
+    # Issue #146/#165: the run's marked planning cache. Created BEFORE the
+    # (legacy) verb-vertical walk so its overwrite-decision pass shares it
+    # instead of a per-call `{}` (which re-reported repeated CREATEs).
+    _resolver_cache: dict = {}
+    if __package__:
+        from .references import mark_planning_cache as _mark_planning_cache
+    else:
+        from references import mark_planning_cache as _mark_planning_cache  # type: ignore
+    _mark_planning_cache(_resolver_cache)
+
     # Walk every selected POS (or all top-level POSes when categories[POS]
     # is True and pos_picks is empty). For each POS, walk its closure:
     # POS → Template → Slots → LexEntries(MSA-points-at-POS) → Senses → MSAs
@@ -1260,7 +1272,8 @@ def build_run_plan(
         for src_pos in _select_source_poses(source, selection):
             _pos_count += 1
             _plan_pos_closure(source, target, src_pos, selection, actions, skips, overwrites)
-            _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy, identity_remap=identity_remap)
+            _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy, identity_remap=identity_remap,
+                                  resolver_cache=_resolver_cache)
     _log.debug(
         "build_run_plan: verb-vertical closure enabled=%s over %d source POS(es); "
         "actions so far=%d", _VERB_VERTICAL_ENABLED, _pos_count, len(actions),
@@ -1356,14 +1369,6 @@ def build_run_plan(
     # item cache for the resolver, mirroring `_dropped` above. Shared across
     # every reference field/owner so a possibility already resolved earlier
     # in the walk short-circuits to LINK without re-deciding.
-    _resolver_cache: dict = {}
-    # Issue #146: a planning cache -- a planned CREATE primes it with a
-    # placeholder so later references show LINK, as Move's real cache does.
-    if __package__:
-        from .references import mark_planning_cache as _mark_planning_cache
-    else:
-        from references import mark_planning_cache as _mark_planning_cache  # type: ignore
-    _mark_planning_cache(_resolver_cache)
     object.__setattr__(context, '_resolver_cache', _resolver_cache)
 
     # Feature 024 (T029/T030, US3, FR-009a): per-run copy-set dict
@@ -2174,10 +2179,12 @@ def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
 # Issue #116: the sense fields whose resolver decisions the Preview pane
 # itemizes. Feature 030's two fields only -- they are the ones that can CREATE
 # new possibility-list items (thesaurus) or LINK project-level appendixes the
-# user may not know are shared. The 024 reference-field rows on the same
-# `PlannedAction.reference_decisions` tuple are deliberately not rendered here
-# (they include one owned-object CREATE row per example/pronunciation and
-# would swamp the pane); see the #116 implementation report.
+# user may not know are shared. The other reference-decision rows on the same
+# `PlannedAction.reference_decisions` tuple (they include one owned-object
+# CREATE row per example/pronunciation) are NOT itemized per row; issue #143
+# renders them as a per-(owner, field, action) count summary
+# (`render_other_reference_decisions`) and serializes every row in the run
+# report JSON.
 _SENSE_LIST_REF_FIELDS = ("AppendixesRC", "ThesaurusItemsRC")
 
 # Shared by the #116/#147 sense-list renderer and the #144 reversal/text
@@ -2420,6 +2427,42 @@ def _iter_reversal_pos_decisions(decisions):
         yield from _iter_reversal_pos_decisions(decision.sub_entry_decisions)
 
 
+def render_other_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #143 (Principle III): per-category SUMMARY of the reference
+    decisions on `PlannedAction` / `PlannedOverwrite.reference_decisions`
+    that no other renderer shows -- owned children, pictures, entry-ref
+    types, allomorph refs, relation types.
+
+    Design decision: a count per (owner kind, field, action), NOT one row per
+    decision. These rows are one-per-example/pronunciation/picture and would
+    swamp the pane; the complete per-row list is serialized in the run
+    report JSON (`reference_decisions`). Row count is bounded by the number
+    of distinct field names, so no cap is needed. The 030 sense appendix /
+    thesaurus fields are excluded (`render_sense_list_reference_decisions`
+    itemizes them). Returns `()` when there are none."""
+    counts: dict = {}
+    items = (tuple(getattr(plan, "actions", ()) or ())
+             + tuple(getattr(plan, "overwrites", ()) or ()))
+    for item in items:
+        for d in getattr(item, "reference_decisions", ()) or ():
+            if getattr(d, "field_name", "") in _SENSE_LIST_REF_FIELDS:
+                continue
+            act = getattr(getattr(d, "action", None), "value", "")
+            key = (getattr(d, "owner_kind", ""), getattr(d, "field_name", ""),
+                   act)
+            counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return ()
+    labels = dict(_REF_ACTION_LABELS)
+    lines: List[str] = ["  Other reference decisions (summary; the run report "
+                        "JSON lists every one):"]
+    for (owner, field_name, act) in sorted(counts):
+        n = counts[(owner, field_name, act)]
+        lines.append(f"    {labels.get(act, act)}  {owner}.{field_name}: "
+                     f"{n} reference{'s' if n != 1 else ''}")
+    return tuple(lines)
+
+
 def render_reversal_and_text_decisions(plan: RunPlan) -> Tuple[str, ...]:
     """Issue #144 (Principle III): render the reference decisions Move applies
     but Preview never showed --
@@ -2468,6 +2511,23 @@ def render_reversal_and_text_decisions(plan: RunPlan) -> Tuple[str, ...]:
     return tuple(lines)
 
 
+def render_entryref_update_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #127 (Principle III): one Update row per change Move will make to
+    a LexEntryRef already present in the target (value merge of
+    HideMinorEntry/Summary, and C2 lexeme link additions), from the UPDATE
+    `ReferenceDecisionRecord`s of owner_kind "LexEntryRef"."""
+    rows = [
+        f"    Update  LexEntryRef {{{d.owner_guid}}}  {d.field_name}: {d.item_name}"
+        for action in getattr(plan, "actions", ()) or ()
+        for d in getattr(action, "reference_decisions", ()) or ()
+        if getattr(d, "owner_kind", "") == "LexEntryRef"
+        and getattr(getattr(d, "action", None), "value", "") == "update"]
+    if not rows:
+        return ()
+    return tuple(["  Existing entry references (updated in the target):"]
+                 + _capped_rows(rows, SENSE_LIST_REF_ROW_CAP, "Update rows"))
+
+
 def render_lexical_relation_decisions(plan: RunPlan) -> Tuple[str, ...]:
     """Issues #141/#142 (Principle III): show the lexical relations Move will
     create, and any relation type it must create first, BEFORE Move writes.
@@ -2480,19 +2540,26 @@ def render_lexical_relation_decisions(plan: RunPlan) -> Tuple[str, ...]:
     if not decisions:
         return ()
     new_types = [d for d in decisions if d.owner_kind == "LexRefType"]
+    # Issue #165: group by type GUID (+ label), not label alone, so two
+    # distinct types that share a name stay separate lines. A record with no
+    # type GUID falls back to label-only grouping.
     per_type: dict = {}
     for d in decisions:
         if d.owner_kind == "LexReference":
             name = d.item_name or "(unnamed type)"
-            per_type[name] = per_type.get(name, 0) + 1
+            key = (name, getattr(d, "type_guid", "") or "")
+            per_type[key] = per_type.get(key, 0) + 1
     lines: List[str] = ["  Lexical relations:"]
     for d in new_types:
         lines.append(f"    Create relation type '{d.item_name or '(unnamed)'}'"
                      f" {{{d.item_guid}}}")
-    for name in sorted(per_type):
-        n = per_type[name]
+    for key in sorted(per_type):
+        name, type_guid = key
+        n = per_type[key]
+        same_label = sum(1 for k in per_type if k[0] == name)
+        suffix = f" {{{type_guid}}}" if type_guid and same_label > 1 else ""
         lines.append(f"    Create {n} relation{'s' if n != 1 else ''} of type "
-                     f"'{name}'")
+                     f"'{name}'{suffix}")
     return tuple(lines)
 
 
@@ -2520,8 +2587,10 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_complex_feature_type_refs(plan))
         + tuple(render_struct_type_features_rs(plan))
         + tuple(render_sense_list_reference_decisions(plan))
+        + tuple(render_other_reference_decisions(plan))
         + tuple(render_reversal_and_text_decisions(plan))
         + tuple(render_lexical_relation_decisions(plan))
+        + tuple(render_entryref_update_decisions(plan))
     )
 
 
@@ -2674,7 +2743,7 @@ def _rules_missing_ref_warnings(
         """Guess stranded_ref_kind from the rule subclass fields."""
         try:
             from SIL.LCModel import ICmObject
-            class_name = ICmObject(getattr(rule_obj, "concrete", rule_obj)).ClassName
+            class_name = ICmObject(_shared_unwrap(rule_obj)).ClassName
         except Exception:
             class_name = getattr(rule_obj, "class_name",
                                  getattr(rule_obj, "ClassName", "")) or ""
@@ -3635,6 +3704,7 @@ def _plan_layer3_for_pos(
     overwrites: List[PlannedOverwrite],
     excluded_lossy: Optional[List[ExcludedLossy]] = None,
     identity_remap: dict = None,
+    resolver_cache: Optional[dict] = None,
 ) -> None:
     """Layer 3 (LexEntry / Sense / MSA / Allomorph / PhEnvironment) walk for
     affix entries whose IMoInflAffMsa.PartOfSpeechRA points at `src_pos`."""
@@ -3642,6 +3712,7 @@ def _plan_layer3_for_pos(
         source, target, src_pos, selection, actions, skips, overwrites,
         excluded_lossy=excluded_lossy,
         identity_remap=identity_remap if identity_remap is not None else {},
+        resolver_cache=resolver_cache,
     )
 
 
@@ -3721,7 +3792,7 @@ def _plan_verb_vertical_inner(
 
     # ----- Templates + slots -----
     for src_template_wrap in source.MorphRules.GetAllAffixTemplatesForPOS(src_verb):
-        src_template = src_template_wrap.concrete
+        src_template = _shared_unwrap(src_template_wrap)
         tpl_guid = _guid_str(src_template)
 
         slots_present = any(
@@ -3821,6 +3892,7 @@ def _plan_layer3_verb_affixes_inner(
     overwrites: Optional[List[PlannedOverwrite]] = None,
     excluded_lossy: Optional[List[ExcludedLossy]] = None,
     identity_remap: dict = None,
+    resolver_cache: Optional[dict] = None,
 ) -> None:
     """Walk Layer 3 for a single source POS: every source LexEntry whose
     Sense's MSA is an IMoInflAffMsa pointing at this POS. Each yields
@@ -3841,6 +3913,10 @@ def _plan_layer3_verb_affixes_inner(
 
     if identity_remap is None:
         identity_remap = {}
+
+    # Issue #165: run-wide planning cache for the overwrite-decision passes.
+    if resolver_cache is None:
+        resolver_cache = {}
 
     # Per-scope closure for Layer 3 categories.
     # NONE -> closure off for that category; AS_NEEDED or ALL -> closure on.
@@ -3963,6 +4039,7 @@ def _plan_layer3_verb_affixes_inner(
                     reference_decisions=_overwrite_reference_decisions(
                         "LexEntry", entry_guid, entry, target,
                         _OVERWRITE_ENTRY_REF_FIELDS, source=source,
+                    resolver_cache=resolver_cache,
                     ),
                 ))
                 identity_remap[entry_guid] = resolution.target_guid
@@ -3987,6 +4064,7 @@ def _plan_layer3_verb_affixes_inner(
                 reference_decisions=_overwrite_reference_decisions(
                     "LexEntry", entry_guid, entry, target,
                     _OVERWRITE_ENTRY_REF_FIELDS, source=source,
+                resolver_cache=resolver_cache,
                 ),
             ))
             for _sense, sense_guid in sense_actions:
@@ -4001,6 +4079,7 @@ def _plan_layer3_verb_affixes_inner(
                     reference_decisions=_overwrite_reference_decisions(
                         "LexSense", sense_guid, _sense, target,
                         _OVERWRITE_SENSE_REF_FIELDS, source=source,
+                    resolver_cache=resolver_cache,
                     ),
                 ))
             # Phase 1.2 (FR-104): MSAs and Allomorphs are matched by
