@@ -2814,6 +2814,15 @@ class DependencyKind(enum.Enum):
     #: (the types' `FeaturesRS` points back at feature defns); `TypeRA` is
     #: wired by the #37 Move tail once both exist.
     INFLECTION_FEATURE_TO_STRUCT_TYPE = "inflection_feature_to_struct_type"
+    #: Issue #138 (FR-018). The reverse of the #109 arrow: an
+    #: `IFsFeatStrucType`'s `FeaturesRS` names the feature defns it lists. One
+    #: member per far category (the `_closure_kind_lookup` key is
+    #: `(source, far)`): analysis side and phonology side. SELECTION edge only;
+    #: together with #109 this makes INFLECTION_FEATURES <-> FEATURE_STRUCT_TYPES
+    #: a 2-cycle in the pull-in graph, which `closure.walk` (visited set)
+    #: handles; dispatch order is category-fixed and never derived from it.
+    STRUCT_TYPE_TO_INFL_FEATURE = "struct_type_to_infl_feature"
+    PHON_STRUCT_TYPE_TO_PHON_FEATURE = "phon_struct_type_to_phon_feature"
 
 
 @dataclass(frozen=True)

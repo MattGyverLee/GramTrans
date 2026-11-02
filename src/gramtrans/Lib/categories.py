@@ -2874,6 +2874,14 @@ def feature_struct_types_dependencies(piece):
     return _feat_struc_type_member_deps(piece, GrammarCategory.INFLECTION_FEATURES)
 
 
+def feature_struct_types_infl_feature_dependencies(piece):
+    """NARROW producer for `DependencyKind.STRUCT_TYPE_TO_INFL_FEATURE`
+    (issue #138, FR-018): `(INFLECTION_FEATURES, defn_guid)` per `FeaturesRS`
+    member. Same edge set as `feature_struct_types_dependencies`, kept a
+    separate callable so no registry row names the category's composite."""
+    return _feat_struc_type_member_deps(piece, GrammarCategory.INFLECTION_FEATURES)
+
+
 def feature_struct_types_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
     return ()
 
@@ -3111,6 +3119,13 @@ def phon_feat_types_dependencies(piece):
     owning side (`phonemes_dependencies` / `natural_classes_dependencies`),
     not here.
     """
+    return _feat_struc_type_member_deps(piece, GrammarCategory.PHONOLOGICAL_FEATURES)
+
+
+def phon_feat_types_phon_feature_dependencies(piece):
+    """NARROW producer for `DependencyKind.PHON_STRUCT_TYPE_TO_PHON_FEATURE`
+    (issue #138, FR-018): the phonological twin of
+    `feature_struct_types_infl_feature_dependencies`."""
     return _feat_struc_type_member_deps(piece, GrammarCategory.PHONOLOGICAL_FEATURES)
 
 
@@ -19808,6 +19823,48 @@ CLOSURE_EDGES_VERIFIED: dict = {
             "test_only_the_confirmed_relationships_are_registered; live "
             "single-run proof in "
             "tests/integration/test_issue109_infl_type_closure_live.py"
+        ),
+    },
+    # Issue #138 (FR-018) -- struct type -> the feature defns its `FeaturesRS`
+    # names (the reverse of #109). EXPLICIT dependency_category. The producers
+    # are already narrow (`_feat_struc_type_member_deps` emits ONE far
+    # category). Selection edge only; INFLECTION_FEATURES <-> FEATURE_STRUCT_TYPES
+    # is now a 2-cycle in the pull-in graph, which `closure.walk` tolerates.
+    DependencyKind.STRUCT_TYPE_TO_INFL_FEATURE: {
+        "category": GrammarCategory.FEATURE_STRUCT_TYPES,
+        "producer": feature_struct_types_infl_feature_dependencies,
+        "dependency_category": GrammarCategory.INFLECTION_FEATURES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-11-02) over "
+            "'Mbugwe Lizzie', 'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.STRUCT_TYPE_TO_INFL_FEATURE = CONFIRMED on ALL "
+            "THREE (12 edges over 5 distinct feature defns / 9 over 8 / "
+            "6 over 4, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0, unkeyed_pieces 0 -- every far GUID "
+            "resolves against inflection_features_enumerate_source) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, "
+            "asserted by tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered; live "
+            "single-run proof in "
+            "tests/integration/test_issue138_struct_type_closure_live.py"
+        ),
+    },
+    DependencyKind.PHON_STRUCT_TYPE_TO_PHON_FEATURE: {
+        "category": GrammarCategory.PHON_FEAT_TYPES,
+        "producer": phon_feat_types_phon_feature_dependencies,
+        "dependency_category": GrammarCategory.PHONOLOGICAL_FEATURES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-11-02): "
+            "relationships.PHON_STRUCT_TYPE_TO_PHON_FEATURE = CONFIRMED on "
+            "'Mbugwe Lizzie' (2 edges over 2 distinct feature defns) and "
+            "'Mbugwe LizzieHC practice' (15 over 15), foreign_edges 0, "
+            "unresolved 0, resolved_as_owned_value 0, unkeyed_pieces 0, and "
+            "NO_DATA on 'Ejagham Mini', which holds no phonological feature "
+            "types -- TWO-corpus evidence, stated rather than rounded up. "
+            "Snapshots tests/integration/_snapshots/"
+            "closure-edge-audit-038-*.json, asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
         ),
     },
     DependencyKind.STEM_NAME_TO_POS: {

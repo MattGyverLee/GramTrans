@@ -278,7 +278,10 @@ _REGISTERED = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE", "SLOT_TO_POS",
                "STEM_NAME_TO_POS", "INFLECTION_CLASS_TO_POS",
                "POS_INFLECTABLE_FEAT_TO_POS",
                # Issue #109.
-               "INFLECTION_FEATURE_TO_STRUCT_TYPE")
+               "INFLECTION_FEATURE_TO_STRUCT_TYPE",
+               # Issue #138.
+               "STRUCT_TYPE_TO_INFL_FEATURE",
+               "PHON_STRUCT_TYPE_TO_PHON_FEATURE")
 #: Relationships the audit REFUSES. Empty since T089, and deliberately kept
 #: as a name rather than deleted: it is the list a future refusal goes on, and
 #: the tests below still enforce that everything on it stays out of the
@@ -354,6 +357,10 @@ _MIN_CONFIRMING_CORPORA = {
     "POS_INFLECTABLE_FEAT_TO_POS": 3,
     # Issue #109. All three corpora hold complex features with a TypeRA.
     "INFLECTION_FEATURE_TO_STRUCT_TYPE": 3,
+    # Issue #138. Struct types exist on all three corpora; phonological
+    # feature types only on the two Mbugwe ones (Ejagham Mini reads NO_DATA).
+    "STRUCT_TYPE_TO_INFL_FEATURE": 3,
+    "PHON_STRUCT_TYPE_TO_PHON_FEATURE": 2,
 }
 
 #: Measured and deliberately NOT registered (issue #67): NO_DATA on every
@@ -362,7 +369,11 @@ _AUDITED_NO_DATA_EVERYWHERE = ("EXCEPTION_FEATURE_TO_POS",)
 
 #: The issue-#67 owner-POS candidates (registered or not).
 _OWNER_POS_NAMES = ("STEM_NAME_TO_POS", "INFLECTION_CLASS_TO_POS",
-                    "EXCEPTION_FEATURE_TO_POS", "POS_INFLECTABLE_FEAT_TO_POS")
+                    "EXCEPTION_FEATURE_TO_POS", "POS_INFLECTABLE_FEAT_TO_POS",
+                    # Issue #138: population is the corpus's business too
+                    # (0 phonological feature types on Ejagham Mini).
+                    "STRUCT_TYPE_TO_INFL_FEATURE",
+                    "PHON_STRUCT_TYPE_TO_PHON_FEATURE")
 
 
 def test_only_the_confirmed_relationships_are_registered() -> None:
@@ -621,6 +632,9 @@ def test_each_relationship_was_measured_over_its_own_source_category(snap) -> No
         "EXCEPTION_FEATURE_TO_POS": ("exception_features", None),
         "POS_INFLECTABLE_FEAT_TO_POS": ("pos_inflectable_feats", None),
         "INFLECTION_FEATURE_TO_STRUCT_TYPE": ("inflection_features", None),
+        # Issue #138.
+        "STRUCT_TYPE_TO_INFL_FEATURE": ("feature_struct_types", None),
+        "PHON_STRUCT_TYPE_TO_PHON_FEATURE": ("phon_feat_types", None),
     }
     assert set(expected) == set(snap["relationships"]), (
         "a relationship was added to or removed from the audit without this "
@@ -1922,8 +1936,9 @@ def test_t089_was_measured_with_the_row_still_unregistered() -> None:
     # they are subtracted for the same reason T104's row is.
     assert set(prod["registered"]) == set(_REGISTERED) - {
         "MSA_TO_INFL_FEATURE", "STEM_NAME_TO_POS", "INFLECTION_CLASS_TO_POS",
-        "POS_INFLECTABLE_FEAT_TO_POS", "INFLECTION_FEATURE_TO_STRUCT_TYPE"}
-    assert len(prod["registered"]) == len(_REGISTERED) - 5  # T104 + #67 + #109 rows
+        "POS_INFLECTABLE_FEAT_TO_POS", "INFLECTION_FEATURE_TO_STRUCT_TYPE",
+        "STRUCT_TYPE_TO_INFL_FEATURE", "PHON_STRUCT_TYPE_TO_PHON_FEATURE"}
+    assert len(prod["registered"]) == len(_REGISTERED) - 7  # T104 + #67 + #109 + #138 rows
     assert prod["axis"].startswith("categories._value_defn_ref")
 
 
