@@ -7031,6 +7031,9 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         # before Move writes.
         records.extend(_plan_entryref_type_decisions(
             src_entry, target, resolver_cache, dropped, source=source))
+        # Issue #127: Update rows for refs already on the target.
+        records.extend(_plan_entryref_update_decisions(
+            src_entry, context, target))
         # Feature 024 (T031, US3, FR-008): register the entry into
         # `ctx._copy_set` (the SAME convention `owned.py`'s APR gate uses --
         # `True` is a placeholder marker, Preview never needs a real target
@@ -12718,7 +12721,7 @@ def _tss_remap_ws_runs(src_tss, tgt_handle, src_id_by_handle, tgt_handle_by_id,
 
 
 def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
-                                 existing=False):
+                                 existing=False, plan=None):
     """Issue #114: write a LexEntryRef's two VALUE fields -- `HideMinorEntry`
     (Int32) and `Summary` (IMultiString) -- from the per-ref record stashed by
     `_stash_entry_bindings`.
@@ -12743,7 +12746,13 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
     alternative with no target writing system, a raising write, or a write the
     read-back does not show is a `DroppedItemRecord` on the ref -- never
     silent. Returns the list of field labels actually written (for tests and
-    the log)."""
+    the log).
+
+    Issue #127 (Principle III): when `plan` is a list this is the READ-ONLY
+    Preview twin -- the SAME decisions run, but each would-be write is
+    appended to `plan` as `(field_label, old_text, new_text)` instead of
+    written (same labels as the Move return value), so Preview's Update rows
+    equal Move's writes by construction."""
     if __package__:
         from .conflict import _merge_delta
     else:  # pragma: no cover - script-mode import shim
@@ -12773,7 +12782,9 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
                   "HideMinorEntry unreadable on the target (%s: %s)"
                   % (type(exc).__name__, exc))
             do_write = False
-        if do_write:
+        if do_write and plan is not None:
+            plan.append(("HideMinorEntry", str(tgt_hide), str(src_hide)))
+        elif do_write:
             try:
                 target_ref.HideMinorEntry = src_hide
                 back = getattr(target_ref, "HideMinorEntry", None)
@@ -12811,6 +12822,10 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
                 _drop("Summary", tgt_ws,
                       "no target writing system for Summary alternative %r "
                       "(mapped from source %r)" % (tgt_ws, src_ws))
+                continue
+            if plan is not None:
+                plan.append(("Summary@%s" % tgt_ws,
+                             str(tgt_alts.get(tgt_ws, "")), str(text)))
                 continue
             try:
                 new_tss = None
@@ -12860,6 +12875,76 @@ def _plan_entryref_type_decisions(src_entry, target, resolver_cache, dropped,
             "LexEntryRef", ref_guid, type_src, target, resolver_cache, dropped,
             skip_fields=type_skip, source=source))
     return records
+
+
+def _plan_entryref_update_decisions(src_entry, context, target):
+    """Issue #127 (Principle III): Preview twin of what Move's INV-1 arm does
+    to a source `LexEntryRef` ALREADY present on the target -- the value merge
+    (`_merge_entryref_value_fields`, run in its read-only `plan` mode) and the
+    C2 link additions (`_run_post_pass_a`: Component/Primary/ShowComplexForms
+    lexemes missing from the existing ref). Returns one UPDATE
+    `ReferenceDecisionRecord` per change, `item_name` = "old -> new" for a
+    value, or the lexeme GUID for a link addition. Read-only."""
+    entry_guid = _guid_str_from(src_entry)
+    recs = (_binding_map(context, "entryref_create_bindings") or {}).get(
+        entry_guid) or ()
+    if not recs:
+        return []
+    remap = getattr(context, "identity_remap", None) or {}
+    target_entry = _resolve_target_by_guid(
+        target, remap.get(entry_guid, entry_guid))
+    if target_entry is None:
+        return []
+    entry_refs = getattr(_cast_lcm(target_entry, "ILexEntry"),
+                         "EntryRefsOS", None)
+    if entry_refs is None:
+        return []
+    existing = {}
+    for r in entry_refs:
+        r_typed = _cast_lcm(r, "ILexEntryRef")
+        existing[_guid_str_from(r_typed)] = r_typed
+    dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
+    ws_map = getattr(context, "_ws_map", None)
+    copy_set = getattr(context, "_copy_set", None) or {}
+    out = []
+    for rec in recs:
+        ref_guid = rec.get("ref_guid")
+        tgt_ref = existing.get(ref_guid) if ref_guid else None
+        if tgt_ref is None:
+            continue  # Move creates it; the create rows cover that
+        changes = []
+        _merge_entryref_value_fields(
+            rec, tgt_ref, target, ws_map, dropped, existing=True, plan=changes)
+        for field, old, new in changes:
+            out.append(ReferenceDecisionRecord(
+                owner_kind="LexEntryRef", owner_guid=ref_guid,
+                field_name=field, action=ReferenceAction.UPDATE,
+                item_name="%s -> %s" % (old, new)))
+        for field, key in (("ComponentLexemesRS", "components"),
+                           ("PrimaryLexemesRS", "primaries"),
+                           ("ShowComplexFormsInRS", "show_complex_forms_in")):
+            seq = getattr(tgt_ref, field, None)
+            if seq is None:
+                continue
+            have = {_guid_str_from(x) for x in seq}
+            for g in rec.get(key) or []:
+                tg = remap.get(g, g)
+                # Move: unresolvable lexemes are Skips, never added; a lexeme
+                # this run creates (in `_copy_set`) is added. LCM's Primary
+                # side effect already puts a primary into ShowComplexFormsIn.
+                if (tg in have
+                        or (field == "ShowComplexFormsInRS"
+                            and g in (rec.get("primaries") or []))
+                        or (_resolve_target_by_guid(target, tg) is None
+                            and g not in copy_set)):
+                    continue
+                out.append(ReferenceDecisionRecord(
+                    owner_kind="LexEntryRef", owner_guid=ref_guid,
+                    field_name=field, action=ReferenceAction.UPDATE,
+                    item_name="add " + g, item_guid=g))
+    return out
 
 
 def _run_entryref_create_pass(context, target, tag=None):

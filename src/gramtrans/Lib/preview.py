@@ -2418,6 +2418,23 @@ def render_reversal_and_text_decisions(plan: RunPlan) -> Tuple[str, ...]:
     return tuple(lines)
 
 
+def render_entryref_update_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #127 (Principle III): one Update row per change Move will make to
+    a LexEntryRef already present in the target (value merge of
+    HideMinorEntry/Summary, and C2 lexeme link additions), from the UPDATE
+    `ReferenceDecisionRecord`s of owner_kind "LexEntryRef"."""
+    rows = [
+        f"    Update  LexEntryRef {{{d.owner_guid}}}  {d.field_name}: {d.item_name}"
+        for action in getattr(plan, "actions", ()) or ()
+        for d in getattr(action, "reference_decisions", ()) or ()
+        if getattr(d, "owner_kind", "") == "LexEntryRef"
+        and getattr(getattr(d, "action", None), "value", "") == "update"]
+    if not rows:
+        return ()
+    return tuple(["  Existing entry references (updated in the target):"]
+                 + _capped_rows(rows, SENSE_LIST_REF_ROW_CAP, "Update rows"))
+
+
 def render_lexical_relation_decisions(plan: RunPlan) -> Tuple[str, ...]:
     """Issues #141/#142 (Principle III): show the lexical relations Move will
     create, and any relation type it must create first, BEFORE Move writes.
@@ -2472,6 +2489,7 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_sense_list_reference_decisions(plan))
         + tuple(render_reversal_and_text_decisions(plan))
         + tuple(render_lexical_relation_decisions(plan))
+        + tuple(render_entryref_update_decisions(plan))
     )
 
 
