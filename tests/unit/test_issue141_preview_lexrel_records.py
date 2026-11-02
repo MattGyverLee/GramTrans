@@ -544,3 +544,104 @@ def test_all_relations_of_new_type_fail_type_swept_once_at_end(
     assert target.LexReferences.deleted == ["type-new"]
     assert _tgt_types(target) == []
     assert cache[categories._LEXREF_TYPE_CREATED_KEY] == {}
+
+
+# ===========================================================================
+# Issue #185: sweep reports, raising DeleteType, try/finally, run-once guard
+# ===========================================================================
+
+def _all_fail_fixture():
+    new_t = _RefType("type-new", "GT185 New", _COLLECTION)
+    r1 = _SrcRel("rel-1", new_t, [_Member("e1"), _Member("e2")])
+    new_t.MembersOC.Add(r1)
+    factory = _FlakyRelFactory(fail_on=(1,))
+    target = _target_with_ops([], factory)
+    ctx = _Ctx(_Project([new_t]), target,
+               {g: _Member(g) for g in ("e1", "e2")})
+    return ctx, target
+
+
+def test_sweep_reports_each_deleted_type_as_info_drop(fake_type_create):
+    ctx, target = _all_fail_fixture()
+    dropped: list = []
+    categories.reproduce_all_lexical_relations(ctx, _TAG, {}, dropped)
+
+    assert target.LexReferences.deleted == ["type-new"]
+    rows = [d for d in dropped
+            if d.owner_kind == "LexRefType" and d.owner_guid == "type-new"]
+    assert len(rows) == 1
+    assert rows[0].severity == "info"
+    assert "was not created" in rows[0].reason
+    assert "Preview announced" in rows[0].reason
+    # The relation's own "create failed" drop is still there.
+    assert any(d.owner_kind == "LexReference" and d.owner_guid == "rel-1"
+               for d in dropped)
+
+
+def test_sweep_reports_nothing_for_a_type_that_survives(fake_type_create):
+    new_t = _RefType("type-new", "GT185 New", _COLLECTION)
+    new_t.MembersOC.Add(_SrcRel("rel-1", new_t, [_Member("e1"), _Member("e2")]))
+    target = _target_with_ops([], _RelFactory())
+    ctx = _Ctx(_Project([new_t]), target,
+               {g: _Member(g) for g in ("e1", "e2")})
+    dropped: list = []
+    categories.reproduce_all_lexical_relations(ctx, _TAG, {}, dropped)
+    assert not any(d.owner_kind == "LexRefType" for d in dropped)
+
+
+def test_raising_delete_type_keeps_type_warns_and_does_not_raise(
+        fake_type_create):
+    ctx, target = _all_fail_fixture()
+
+    def _boom(_ref_type):
+        raise RuntimeError("delete refused")
+
+    target.LexReferences.DeleteType = _boom
+    cache: dict = {}
+    dropped: list = []
+    categories.reproduce_all_lexical_relations(ctx, _TAG, cache, dropped)
+
+    assert [t.Guid for t in _tgt_types(target)] == ["type-new"]  # left as-is
+    assert set(cache[categories._LEXREF_TYPE_CREATED_KEY]) == {"type-new"}
+    rows = [d for d in dropped if d.owner_kind == "LexRefType"]
+    assert len(rows) == 1
+    assert rows[0].severity == "warning"
+    assert "could not be removed" in rows[0].reason
+    assert "RuntimeError" in rows[0].reason
+
+
+def test_sweep_runs_even_when_the_relation_walk_raises(
+        fake_type_create, monkeypatch):
+    """try/finally: a walk that raises AFTER a lazy type create must not
+    leave the empty type behind; the original exception still propagates."""
+    ctx, target = _all_fail_fixture()
+    real = categories.reproduce_lexical_relation
+
+    def _create_type_then_raise(src_rel, c, tag, cache, dropped):
+        real(src_rel, c, tag, cache, dropped)   # lazy type create; rel fails
+        raise ValueError("walk blew up")
+
+    monkeypatch.setattr(categories, "reproduce_lexical_relation",
+                        _create_type_then_raise)
+    dropped: list = []
+    with pytest.raises(ValueError, match="walk blew up"):
+        categories.reproduce_all_lexical_relations(ctx, _TAG, {}, dropped)
+
+    assert target.LexReferences.deleted == ["type-new"]
+    assert _tgt_types(target) == []
+    assert any(d.owner_kind == "LexRefType" and d.owner_guid == "type-new"
+               for d in dropped)
+
+
+def test_production_entry_point_is_run_once_per_resolver_cache(fake_type_create):
+    """Run-once guard: a second call (which could sweep and then re-create a
+    type with the same GUID, losing the object in LCM) raises and writes
+    nothing."""
+    ctx, target = _all_fail_fixture()
+    cache: dict = {}
+    categories.reproduce_all_lexical_relations_once(ctx, _TAG, cache, [])
+    created_before = list(fake_type_create)
+    with pytest.raises(RuntimeError, match="ran twice"):
+        categories.reproduce_all_lexical_relations_once(ctx, _TAG, cache, [])
+    assert fake_type_create == created_before
+    assert target.LexReferences.deleted == ["type-new"]
