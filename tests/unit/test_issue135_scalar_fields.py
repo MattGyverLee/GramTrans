@@ -155,3 +155,38 @@ def test_adhoc_readback_mismatch_dropped():
 def test_unknown_class_noop():
     assert copy_supplemental_fields("Nope", _Obj(), _Obj(), source=SRC,
                                     target=TGT, ws_map={}, dropped=[]) == []
+
+
+def test_slice3_tables():
+    from gramtrans.Lib.scalar_fields import VALUE_FIELDS
+    for k in ("FsFeatDefn", "FsSymFeatVal"):
+        assert MULTISTRING_FIELDS[k][1] == ("GlossAbbreviation", "RightGlossSep")
+    assert VALUE_FIELDS["FsFeatDefn"][1] == ("ShowInGloss", "DisplayToRightOfValues")
+    assert VALUE_FIELDS["FsSymFeatVal"][1] == ("ShowInGloss",)
+
+
+def test_fs_feat_defn_gloss_fields_copied_ws_mapped():
+    src = _Obj(GlossAbbreviation=_MS({1: "nom", 2: "nom-ko"}),
+               RightGlossSep=_MS({1: "."}), ShowInGloss=True,
+               DisplayToRightOfValues=True)
+    new = _Obj(GlossAbbreviation=_MS(), RightGlossSep=_MS(),
+               ShowInGloss=False, DisplayToRightOfValues=False)
+    drops = []
+    w = copy_supplemental_fields("FsFeatDefn", src, new, source=SRC, target=TGT,
+                                 ws_map={"ko": "ko-x"}, dropped=drops)
+    assert new.GlossAbbreviation.d == {10: "nom", 20: "nom-ko"}
+    assert new.RightGlossSep.d == {10: "."}
+    assert new.ShowInGloss is True and new.DisplayToRightOfValues is True
+    assert drops == [] and "ShowInGloss" in w
+
+
+def test_fs_sym_feat_val_unmapped_ws_dropped_and_defaults_untouched():
+    src = _Obj(GlossAbbreviation=_MS({2: "x"}), RightGlossSep=_MS(),
+               ShowInGloss=False)
+    new = _Obj(GlossAbbreviation=_MS(), RightGlossSep=_MS(), ShowInGloss=False)
+    drops = []
+    w = copy_supplemental_fields("FsSymFeatVal", src, new, source=SRC, target=TGT,
+                                 ws_map={}, dropped=drops)
+    assert [(d.owner_kind, d.field_name) for d in drops] == [
+        ("FsSymFeatVal", "GlossAbbreviation")]
+    assert w == []

@@ -282,6 +282,18 @@ EXPECTED_MODEL_FIELDS: dict[str, tuple[FieldSpec, ...]] = {
         FieldSpec("Adjacency", "INT"),
         FieldSpec("Disabled", "INT"),
     ),
+    # Issue #135 slice 3: Fs feature definition / symbolic value gloss fields.
+    "FsFeatDefn": (
+        FieldSpec("GlossAbbreviation", "MU"),
+        FieldSpec("RightGlossSep", "MU"),
+        FieldSpec("ShowInGloss", "INT"),
+        FieldSpec("DisplayToRightOfValues", "INT"),
+    ),
+    "FsSymFeatVal": (
+        FieldSpec("GlossAbbreviation", "MU"),
+        FieldSpec("RightGlossSep", "MU"),
+        FieldSpec("ShowInGloss", "INT"),
+    ),
     "MoStemMsa": (
         FieldSpec("Components", "RS"),
         FieldSpec("FromPartsOfSpeech", "RC"),
@@ -931,6 +943,43 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         note="issue #135: same as MoAlloAdhocProhib.Disabled.",
     ),
 
+    # ---- Issue #135 slice 3 ------------------------------------------------
+    ("FsFeatDefn", "GlossAbbreviation"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via categories._copy_fs_gloss_fields (inflection_features_execute_action closed/complex/open branches, phonological_features_execute_action)",
+        note="issue #135 slice 3: flexicon GetSyncableProperties omits it (flexicon#826); WS-mapped / written when it differs from the created default; read-back verified.",
+    ),
+    ("FsFeatDefn", "RightGlossSep"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via categories._copy_fs_gloss_fields (inflection_features_execute_action closed/complex/open branches, phonological_features_execute_action)",
+        note="issue #135 slice 3: flexicon GetSyncableProperties omits it (flexicon#826); WS-mapped / written when it differs from the created default; read-back verified.",
+    ),
+    ("FsFeatDefn", "ShowInGloss"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via categories._copy_fs_gloss_fields (inflection_features_execute_action closed/complex/open branches, phonological_features_execute_action)",
+        note="issue #135 slice 3: flexicon GetSyncableProperties omits it (flexicon#826); WS-mapped / written when it differs from the created default; read-back verified.",
+    ),
+    ("FsFeatDefn", "DisplayToRightOfValues"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via categories._copy_fs_gloss_fields (inflection_features_execute_action closed/complex/open branches, phonological_features_execute_action)",
+        note="issue #135 slice 3: flexicon GetSyncableProperties omits it (flexicon#826); WS-mapped / written when it differs from the created default; read-back verified.",
+    ),
+    ("FsSymFeatVal", "GlossAbbreviation"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via categories._copy_fs_gloss_fields (inflection_features_execute_action value co-create loop)",
+        note="issue #135 slice 3: flexicon GetSyncableProperties omits it (flexicon#826); WS-mapped / written when it differs from the created default; read-back verified.",
+    ),
+    ("FsSymFeatVal", "RightGlossSep"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via categories._copy_fs_gloss_fields (inflection_features_execute_action value co-create loop)",
+        note="issue #135 slice 3: flexicon GetSyncableProperties omits it (flexicon#826); WS-mapped / written when it differs from the created default; read-back verified.",
+    ),
+    ("FsSymFeatVal", "ShowInGloss"): Classification(
+        Bucket.COPIED,
+        "scalar_fields.copy_supplemental_fields via categories._copy_fs_gloss_fields (inflection_features_execute_action value co-create loop)",
+        note="issue #135 slice 3: flexicon GetSyncableProperties omits it (flexicon#826); WS-mapped / written when it differs from the created default; read-back verified.",
+    ),
+
     # ---- LexReference ------------------------------------------------------
     ("LexReference", "TargetsRS"): Classification(
         Bucket.COPIED,
@@ -1214,13 +1263,15 @@ def test_expected_model_fields_field_count() -> None:
         "LexEntryInflType": 2,
         "MoAlloAdhocProhib": 2,
         "MoMorphAdhocProhib": 2,
+        "FsFeatDefn": 4,
+        "FsSymFeatVal": 3,
         "MoStemMsa": 9,
         "MoInflAffMsa": 7,
         "MoDerivAffMsa": 13,
         "MoUnclassifiedAffixMsa": 3,
         "ReversalIndexEntry": 4,
     }
-    assert sum(counts.values()) == 97
+    assert sum(counts.values()) == 104
 
 
 # ============================================================================
