@@ -7657,8 +7657,7 @@ def _create_target_lex_ref_type(source_type, ctx, dropped, *, record_failure=Tru
 
 
 def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
-                                 ctx=None, plan_time=False,
-                                 allow_create=False, dropped=None):
+                                 ctx=None, plan_time=False, dropped=None):
     """Resolve the target `ILexRefType` whose GUID is `type_guid` off
     `target.Cache.LangProject.LexDbOA.ReferencesOA` (an `ICmPossibilityList`
     of relation TYPES -- possibility-list-shaped, so this reuses
@@ -7714,18 +7713,16 @@ def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
          overlap. AMBIGUITY IS NOT A PICK -- two destination types sharing one
          key leaves the relation unresolved with a reason, never a guess,
          exactly as `_resolve_scoped_referent` treats an ambiguous roster key.
-      4. **CREATE** (`_create_target_lex_ref_type`), and ONLY when leg 3 found
-         nothing -- i.e. a source type genuinely absent from the destination.
-         Reachable only with `allow_create`; at plan time it is predicted
-         as `PLAN_TIME_PENDING` instead, so Preview neither writes nor
-         over-reports a loss Move will not take. Issue #163:
-         `_evaluate_lexical_relation` calls this in predict mode in BOTH
-         modes and creates the type itself, after the structural guards, so
-         a type whose relations all drop is never created.
+      4. **CREATE** is NOT performed here. At plan time leg 4 is predicted as
+         `PLAN_TIME_PENDING` when leg 3 found nothing and `type_guid` is
+         non-empty; Move performs the actual create via
+         `_create_target_lex_ref_type` inside `_evaluate_lexical_relation`
+         only after structural guards pass (issue #163). Issue #187 removed
+         the obsolete `allow_create` keyword that duplicated that path.
 
-    **WHY 3 BEFORE 4 IS THE LOAD-BEARING HALF.** Create-first would mint a
-    second copy of all 7 FLEx default relation types on every pair, every run.
-    The key leg is what makes the create leg safe to have at all.
+    **WHY 3 BEFORE CREATE IS THE LOAD-BEARING HALF.** Create-first would mint
+    a second copy of all 7 FLEx default relation types on every pair, every
+    run. The key leg is what makes the lazy create safe to have at all.
 
     Backwards compatible: called with two positional arguments this is exactly
     the GUID-only lookup it was, because every fallback leg is gated on a
@@ -7800,7 +7797,7 @@ def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
             ))
             return None
 
-    # LEG 4 -- create, reachable only now.
+    # LEG 4 -- predict-only here; Move creates via `_evaluate_lexical_relation`.
     if plan_time:
         # Predicted only when Move could really take the leg: a source type
         # with no GUID cannot be created GUID-preservingly, and predicting a
@@ -7808,14 +7805,7 @@ def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
         # loss -- the one direction `_process_referent_will_be_created`'s
         # docstring names as the failure that must not happen.
         return PLAN_TIME_PENDING if type_guid else None
-    if not allow_create or ctx is None:
-        return None
-    if dropped is None:
-        raise ValueError(
-            "_resolve_target_lex_ref_type: allow_create requires a real "
-            "`dropped` list -- a create failure must be reported, not "
-            "silently discarded")
-    return _create_target_lex_ref_type(source_type, ctx, dropped)
+    return None
 
 
 def _append_type_not_found(dropped, source_type, type_guid, rel_guid):
@@ -7955,7 +7945,7 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
     # (Preview) only after the structural guards below have passed.
     target_type = _resolve_target_lex_ref_type(
         target, type_guid, source_type=source_type, ctx=ctx,
-        plan_time=True, allow_create=False, dropped=dropped,
+        plan_time=True, dropped=dropped,
     )
     if target_type is None:
         _append_type_not_found(dropped, source_type, type_guid, rel_guid)
