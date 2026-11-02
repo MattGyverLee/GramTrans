@@ -9779,8 +9779,9 @@ def _copy_supplemental_scalars(owner_class, src, new, context, ws_map, dropped,
     else:  # pragma: no cover
         from scalar_fields import copy_supplemental_fields  # type: ignore
     copy_supplemental_fields(
-        owner_class, src, new, source=context.source_handle,
-        target=context.target_handle, ws_map=ws_map, dropped=dropped,
+        owner_class, src, new, source=getattr(context, "source_handle", None),
+        target=getattr(context, "target_handle", None), ws_map=ws_map,
+        dropped=dropped,
         owner_guid=owner_guid, owner_label=_owner_label_for(owner_class, src))
 
 
