@@ -468,7 +468,8 @@ def plan_analyses(segment, source, target, ctx, resolver_cache, dropped) -> List
             verdict = _verdict_from_eval(evaluation)
             wf_label = _first_text(wf_form)
             category_decision = resolve_or_report_category(
-                analysis, target, resolver_cache, dropped)
+                analysis, target, resolver_cache, dropped,
+                planned_pos_guids=getattr(ctx, "_planned_pos_guids", None))
             morph_bundles = tuple(plan_morph_bundles(
                 analysis, target, ctx, dropped, context_label=wf_label))
             glosses = tuple(plan_glosses(analysis, source, target, ctx, dropped))
@@ -506,12 +507,17 @@ def plan_analyses(segment, source, target, ctx, resolver_cache, dropped) -> List
     return plans
 
 
-def resolve_or_report_category(analysis, target, resolver_cache, dropped):
+def resolve_or_report_category(analysis, target, resolver_cache, dropped,
+                               planned_pos_guids=None):
     """CategoryRA resolve-or-report variant → `models.ReferenceDecision` (FR-011).
 
     Calls `references.decide_reference` against `LangProject.PartsOfSpeechOA`,
     then downgrades any CREATE to REPORT_DROPPED: an absent POS is left unset and
     a DroppedItemRecord is emitted. A POS is NEVER fabricated for an analysis.
+    Issue #166: when the absent POS is one THIS run creates
+    (`planned_pos_guids`, source GUIDs of the planned POS adds), the decision is
+    instead a planned LINK (`target_item=None`, `planned=True`) that Move rebinds
+    against the POS the grammar leg has by then created. Nothing is reported.
     Returns None when the analysis has no category (nothing to write)."""
     category = getattr(analysis, "CategoryRA", None)
     if category is None:
@@ -542,6 +548,13 @@ def resolve_or_report_category(analysis, target, resolver_cache, dropped):
                 del resolver_cache[g]
     if decision is None:
         return None
+    if (planned_pos_guids
+            and (decision.action == ReferenceAction.CREATE
+                 or getattr(decision, "planned", False))
+            and (_guid_str(category) or "").lower() in planned_pos_guids):
+        return ReferenceDecision(action=ReferenceAction.LINK,
+                                 target_item=None, source_item=category,
+                                 planned=True)
     if (decision.action == ReferenceAction.CREATE
             or getattr(decision, "planned", False)
             or (decision.action == ReferenceAction.LINK
@@ -1083,6 +1096,20 @@ def _apply_category(plan, target, analysis_obj, wa_ops, resolver_cache, tag, ws_
     if target_item is None and decision.action == ReferenceAction.CREATE:
         # Should not happen (resolve_or_report suppresses CREATE); defensive.
         return
+    if (target_item is None and decision.action == ReferenceAction.LINK
+            and getattr(decision, "planned", False)):
+        # Issue #166: the POS this run creates now exists; re-decide against
+        # Move's own cache (as texts does for genres/tags). A failed rebind
+        # falls through to the loud drop below.
+        try:
+            rebound = _references.rebind_planned_link(
+                decision, target, _pos_spec(), resolver_cache, source)
+            if rebound is not None and getattr(rebound, "target_item", None) is not None:
+                decision = rebound
+        except Exception as exc:  # noqa: BLE001 -- reported below
+            _log.warning("apply_analyses: category rebind failed: %s: %s",
+                         type(exc).__name__, exc)
+        target_item = getattr(decision, "target_item", None)
     if target_item is None and decision.action == ReferenceAction.LINK:
         # Issue #146: a planned/placeholder LINK has nothing to set. Loud, never
         # silent: warn and report the category as dropped.
