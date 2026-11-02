@@ -990,3 +990,88 @@ def test_repeat_apply_reversals_sub_entry_does_not_duplicate():
         f"once (no duplicate), got {linked!r}"
     )
     assert linked[0] is sense_sub
+
+
+# ============================================================================
+# Issue #188 (#163 pattern): the target ReversalIndex must be created only
+# once an entry survives, not before the formless-entry drop.
+# ============================================================================
+
+class _FakeCreatingIndexesOps:
+    """`target.ReversalIndexes` that records every `Create` call."""
+
+    def __init__(self) -> None:
+        self.create_calls: list = []
+
+    def Create(self, name, ws_id):
+        self.create_calls.append((name, ws_id))
+        return _FakeApplyReversalIndex(_FakePosList(), writing_system=ws_id)
+
+
+def _formless_decision(guid="e-formless", ws="en"):
+    return ReversalDecision(
+        source_entry_guid=guid,
+        target_index_ref=None,
+        target_ws_id=ws,
+        pos_decision=None,
+        reversal_form_alts={},
+    )
+
+
+def test_formless_only_index_is_not_created_issue_188():
+    """A to-create index whose only entries are formless creates NO index
+    (pre-fix: an empty ReversalIndex was left behind) and reports each drop."""
+    target = _FakeApplyTarget()
+    target.ReversalIndexes = _FakeCreatingIndexesOps()
+    dropped: list = []
+
+    reversals.apply_reversals(
+        [_formless_decision("e1"), _formless_decision("e2")],
+        target, _FakeCtx(), _make_import_residue_tag(), {}, dropped)
+
+    assert target.ReversalIndexes.create_calls == []
+    assert target.ReversalEntries.created == []
+    assert [d.owner_guid for d in dropped] == ["e1", "e2"]
+    assert all("no reversal form" in d.reason for d in dropped)
+
+
+def test_index_created_once_when_formless_and_formed_entries_mix_issue_188():
+    """A surviving entry still creates the index (exactly once), even when a
+    formless sibling is processed first."""
+    target = _FakeApplyTarget()
+    target.ReversalIndexes = _FakeCreatingIndexesOps()
+    dropped: list = []
+    formed = ReversalDecision(
+        source_entry_guid="e-ok", target_index_ref=None, target_ws_id="en",
+        pos_decision=None, reversal_form_alts={"en": "run"})
+
+    reversals.apply_reversals(
+        [_formless_decision("e-bad"), formed],
+        target, _FakeCtx(), _make_import_residue_tag(), {}, dropped)
+
+    assert len(target.ReversalIndexes.create_calls) == 1
+    assert len(target.ReversalEntries.created) == 1
+    assert [d.owner_guid for d in dropped] == ["e-bad"]
+
+
+def test_preview_does_not_announce_index_for_formless_only_issue_188():
+    """Preview parity: no 'Add' index line for an index Move will not create."""
+    from gramtrans.Lib import preview
+
+    class _Plan:
+        reversal_decisions = (_formless_decision("e1"),)
+
+    assert preview.render_reversal_decisions(_Plan()) == ()
+
+    class _MixedPlan:
+        reversal_decisions = (
+            _formless_decision("e1"),
+            ReversalDecision(
+                source_entry_guid="e2", target_index_ref=None,
+                target_ws_id="en", pos_decision=None,
+                reversal_form_alts={"en": "run"}),
+        )
+
+    lines = preview.render_reversal_decisions(_MixedPlan())
+    assert any("(Add)" in ln for ln in lines)
+    assert not any("(no form)" in ln for ln in lines)

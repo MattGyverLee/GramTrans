@@ -189,3 +189,26 @@ def test_stats_panel_tags_blocked_skips_and_warns_not_dispatched(qapp):
     assert panel._warn_view.toPlainText().startswith(
         "[WARN] NOT DISPATCHED -- selected, but nothing was planned or "
         "written for: msa")
+
+
+def _comp_skip(entry, field, comp="stem-1") -> Skip:
+    return _skip(GrammarCategory.STEMS, entry, SkipReason.DEPENDENCY_UNRESOLVED,
+                 f"{field} component {comp} unresolved")
+
+
+def test_issue174_unresolved_component_collapses_to_one_line():
+    """2 per-field skips for one missing component list as ONE line; counts
+    and the underlying skips are unchanged."""
+    report = _report(extra_skips=[
+        _comp_skip("aff-1", "ComponentLexemesRS"),
+        _comp_skip("aff-1", "ShowComplexFormsInRS"),
+        _comp_skip("aff-2", "ComponentLexemesRS", comp="stem-2"),
+    ])
+    text = _text(report)
+    assert text.count("component stem-1 missing in the destination") == 1
+    assert "2 reference(s) from 1 entry" in text
+    assert "(ComponentLexemesRS, ShowComplexFormsInRS)" in text
+    assert text.count("component stem-2 missing") == 1
+    assert "ShowComplexFormsInRS component stem-1 unresolved" not in text
+    assert report.per_category[GrammarCategory.STEMS].blocked == 3
+    assert text.isascii()

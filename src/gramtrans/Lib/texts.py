@@ -28,6 +28,7 @@ flexicon accessors (grounded live via FLExTools MCP static surface, 2026-07-12):
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 from typing import List, Optional
@@ -736,6 +737,7 @@ def plan_texts(selection, source, target, ctx, resolver_cache, dropped) -> List:
             is_translated = None
         source_text_str = _best_str(text_ops, text, "GetSource") or ""
 
+        _n_drops_before = len(dropped)
         action, target_guid = _text_disposition(
             target, src_guid, title, source=source, source_text=text)
         genre_decisions = _decide_genres(text, source, target, resolver_cache, dropped)
@@ -745,6 +747,14 @@ def plan_texts(selection, source, target, ctx, resolver_cache, dropped) -> List:
             resolver_cache, dropped, src_guid, title,
             tags_by_seg=tags_by_seg,
         )
+        # Issue #192: stamp this text's drops with its GUID so Move can leave
+        # out the planned drops of a text it skips whole.
+        if src_guid:
+            dropped[_n_drops_before:] = [
+                dataclasses.replace(d, text_guid=src_guid)
+                if dataclasses.is_dataclass(d) else d
+                for d in dropped[_n_drops_before:]
+            ]
 
         plans.append(TextTransferPlan(
             source_guid=src_guid,
@@ -842,6 +852,8 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
             _updated += 1
         # Non-string container props (FR-002).
         _set_if(text_ops, "SetAbbreviation", target_text, plan.abbreviation)
+        if _created:
+            _copy_text_source(plan, source, target, target_text, ws_map, dropped)
         if plan.is_translated is not None:
             _safe(lambda: text_ops.SetIsTranslated(target_text, plan.is_translated))
         # Genres (FR-005) via the shared resolver.
@@ -866,6 +878,29 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
             f"(dropped items so far: {len(dropped)})."))
     return {"added": _added, "updated": _updated, "already": _already,
             "skips": _skips}
+
+
+def _copy_text_source(plan, source, target, target_text, ws_map, dropped):
+    """Issue #135: IText.Source (IMultiString) -- flexicon's TextOperations has
+    no Get/SetSource, so `plan.source_text` was always empty. Copied only onto
+    a text THIS run created (an existing target text is never overwritten).
+    Never raises."""
+    try:
+        from SIL.LCModel import ICmObjectRepository
+        from System import Guid
+        repo = source.ObjectRepository(ICmObjectRepository)
+        src_text = repo.GetObject(Guid.Parse(plan.source_guid))
+    except Exception as exc:  # noqa: BLE001 -- offline / unresolved
+        _log.debug("texts: Source copy skipped, source text unresolved: %s", exc)
+        return
+    if __package__:
+        from .scalar_fields import copy_supplemental_fields
+    else:  # pragma: no cover
+        from scalar_fields import copy_supplemental_fields  # type: ignore
+    copy_supplemental_fields(
+        "Text", src_text, target_text, source=source, target=target,
+        ws_map=ws_map, dropped=dropped, owner_guid=plan.source_guid or "",
+        owner_label=plan.title or UNTITLED_LABEL)
 
 
 def _default_vern_handle(project):
@@ -1538,7 +1573,7 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
             # US2: analyses + AnalysesRS alignment.
             _wordforms.apply_analyses(
                 seg_plan.analyses, source_of(ctx), target, ctx, tag,
-                None, dropped)
+                resolver_cache, dropped)
             _wordforms.apply_alignment(tgt_seg, seg_plan.alignment, ctx, dropped)
             # US5 (T035): per-segment text-markup tag references.
             _apply_segment_tags(seg_plan, target, target_text, tgt_seg,

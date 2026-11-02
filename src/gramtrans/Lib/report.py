@@ -18,6 +18,7 @@ report is allowed to say about how much its sameness claims are worth.
 from __future__ import annotations
 
 import json
+import re
 from typing import Iterable
 
 if __package__:
@@ -32,6 +33,7 @@ if __package__:
         FIDELITY_CENSUS_ARTIFACT_FIELDS,
         STARTER_BASELINE_ARTIFACT_FIELDS,
         CategoryReport,
+        CreatedPosChildren,
         DroppedItemRecord,
         ExcludedLossy,
         FidelityStatus,
@@ -60,6 +62,7 @@ else:
         FIDELITY_CENSUS_ARTIFACT_FIELDS,
         STARTER_BASELINE_ARTIFACT_FIELDS,
         CategoryReport,
+        CreatedPosChildren,
         DroppedItemRecord,
         ExcludedLossy,
         FidelityStatus,
@@ -96,6 +99,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                      extra_enrichments=(),
                      extra_process_rules=(),
                      extra_affix_slot_links=(),
+                     extra_created_pos_children=None,
                      not_added=None,
                      text_added: int = 0,
                      text_updated: int = 0,
@@ -438,6 +442,12 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         outcome_counted=not_added is not None,
         # Issue #84: how the selection was dispatched (lexicon expansion).
         category_notes=tuple(getattr(plan, "category_notes", ())),
+        # Issue #143: the 024/029/030 reference decisions the plan carries on
+        # its actions and overwrites, flattened for the JSON artifact.
+        reference_decisions=tuple(
+            d for item in (tuple(getattr(plan, "actions", ()) or ())
+                           + tuple(getattr(plan, "overwrites", ()) or ()))
+            for d in (getattr(item, "reference_decisions", ()) or ())),
         # Feature 038: the four plan-side buckets flow straight through, so
         # the report surfaces below have something to render. All four are
         # empty on a plan built before 038's producers exist, which is why
@@ -456,6 +466,22 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         affix_slot_links=tuple(getattr(plan, "affix_slot_links", ()))
         + tuple(extra_affix_slot_links),
         census=census,
+        # Issue #126: owned children of each created POS. Move passes the
+        # MEASURED rows; every other caller (Preview) gets the plan's
+        # projection, so both legs read one shape from one source.
+        created_pos_children=(
+            tuple(extra_created_pos_children)
+            if extra_created_pos_children is not None
+            else tuple(
+                CreatedPosChildren(
+                    owner_guid=a.source_guid,
+                    owner_label=a.summary,
+                    collections=tuple(a.owned_children),
+                )
+                for a in plan.actions
+                if isinstance(a, PlannedAction) and a.owned_children
+            )
+        ),
         # T024d-a: the per-class matched tallies the census consumes as
         # `starter_matched_to_source`. Sorted so the snapshot diffs
         # deterministically; empty on any plan whose matcher has not run, which
@@ -1050,6 +1076,9 @@ def _reference_decision_json(d) -> dict:
         "action": _enum_name(action) if action is not None else "",
         "item_name": getattr(d, "item_name", ""),
         "item_guid": getattr(d, "item_guid", ""),
+        "planned": bool(getattr(d, "planned", False)),
+        "new_ancestors": [
+            list(x) for x in (getattr(d, "new_ancestors", ()) or ())],
     }
 
 
@@ -1736,6 +1765,15 @@ def _to_snapshot_json(self) -> str:
             _dropped_item_json(d) for d in relocated_items
         ]
 
+    # Issue #143: every reference decision (owned children, pictures, entry-ref
+    # types, allomorph refs, sense appendix/thesaurus), uncapped. Additive and
+    # omit-when-empty like `relocated_items`, so a run with none is unchanged.
+    reference_decisions = tuple(getattr(self, "reference_decisions", ()))
+    if reference_decisions:
+        payload["reference_decisions"] = [
+            _reference_decision_json(d) for d in reference_decisions
+        ]
+
     # ---- Feature 038 (transfer fidelity gaps) --------------------------
     # ADDITIVE and OMIT-WHEN-EMPTY (see the module comment above
     # `_CONSOLE_MAX_ROWS`): a report carrying no 038 data adds no keys at
@@ -1846,6 +1884,21 @@ def _to_snapshot_json(self) -> str:
     enriched = _counter_block(self, "enriched")
     if enriched is not None:
         payload["enriched_counts"] = enriched
+
+    # Issue #126: owned children of created POS.
+    if self.created_pos_children:
+        payload["created_pos_children"] = [
+            {
+                "owner_guid": r.owner_guid,
+                "owner_label": r.owner_label,
+                "collections": [
+                    {"field_name": c.field_name, "added": c.added,
+                     "dropped": c.dropped}
+                    for c in r.collections
+                ],
+            }
+            for r in self.created_pos_children
+        ]
 
     # FR-023..FR-025: MoAffixProcess outcomes, reproduced or not.
     if self.process_rules:
@@ -2048,6 +2101,41 @@ def not_dispatched_categories(report) -> list:
     return cats
 
 
+_COMPONENT_SKIP_RE = re.compile(
+    r"^(ComponentLexemesRS|PrimaryLexemesRS|ShowComplexFormsInRS) component "
+    r"(\S+) unresolved$")
+
+
+def _component_key(skip):
+    """Issue #174: (category, component guid) for a per-field LexEntryRef
+    unresolved-component skip, else None."""
+    if getattr(skip, "reason", None) is not SkipReason.DEPENDENCY_UNRESOLVED:
+        return None
+    m = _COMPONENT_SKIP_RE.match(str(getattr(skip, "detail", "")))
+    return (skip.category, m.group(2)) if m else None
+
+
+def _collapse_component_skips(skips):
+    """Issue #174: {key: one rendered line per missing component}. The
+    underlying skips (counts, JSON) are untouched; only the listing collapses."""
+    groups = {}
+    for s in skips:
+        k = _component_key(s)
+        if k is not None:
+            groups.setdefault(k, []).append(s)
+    out = {}
+    for (cat, guid), items in groups.items():
+        fields = sorted({_COMPONENT_SKIP_RE.match(str(i.detail)).group(1)
+                         for i in items})
+        owners = {str(i.source_guid) for i in items}
+        out[(cat, guid)] = (
+            f"    - [BLOCKED] [{cat.value}] component {guid} missing in the "
+            f"destination: {len(items)} reference(s) from {len(owners)} "
+            f"entr{'y' if len(owners) == 1 else 'ies'} not wired "
+            f"({', '.join(fields)})")
+    return out
+
+
 def _is_source_missing(skip) -> bool:
     """Issue #85: a blocked skip whose SOURCE object was not found -- a source
     data error, worded so by every `ActionOutcome.skipped` site that hits it."""
@@ -2139,7 +2227,18 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
         yield f"  [skip] no items in source for {cat.value}"
     if report.skips:
         yield "  Skips:"
+        # Issue #174: collapse per-field unresolved-component skips to one
+        # line per missing component (first occurrence position).
+        _comp = _collapse_component_skips(report.skips)
+        _comp_done = set()
         for s in report.skips:
+            _ck = _component_key(s)
+            if _ck is not None:
+                if _ck in _comp_done:
+                    continue
+                _comp_done.add(_ck)
+                yield _comp[_ck]
+                continue
             _tag = "[BLOCKED] " if is_blocked_skip(s) else ""
             yield f"    - {_tag}[{s.category.value}] {s.source_guid}  {s.reason.value}: {s.detail}"
     if getattr(report, "excluded_lossy", ()):
@@ -2575,6 +2674,31 @@ def _render_038_lines(report: RunReport) -> Iterable[str]:
             )
 
         for line in _rows(enrichments, _enrichment_row):
+            yield line
+
+    # ---- Issue #126: owned children of created POS -----------------------
+    created_children = getattr(report, "created_pos_children", ())
+    if created_children:
+        total = sum(c.added for r in created_children for c in r.collections)
+        yield (
+            f"  Owned children CREATED under new part-of-speech items "
+            f"(slots, templates, reference forms, ...) -- {len(created_children)}"
+            f" POS, {total} child object(s):"
+        )
+
+        def _created_children_row(r) -> str:
+            parts = []
+            for c in r.collections:
+                bits = f"{c.field_name} +{c.added}"
+                if c.dropped:
+                    bits += f" ({c.dropped} dropped with a reason)"
+                parts.append(bits)
+            return (
+                f"    - POS \"{r.owner_label}\" {_guid8(r.owner_guid)}: "
+                + "; ".join(parts)
+            )
+
+        for line in _rows(created_children, _created_children_row):
             yield line
 
     # ---- FR-023..FR-025 / SC-006: process rules --------------------------

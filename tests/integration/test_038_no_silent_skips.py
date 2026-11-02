@@ -198,6 +198,12 @@ REPORT_FIELD_ROLES = {
     # Issue #84 (pre-existing): human-readable notes about how the lexicon
     # category selection was expanded. Text about the selection, not an item.
     "category_notes": NOT_AN_ITEM,
+    # Issue #126: owned children of each created POS. Detail about items
+    # already counted as ADDs -- an annotation, not a fifth outcome.
+    "created_pos_children": ANNOTATION,
+    # Issue #143: per-reference decisions the plan/overwrites carry. Diagnostic
+    # detail about items already counted elsewhere.
+    "reference_decisions": ANNOTATION,
     # THE ONE THAT NEEDED WORK. `reproduced=True` is an ADD; `reproduced=False`
     # must be named by a Skip or a dropped record, and until T080 nothing
     # checked that it was. See `TestTheFifthOutcomeWasReal`.
@@ -717,3 +723,42 @@ class TestTheDeliberateNonInvariants:
         payload = _payload(RunReport.build_from_plan(
             _plan(actions=(_action(),)), RunMode.MOVE))
         assert "disposition" not in payload
+
+
+# ---------------------------------------------------------------------------
+# 6. Issue #185: a lazily created relation type the sweep removes is reported
+# ---------------------------------------------------------------------------
+
+class TestSweptLexRefTypeReachesTheReport:
+    """Preview announces a new relation type as a create; when every relation
+    of it fails, the end-of-run sweep deletes the empty type. That is a
+    divergence from Preview, so it must reach the run report, not just the log."""
+
+    def test_deleted_type_is_a_reported_drop(self):
+        from gramtrans.Lib import categories
+
+        class _T:
+            Guid = "type-new"
+            MembersOC = []
+
+        class _Ops:
+            deleted = []
+
+            def DeleteType(self, t):
+                self.deleted.append(t.Guid)
+
+        class _Target:
+            LexReferences = _Ops()
+
+        created = {"type-new": _T()}
+        dropped: list = []
+        categories._sweep_empty_lazy_lex_ref_types(_Target(), created, dropped)
+        assert _Target.LexReferences.deleted == ["type-new"]
+
+        report = RunReport.build_from_plan(
+            _plan(), RunMode.MOVE, extra_dropped_items=tuple(dropped))
+        assert len(report.dropped_items) == 1
+        rec = report.dropped_items[0]
+        assert (rec.owner_kind, rec.owner_guid) == ("LexRefType", "type-new")
+        assert "was not created" in rec.reason
+        assert any("was not created" in ln for ln in _lines(report))

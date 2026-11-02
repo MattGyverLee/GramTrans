@@ -367,8 +367,19 @@ class _FakeComplexFeatureB1:
 class _FakeOpenFeatureB1:
     ClassName = "FsOpenFeature"
 
-    def __init__(self, guid: str) -> None:
+    def __init__(self, guid: str, writing_system="en", ws_selector=-2) -> None:
         self.guid = guid
+        self.WritingSystem = writing_system
+        self.WsSelector = ws_selector
+
+
+class _FakeNewOpenFeatB1:
+    def __init__(self) -> None:
+        self.Name = _FakeMultiStringB1()
+        self.Abbreviation = _FakeMultiStringB1()
+        self.Description = _FakeMultiStringB1()
+        self.WritingSystem = None
+        self.WsSelector = None
 
 
 class _FakeValueB1:
@@ -541,6 +552,8 @@ def _patch_lcm_b1(monkeypatch):
     fake_lcm.IFsSymFeatVal = lambda x: x
     fake_lcm.IFsComplexFeatureFactory = object()
     fake_lcm.IFsComplexFeature = lambda x: x
+    fake_lcm.IFsOpenFeatureFactory = object()
+    fake_lcm.IFsOpenFeature = lambda x: x
 
     fake_kernel = types.ModuleType("SIL.LCModel.Core.KernelInterfaces")
     fake_kernel.ITsString = lambda x: x
@@ -716,28 +729,25 @@ def test_execute_action_closed_feature_still_works(_patch_lcm_b1) -> None:
     assert value_factory.create_calls, "IFsSymFeatValFactory.Create was not called"
 
 
-def test_execute_action_open_feature_clean_skip(_patch_lcm_b1) -> None:
-    """(c) FsOpenFeature -> clean documented skip: returns None, attaches
-    nothing to FeaturesOC (no orphan), and records a single NEEDS_MANUAL
-    Skip for the category."""
-    src_feat = _FakeOpenFeatureB1(guid=_FEAT_GUID_B1)
+def test_execute_action_open_feature_creates_with_ws_fields(_patch_lcm_b1) -> None:
+    """Issue #29: FsOpenFeature is created GUID-preserved, owned by the
+    feature system, with WritingSystem (WS-mapped) and WsSelector copied."""
+    fake_lcm = _patch_lcm_b1
+    src_feat = _FakeOpenFeatureB1(guid=_FEAT_GUID_B1, writing_system="en", ws_selector=-3)
     feat_sys = _FakeFeatureSystemB1()
-    sl = _FakeServiceLocatorB1({})  # no factory should be requested at all
+    new_open = _FakeNewOpenFeatB1()
+    factory = _FakeFactoryB1(new_open)
+    sl = _FakeServiceLocatorB1({id(fake_lcm.IFsOpenFeatureFactory): factory})
 
-    tgt_proj = _FakeTgtProjectB1(feat_sys, sl)
-    src_proj = _FakeSrcProjectB1(src_feat)
-    ctx = _ctx_b1(src_proj, tgt_proj)
-
+    ctx = _ctx_b1(_FakeSrcProjectB1(src_feat), _FakeTgtProjectB1(feat_sys, sl))
     result = categories.inflection_features_execute_action(
-        _action_b1(_FEAT_GUID_B1), ctx, WSMapping(), tag=None,
+        _action_b1(_FEAT_GUID_B1), ctx, {"en": "en-x-tgt"}, tag=None,
     )
 
-    # Issue #68: a decline is an explicit skipped outcome, not None.
-    assert result is not None and result.status == "skipped"
-    assert len(feat_sys.FeaturesOC) == 0, "FsOpenFeature must not attach anything to FeaturesOC"
-    assert len(ctx._exec_skips) == 1
-    skip = ctx._exec_skips[0]
-    assert skip.category == GrammarCategory.INFLECTION_FEATURES
-    assert skip.source_guid == _FEAT_GUID_B1
-    assert skip.reason == SkipReason.NEEDS_MANUAL
+    assert result is new_open
+    assert ctx._exec_skips == []
+    assert factory.create_calls == [(_FEAT_GUID_B1,)]
+    assert list(feat_sys.FeaturesOC) == [new_open]
+    assert new_open.WritingSystem == "en-x-tgt"
+    assert new_open.WsSelector == -3
 

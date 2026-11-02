@@ -88,7 +88,7 @@ if __package__:
     from .page_header import PageHeader
     from ..merge_preview import MergePreviewService, OVERWRITE, NEW
     from ..models import SimilarResolution
-    from ..preview import render_preview_extra_lines
+    from ..preview import render_preview_extra_lines, preview_extra_lines_or_warning
     from ..report import RunReport
     from ..ws_mapping import closest_ws_defaults
 else:
@@ -137,7 +137,7 @@ else:
     from page_header import PageHeader  # type: ignore
     from merge_preview import MergePreviewService, OVERWRITE, NEW  # type: ignore  # noqa: F401
     from models import SimilarResolution  # type: ignore  (already imported above but needs bare-name alias)  # noqa: F401
-    from preview import render_preview_extra_lines  # type: ignore
+    from preview import render_preview_extra_lines, preview_extra_lines_or_warning  # type: ignore
     from report import RunReport  # type: ignore
     from ws_mapping import closest_ws_defaults  # type: ignore  # noqa: F401
 
@@ -482,7 +482,8 @@ class _PagePreview(QtWidgets.QWizardPage):
             _warn_plan_failure(self, wizard)
             return
         # Issue #162: Preview-only extra lines, shown before any Move.
-        self._stats.set_report(report, render_preview_extra_lines(plan))
+        self._stats.set_report(report, preview_extra_lines_or_warning(
+            plan, render_preview_extra_lines))
 
 
 # ---------------------------------------------------------------------------
@@ -1060,7 +1061,8 @@ class _PageFinish(_FlowPage):
         # Issue #162: real Preview -- extra lines. Cache only once shown.
         self._cached_plan = None
         try:
-            self._stats.set_report(report, render_preview_extra_lines(plan))
+            self._stats.set_report(report, preview_extra_lines_or_warning(
+                plan, render_preview_extra_lines))
             self._cached_plan = plan
         finally:
             self._refresh_execute_state()

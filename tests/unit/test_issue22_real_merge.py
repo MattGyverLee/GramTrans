@@ -328,12 +328,12 @@ def test_unwired_merges_are_one_warning_per_category(monkeypatch, _quiet_tail):
     plan = RunPlan(
         context=ctx, selection=Selection(), ws_mapping=WSMapping(entries=()),
         overwrites=tuple(PlannedOverwrite(
-            category=GrammarCategory.SEMANTIC_DOMAINS, source_guid=g,
+            category=GrammarCategory.VARIANT_TYPES, source_guid=g,
             target_guid=g, match_via="guid", write_mode="merge", summary="m")
             for g in ("sd-1", "sd-2")),
     )
     sink = _Sink()
     transfer.execute(plan, object(), object(), sink, tag=None)
     hits = [w for w in sink.warnings() if "planned merge(s) NOT applied" in w]
-    assert hits == ["  [semantic_domains] 2 planned merge(s) NOT applied: the "
+    assert hits == ["  [variant_types] 2 planned merge(s) NOT applied: the "
                     "UPDATE (Merge) executor is not wired for this category"]

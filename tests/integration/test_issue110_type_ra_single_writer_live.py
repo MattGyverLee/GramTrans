@@ -8,10 +8,10 @@ ALREADY_WIRED, so Preview showed N "Wire" rows while Move reported fewer
 (here: 0) writes. The data was right; the report was not. The #37 live gate
 only held because its target started with no struct-types.
 
-WRITE PATH: writes ONLY the private sandbox ``GT-Sandbox-110`` (restored
-headlessly from a known backup before every test and again at the end). The
-source ``Mbugwe LizzieHC practice 2026`` is opened READ-ONLY. ``Target`` and
-``Esperanto`` are never touched.
+WRITE PATH: writes ONLY the throwaway ``Target`` (restored headlessly from a
+known backup before every test and again at the end). The source
+``Mbugwe LizzieHC practice 2026`` is opened READ-ONLY. ``Esperanto`` and every
+real project are never touched.
 
 Skips unless FLEXLIBS_REQUIRE_LIVE=1. When it is set, an unavailable LCM
 FAILS rather than skips.
@@ -20,9 +20,10 @@ Run:
     set FLEXLIBS_REQUIRE_LIVE=1 && python -m pytest \
         tests/integration/test_issue110_type_ra_single_writer_live.py -v -s
 
-Source facts (read-only MCP probe of ``Mbugwe LizzieHC practice 2026``,
-2026-10-30): two ``FsComplexFeature`` in ``MsFeatureSystemOA.FeaturesOC``,
-each with a ``TypeRA`` into ``MsFeatureSystemOA.TypesOC`` -- ``EXPECTED``.
+``EXPECTED`` (complex feature GUID -> struct-type GUID) is read from the
+source at import-of-test time rather than hardcoded (issue #139), so editing
+the source project does not break the gate; it only needs >= 1 complex feature
+with a ``TypeRA``.
 """
 from __future__ import annotations
 
@@ -41,16 +42,14 @@ if not _LIVE:
                 allow_module_level=True)
 
 SOURCE_NAME = "Mbugwe LizzieHC practice 2026"   # READ-ONLY
-TARGET_NAME = "GT-Sandbox-110"                  # the ONLY project this module writes
-TARGET_PATH = ("C:/ProgramData/SIL/FieldWorks/Projects/GT-Sandbox-110/"
-               "GT-Sandbox-110.fwdata")
+TARGET_NAME = "Target"                          # the ONLY project this module writes
+TARGET_PATH = ("C:/ProgramData/SIL/FieldWorks/Projects/Target/"
+               "Target.fwdata")
 BACKUP_NAME = "Target 2026-07-06 0218.fwbackup"
 
-#: complex feature GUID -> struct-type GUID its source TypeRA names.
-EXPECTED = {
-    "49eaca04-afbf-46ba-b55c-5399c7e96088": "2b491f35-aa10-49cb-afb2-facce7f5155f",  # subject agreement
-    "df4a248b-747a-4240-9618-0e1f77059de7": "0a6c2f79-e440-4524-bd07-91bbe2b314bb",  # noun agreement
-}
+#: complex feature GUID -> struct-type GUID its source TypeRA names; filled by
+#: `_load_expected()` from a read-only open of the source.
+EXPECTED: dict = {}
 
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
@@ -75,11 +74,37 @@ def _restore() -> None:
     restore_target(TARGET_NAME, backup_path=_backup_path())
 
 
+def _load_expected() -> None:
+    """Fill EXPECTED from the source (read-only): every FsComplexFeature in
+    MsFeatureSystemOA.FeaturesOC with a non-null TypeRA."""
+    if EXPECTED:
+        return
+    from gramtrans.Lib.flexinit import ensure_flex_initialized
+    ensure_flex_initialized()
+    from flexicon import FLExProject
+    from SIL.LCModel import ICmObject, IFsComplexFeature
+    proj = FLExProject()
+    proj.OpenProject(projectName=SOURCE_NAME, writeEnabled=False)
+    try:
+        for f in proj.lp.MsFeatureSystemOA.FeaturesOC:
+            if f.ClassName != "FsComplexFeature":
+                continue
+            t = IFsComplexFeature(f).TypeRA
+            if t is not None:
+                EXPECTED[str(ICmObject(f).Guid).lower()] = (
+                    str(ICmObject(t).Guid).lower())
+    finally:
+        proj.CloseProject()
+    assert EXPECTED, "[SETUP] source has no complex feature with a TypeRA"
+    print("[LIVE] EXPECTED (from source): %s" % EXPECTED)
+
+
 @pytest.fixture(autouse=True)
 def _restore_around():
     import flexicon
     import gramtrans
     print("[LIVE] gramtrans=%s flexicon=%s" % (gramtrans.__file__, flexicon.__file__))
+    _load_expected()
     _restore()
     yield
     _restore()
@@ -226,8 +251,10 @@ def test_preexisting_struct_types_writes_equal_wire_rows(monkeypatch):
 def test_mutation_create_path_second_writer_undercounts(monkeypatch):
     """Mutation check, pinned: re-add the pre-#110 create-path wiring (wire
     TypeRA at create time when the target struct-type exists). The data is
-    still right, but the tail's reported count falls to 0 against 2 Wire
-    rows -- the exact defect, and proof the count assertion above bites."""
+    still right, but the tail's reported count no longer equals Preview's Wire
+    rows -- the exact defect, and proof the count assertion above bites.
+    Asserts only the DIVERGENCE (writes != wire rows), not a specific number,
+    so it does not pin the defect's exact shape."""
     from gramtrans.Lib import categories
     from gramtrans.Lib.models import GrammarCategory
 
@@ -254,5 +281,5 @@ def test_mutation_create_path_second_writer_undercounts(monkeypatch):
           % (len(wire_rows), writes, len(wired)))
     assert _target_type_ra()[0] == EXPECTED   # data right ...
     assert len(wire_rows) == len(EXPECTED)
-    assert writes == 0 and wired == []        # ... count wrong: the #110 defect
-    assert writes != len(wire_rows)
+    assert writes != len(wire_rows)           # ... count wrong: the #110 defect
+    assert len(wired) == writes

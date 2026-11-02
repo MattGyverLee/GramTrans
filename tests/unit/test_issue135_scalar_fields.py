@@ -1,0 +1,99 @@
+"""Issue #135 -- text fields flexicon's GetSyncableProperties omits are copied
+GramTrans-side (`Lib/scalar_fields.py`), WS-mapped, never silent.  Host-free."""
+from __future__ import annotations
+
+from gramtrans.Lib.scalar_fields import (
+    MULTISTRING_FIELDS, TSSTRING_FIELDS, copy_supplemental_fields)
+
+
+class _Ts:
+    def __init__(self, text):
+        self.Text = text
+
+
+class _MS:
+    def __init__(self, data=None, drop=False):
+        self.d = dict(data or {})
+        self.drop = drop
+
+    def get_String(self, h):
+        return _Ts(self.d.get(h, ""))
+
+    def set_String(self, h, v):
+        if not self.drop:
+            self.d[h] = v
+
+
+class _WS:
+    def __init__(self, i, h):
+        self.Id, self.Handle = i, h
+
+
+class _Proj:
+    def __init__(self, wss):
+        self.WritingSystems = type("W", (), {"GetAll": lambda s: wss})()
+        self.Cache = type("C", (), {"DefaultVernWs": 1})()
+
+
+class _Obj:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+SRC = _Proj([_WS("en", 1), _WS("ko", 2)])
+TGT = _Proj([_WS("en", 10), _WS("ko-x", 20)])
+
+
+def test_table_covers_issue_fields():
+    assert MULTISTRING_FIELDS["LexSense"][1] == ("AnthroNote", "UsageNote")
+    assert MULTISTRING_FIELDS["LexEntry"][1] == ("SummaryDefinition", "Restrictions")
+    assert MULTISTRING_FIELDS["LexEtymology"][1] == ("Note", "PrecComment")
+    assert MULTISTRING_FIELDS["Text"][1] == ("Source",)
+    assert TSSTRING_FIELDS["LexPronunciation"][1] == ("CVPattern", "Tone")
+
+
+def test_multistring_ws_mapped_and_empty_skipped():
+    src = _Obj(AnthroNote=_MS({1: "a-en", 2: "a-ko"}), UsageNote=_MS())
+    new = _Obj(AnthroNote=_MS(), UsageNote=_MS())
+    drops = []
+    w = copy_supplemental_fields(
+        "LexSense", src, new, source=SRC, target=TGT, ws_map={"ko": "ko-x"},
+        dropped=drops)
+    assert new.AnthroNote.d == {10: "a-en", 20: "a-ko"}
+    assert new.UsageNote.d == {}
+    assert sorted(w) == ["AnthroNote@en", "AnthroNote@ko-x"] and drops == []
+
+
+def test_unmapped_ws_is_dropped_not_silent():
+    src = _Obj(SummaryDefinition=_MS({2: "x"}), Restrictions=_MS())
+    new = _Obj(SummaryDefinition=_MS(), Restrictions=_MS())
+    drops = []
+    copy_supplemental_fields("LexEntry", src, new, source=SRC, target=TGT,
+                             ws_map={}, dropped=drops, owner_guid="g")
+    assert new.SummaryDefinition.d == {}
+    assert [(d.owner_kind, d.field_name) for d in drops] == [
+        ("LexEntry", "SummaryDefinition")]
+
+
+def test_readback_failure_is_dropped():
+    src = _Obj(Note=_MS({1: "n"}), PrecComment=_MS())
+    new = _Obj(Note=_MS(drop=True), PrecComment=_MS())
+    drops = []
+    copy_supplemental_fields("LexEtymology", src, new, source=SRC, target=TGT,
+                             ws_map={}, dropped=drops)
+    assert len(drops) == 1 and "read-back" in drops[0].reason
+
+
+def test_tsstring_pronunciation_fields():
+    src = _Obj(CVPattern=_Ts("CVC"), Tone=_Ts(""))
+    new = _Obj(CVPattern=_Ts(""), Tone=_Ts(""))
+    drops = []
+    w = copy_supplemental_fields("LexPronunciation", src, new, source=SRC,
+                                 target=TGT, ws_map={}, dropped=drops)
+    assert w == ["CVPattern"] and drops == []
+    assert new.CVPattern == "CVC" or getattr(new.CVPattern, "Text", None) == "CVC"
+
+
+def test_unknown_class_noop():
+    assert copy_supplemental_fields("Nope", _Obj(), _Obj(), source=SRC,
+                                    target=TGT, ws_map={}, dropped=[]) == []

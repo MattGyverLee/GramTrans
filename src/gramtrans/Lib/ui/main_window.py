@@ -299,10 +299,12 @@ class MainWindow(QtWidgets.QDialog):
         # `.render_config_view_records` (each a no-op `()` on an empty
         # plan), previously computed every Preview run but never shown.
         if __package__:
-            from ..preview import render_preview_extra_lines
+            from ..preview import render_preview_extra_lines, preview_extra_lines_or_warning
         else:
-            from preview import render_preview_extra_lines  # type: ignore
-        extra_lines = render_preview_extra_lines(plan)
+            from preview import render_preview_extra_lines, preview_extra_lines_or_warning  # type: ignore
+        # Issue #164: a renderer failure becomes a warning line, not an abort.
+        extra_lines = preview_extra_lines_or_warning(
+            plan, render_preview_extra_lines)
         self._stats.set_report(report, extra_lines)
 
     def _on_move(self) -> None:

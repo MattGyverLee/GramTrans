@@ -62,6 +62,11 @@ else:
 # data-model.md's single worked example (`lp.LexDbOA.SenseTypesOA`) is NOT a
 # blanket rule. Each row below uses the exact accessor confirmed live.
 
+#: `ItemClsid` of the morph-types list (`LexDb.MorphTypesOA`) -- see the issue
+#: #119 note in `decide_reference`.
+_MORPH_TYPE_CLSID = 5042
+
+
 def _lp(target):
     """Return the target's ILangProject (`target.Cache.LangProject`)."""
     return target.Cache.LangProject
@@ -824,6 +829,33 @@ def decide_reference(source_item, target, spec: "ReferenceFieldSpec", cache: dic
 
     target_item = _find_in_possibility_list(target_list, guid)
 
+    if target_item is None and getattr(target_list, "ItemClsid", None) == _MORPH_TYPE_CLSID:
+        # Issue #119 decision: a morph type absent from the target is REPORTED,
+        # never created. The morph-types list is FLEx's fixed canonical set (all
+        # 19 GUIDs are byte-identical across every project measured; the FLEx
+        # UI offers no way to add one), and CREATE here copies only
+        # Name/Abbreviation/Description -- it would lose the Prefix/Postfix
+        # markers and SecondaryOrder that DEFINE a morph type, minting a
+        # degraded type the parser and the affix/stem split cannot interpret.
+        # Same stance as `matcher.NATURAL_KEY_BINDINGS["MoMorphType"]`
+        # (create_on_miss=False).
+        dropped = DroppedItemRecord(
+            owner_kind=spec.owner_class,
+            owner_guid="",
+            owner_label="",
+            field_name=spec.field_name,
+            item_name=_item_label(source_item),
+            item_guid=guid,
+            reason=(
+                "morph type not in target's morph-types list; not created "
+                "(the list is FLEx's fixed set and a created copy would lose "
+                "its Prefix/Postfix markers)"
+            ),
+        )
+        return ReferenceDecision(
+            action=ReferenceAction.REPORT_DROPPED, source_item=source_item, dropped=dropped,
+        )
+
     if target_item is None:
         # CREATE. `ancestors_to_create` is always populated so `apply_reference`
         # has a uniform "create each of these, top-down" loop: the full
@@ -926,10 +958,19 @@ def _best_text(ms) -> str:
     `PossibilityListOperations.GetSyncableProperties`'s flat Name/Abbreviation/
     Description shape, but WS-handle-agnostic since `apply_reference` has no
     project handle for the source side to resolve a WS id against)."""
-    for text in _multistring_dict(ms).values():
+    return _best_alt(ms)[1]
+
+
+def _best_alt(ms, handle_to_id: dict | None = None) -> tuple:
+    """``(src_ws_id, text)`` of the alternative `_best_text` picks -- the
+    first non-empty slot of the handle-keyed snapshot. ``src_ws_id`` is the
+    resolved Id, or ``None`` when no resolver is given or the handle is not
+    in it (an UNKNOWN writing system, never a guessed one -- issue #176).
+    ``(None, "")`` when every slot is empty."""
+    for handle, text in _multistring_dict(ms).items():
         if text:
-            return text
-    return ""
+            return (handle_to_id or {}).get(handle), text
+    return None, ""
 
 
 def _default_analysis_ws_id(ops, target_ws_by_id: dict):
@@ -952,6 +993,37 @@ def _default_analysis_ws_id(ops, target_ws_by_id: dict):
     return None
 
 
+# Issue #175: script of a writing-system tag. Only the script is compared
+# (never language family). An explicit ISO 15924 subtag wins; otherwise the
+# language subtag's customary default script. Anything unlisted is UNKNOWN.
+_LANG_DEFAULT_SCRIPT = {
+    **dict.fromkeys((
+        "en", "fr", "es", "pt", "de", "it", "nl", "sv", "da", "no", "nb", "nn",
+        "fi", "pl", "cs", "sk", "ro", "hu", "tr", "id", "ms", "sw", "tl", "vi",
+        "ca", "eo", "la", "af", "zu", "xh", "ha", "yo", "ig", "lg", "rw", "mg",
+        "hr", "sl", "lt", "lv", "et", "sq", "is", "cy", "ga", "eu", "gl"), "Latn"),
+    **dict.fromkeys(("ru", "uk", "bg", "sr", "mk", "be", "kk", "ky", "mn"), "Cyrl"),
+    **dict.fromkeys(("ar", "fa", "ur", "ps", "ku"), "Arab"),
+    "he": "Hebr", "el": "Grek", "hi": "Deva", "ne": "Deva", "mr": "Deva",
+    "bn": "Beng", "ta": "Taml", "te": "Telu", "th": "Thai", "ko": "Hang",
+    "ja": "Jpan", "zh": "Hans", "am": "Ethi", "ka": "Geor", "hy": "Armn",
+    "km": "Khmr", "lo": "Laoo", "my": "Mymr", "si": "Sinh",
+}
+
+
+def _ws_script(ws_id):
+    """ISO 15924 script of writing-system tag `ws_id`, or ``None`` (unknown)."""
+    if not isinstance(ws_id, str) or not ws_id:
+        return None
+    parts = ws_id.replace("_", "-").split("-")
+    for sub in parts[1:]:
+        if sub.lower() == "x":
+            break
+        if len(sub) == 4 and sub.isalpha():
+            return sub.title()
+    return _LANG_DEFAULT_SCRIPT.get(parts[0].lower())
+
+
 def _source_vernacular_ids(source):
     """``set`` of the SOURCE project's vernacular WS Ids, or ``None`` when
     it cannot be determined (never raises)."""
@@ -971,16 +1043,27 @@ def _owner_ids(owner_obj) -> tuple:
         return "", ""
     label = ""
     for attr in ("Name", "Gloss", "HeadWord", "ShortName"):
-        val = getattr(owner_obj, attr, None)
-        if val is None:
+        # Issue #176: `getattr(..., default)` only swallows AttributeError; a
+        # property raising anything else must not abort the whole reference.
+        try:
+            val = getattr(owner_obj, attr, None)
+            if val is None:
+                continue
+            if isinstance(val, str):
+                label = val
+            else:
+                label = next((t for t in _multistring_dict(val).values() if t), "")
+        except Exception as exc:
+            _log.warning("_owner_ids: reading %s failed: %r", attr, exc)
             continue
-        if isinstance(val, str):
-            label = val
-        else:
-            label = next((t for t in _multistring_dict(val).values() if t), "")
         if label:
             break
-    return _guid_str(owner_obj), label
+    try:
+        guid = _guid_str(owner_obj)
+    except Exception as exc:
+        _log.warning("_owner_ids: guid read failed: %r", exc)
+        guid = ""
+    return guid, label
 
 
 def _wrap_plain_text(text, ops, target_ws_by_id: dict) -> dict:
@@ -1404,13 +1487,21 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                             # vernacular (vernacular text under an analysis WS
                             # is misleading). Otherwise keep the plain drops
                             # and leave the field empty (issue #129 follow-up).
-                            best_src_id, best_text = next(
-                                ((k, t) for k, t in src_id_keyed.items() if t),
-                                (None, ""))
+                            # Issue #176: same alternative `_best_text` picks;
+                            # `best_src_id` is None for an unresolved handle
+                            # (unknown WS) -> never relocated.
+                            best_src_id, best_text = _best_alt(
+                                field_ms, source_handle_to_id)
                             dest_id = _default_analysis_ws_id(ops, target_ws_by_id)
                             if (best_text and dest_id is not None
+                                    and best_src_id is not None
                                     and source_vern_ids is not None
-                                    and best_src_id not in source_vern_ids):
+                                    and best_src_id not in source_vern_ids
+                                    # Issue #175: only relocate within one
+                                    # script; unknown script -> skip.
+                                    and _ws_script(best_src_id) is not None
+                                    and _ws_script(best_src_id)
+                                    == _ws_script(dest_id)):
                                 field_props = {dest_id: best_text}
                                 item_relocations.append(DroppedItemRecord(
                                     owner_kind=spec.owner_class,

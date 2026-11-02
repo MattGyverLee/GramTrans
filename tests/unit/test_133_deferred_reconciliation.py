@@ -194,6 +194,45 @@ def test_unresolvable_target_pos_for_a_deferred_pair_is_a_named_drop():
     assert "could not resolve the target part of speech" in drops[0].reason
 
 
+def _lost_pair_buckets(ctx):
+    """Where each lost pair was reported: (skips naming it, drops naming it)."""
+    skips = [s for s in ctx._exec_skips
+             if s.source_guid in ("pos-num", "feat-1")]
+    return skips, _infl_drops(ctx)
+
+
+def test_unresolved_pos_pair_is_in_exactly_one_bucket():
+    """Issue #170: a lost pair is a drop, not also a per-POS Skip."""
+    ctx, target, _created = _created_pos_chain()
+    target._objects.pop("pos-num")
+    target.POS = base._FakeOps([])
+    transfer._ensure_infl_feature_links(ctx, target, None, ctx._exec_skips)
+    skips, drops = _lost_pair_buckets(ctx)
+    assert [d.item_guid for d in drops] == ["feat-1"]
+    assert skips == []
+
+
+def test_unavailable_feats_rc_pair_is_in_exactly_one_bucket():
+    """Issue #170: same, when the target POS has no InflectableFeatsRC."""
+    ctx, target, created = _created_pos_chain()
+    del created.InflectableFeatsRC
+    transfer._ensure_infl_feature_links(ctx, target, None, ctx._exec_skips)
+    skips, drops = _lost_pair_buckets(ctx)
+    assert [d.item_guid for d in drops] == ["feat-1"]
+    assert skips == []
+
+
+def test_unresolved_pos_without_drop_collector_still_skips():
+    """Issue #170: with no collector the Skip is the only report."""
+    ctx, target, _created = _created_pos_chain()
+    target._objects.pop("pos-num")
+    target.POS = base._FakeOps([])
+    skips = categories._run_infl_feature_link_pass(
+        SimpleNamespace(_run_plan=ctx._run_plan, _dropped=None), target)
+    assert len(skips) == 1
+    assert skips[0].reason is SkipReason.DEPENDENCY_UNRESOLVED
+
+
 def test_reconciliation_is_idempotent():
     ctx, target, _created = _created_pos_chain(in_link_map=False)
     categories._reconcile_deferred_infl_pairs(ctx)

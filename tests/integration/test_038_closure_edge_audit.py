@@ -276,7 +276,9 @@ _REGISTERED = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE", "SLOT_TO_POS",
                # Issue #67. EXCEPTION_FEATURE_TO_POS is measured but NOT here:
                # NO_DATA on every corpus, so FR-018 forbids registering it.
                "STEM_NAME_TO_POS", "INFLECTION_CLASS_TO_POS",
-               "POS_INFLECTABLE_FEAT_TO_POS")
+               "POS_INFLECTABLE_FEAT_TO_POS",
+               # Issue #109.
+               "INFLECTION_FEATURE_TO_STRUCT_TYPE")
 #: Relationships the audit REFUSES. Empty since T089, and deliberately kept
 #: as a name rather than deleted: it is the list a future refusal goes on, and
 #: the tests below still enforce that everything on it stays out of the
@@ -350,6 +352,8 @@ _MIN_CONFIRMING_CORPORA = {
     "INFLECTION_CLASS_TO_POS": 1,
     # All three corpora hold InflectableFeatsRC entries.
     "POS_INFLECTABLE_FEAT_TO_POS": 3,
+    # Issue #109. All three corpora hold complex features with a TypeRA.
+    "INFLECTION_FEATURE_TO_STRUCT_TYPE": 3,
 }
 
 #: Measured and deliberately NOT registered (issue #67): NO_DATA on every
@@ -616,6 +620,7 @@ def test_each_relationship_was_measured_over_its_own_source_category(snap) -> No
         "INFLECTION_CLASS_TO_POS": ("inflection_classes", None),
         "EXCEPTION_FEATURE_TO_POS": ("exception_features", None),
         "POS_INFLECTABLE_FEAT_TO_POS": ("pos_inflectable_feats", None),
+        "INFLECTION_FEATURE_TO_STRUCT_TYPE": ("inflection_features", None),
     }
     assert set(expected) == set(snap["relationships"]), (
         "a relationship was added to or removed from the audit without this "
@@ -1917,8 +1922,8 @@ def test_t089_was_measured_with_the_row_still_unregistered() -> None:
     # they are subtracted for the same reason T104's row is.
     assert set(prod["registered"]) == set(_REGISTERED) - {
         "MSA_TO_INFL_FEATURE", "STEM_NAME_TO_POS", "INFLECTION_CLASS_TO_POS",
-        "POS_INFLECTABLE_FEAT_TO_POS"}
-    assert len(prod["registered"]) == len(_REGISTERED) - 4  # T104 + #67 rows
+        "POS_INFLECTABLE_FEAT_TO_POS", "INFLECTION_FEATURE_TO_STRUCT_TYPE"}
+    assert len(prod["registered"]) == len(_REGISTERED) - 5  # T104 + #67 + #109 rows
     assert prod["axis"].startswith("categories._value_defn_ref")
 
 

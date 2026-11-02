@@ -88,6 +88,7 @@ if __package__:
     )
     from .residue import ImportResidueTag, strip_residue_text
     from . import matcher as _matcher
+    from .lcm_unwrap import unwrap as _shared_unwrap
     from .models import MatchBasis as _MatchBasis
 else:
     from models import (  # type: ignore
@@ -122,6 +123,7 @@ else:
     )
     from residue import ImportResidueTag, strip_residue_text  # type: ignore
     import matcher as _matcher  # type: ignore
+    from lcm_unwrap import unwrap as _shared_unwrap  # type: ignore
     from models import MatchBasis as _MatchBasis  # type: ignore
 
 
@@ -268,15 +270,16 @@ _FEAT_STRUC_MAX_DEPTH = 8
 
 
 def _unwrap_lcm(obj):
-    """The LCM object behind a flexicon wrapper (`._obj`), else `obj` itself.
+    """The LCM object behind a flexicon wrapper, else `obj` itself (#173).
+
+    Delegates to `lcm_unwrap.unwrap` (`.concrete` -> `_concrete` -> `_obj`).
 
     `*_enumerate_source` yields raw LCM objects for some categories and
     flexicon `RuleCollection`-style wrappers for others (see `_guid_str_from`'s
     branch 2). A wrapper does not forward `Cache` or the typed `Fs*` members,
     so unwrap before any structural `getattr`.
     """
-    inner = getattr(obj, "_obj", None)
-    return obj if inner is None else inner
+    return _shared_unwrap(obj)
 
 
 def _cast_to_concrete(obj):
@@ -791,6 +794,24 @@ def _compare_pos_owned_collections(piece, tgt_obj, context):
             dropped_records=(),
         ))
     return tuple(rows)
+
+
+def project_created_pos_children(src_pos, context):
+    """Issue #126 (Principle III): the owned children Move will create under a
+    POS this run ADDs, as `tuple[EnrichedCollection, ...]`.
+
+    A created POS has no target counterpart, so this is
+    `_compare_pos_owned_collections` against an EMPTY destination, minus what
+    `transfer._fill_created_pos_collections` does not create: the
+    `InflectableFeatsRC` reference collection (written by the single
+    feature-link writer and previewed by `render_feature_category_links`).
+    Rows that would add nothing are dropped, exactly as the fill drops them,
+    so Preview rows and Move rows compare field for field.
+    """
+    return tuple(
+        r for r in _compare_pos_owned_collections(src_pos, None, context)
+        if r.added and r.field_name != "InflectableFeatsRC"
+    )
 
 
 def _lcm_class_for_category(category) -> str:
@@ -1489,7 +1510,10 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
 # swallowed TypeError before the 1-arg path ran anyway.
 
 def inflection_features_enumerate_source(context: RunContext, selection: Selection):
-    """Walk source.InflectionFeatures.FeatureGetAll()."""
+    """Walk source.InflectionFeatures.FeatureGetAll().
+
+    Deliberately NOT filtered by `leaf_picks_for(INFLECTION_FEATURES)`; see the
+    "PICKS ASYMMETRY" note in `_stash_complex_feature_type_ref` (issue #139)."""
     source = context.source_handle
     if not hasattr(source, "InflectionFeatures"):
         return ()
@@ -1507,6 +1531,23 @@ def inflection_features_dependencies(piece):
     # Values are co-created in execute_action, not separately planned.
     # Return empty here — the execute step handles value creation atomically.
     return ()
+
+
+def inflection_features_type_dependencies(piece):
+    """NARROW producer for `DependencyKind.INFLECTION_FEATURE_TO_STRUCT_TYPE`
+    (issue #109): `(FEATURE_STRUCT_TYPES, type_guid)` for a complex feature
+    whose `TypeRA` is set; nothing for any other feature class.
+
+    CAST DISCIPLINE: `FeatureGetAll()` yields base `IFsFeatDefn` proxies, on
+    which the complex-only `TypeRA` is invisible until cast."""
+    raw = _unwrap_lcm(piece)
+    if getattr(raw, "ClassName", None) != "FsComplexFeature":
+        return ()
+    src_type = getattr(_cast_lcm(raw, "IFsComplexFeature"), "TypeRA", None)
+    type_guid = _guid_str_from(src_type) if src_type is not None else ""
+    if not type_guid:
+        return ()
+    return ((GrammarCategory.FEATURE_STRUCT_TYPES, type_guid),)
 
 
 def inflection_features_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
@@ -1687,8 +1728,9 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
       already exists (issue #110 -- a second writer here made the tail see
       ALREADY_WIRED, so Move reported fewer writes than Preview's Wire rows).
       No ValuesOC loop -- complex features have no symbolic values.
-    - "FsOpenFeature": documented clean skip (Skip(NEEDS_MANUAL)) -- open
-      features have no closed value set to sync; no crash, no orphan.
+    - "FsOpenFeature": created via IFsOpenFeatureFactory (issue #29);
+      Name/Abbreviation/Description plus WritingSystem (WS-mapped) and
+      WsSelector. No values, no TypeRA.
 
     Feature 038 (T035) -- FACTORY CALL ORDER. All three Fs* creates below
     (IFsComplexFeature, IFsClosedFeature, IFsSymFeatVal) call the CONCRETE
@@ -1818,26 +1860,67 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
         return new_feat
 
     # ------------------------------------------------------------
-    # OPEN FEATURE branch -- documented clean skip; no crash, no orphan.
-    # Open features have no closed value set to sync.
+    # OPEN FEATURE branch (issue #29). IFsOpenFeature adds only
+    # WritingSystem (string) and WsSelector (int) over IFsFeatDefn; it has
+    # no closed value set and no TypeRA. flexicon has no wrapper for
+    # IFsOpenFeatureFactory, so the LCM factory is used directly, with the
+    # same 1-arg Create(Guid) then Add() order as the other Fs* creates.
     # ------------------------------------------------------------
     if src_class == "FsOpenFeature":
-        import logging as _logging
-        _logging.getLogger("gramtrans.Lib.categories").info(
-            "inflection_features_execute_action: FsOpenFeature has no "
-            "closed value set to sync -- skipping guid=%s", src_guid,
-        )
-        exec_skips = getattr(context, "_exec_skips", None)
-        if exec_skips is not None:
-            exec_skips.append(Skip(
-                category=GrammarCategory.INFLECTION_FEATURES,
-                source_guid=src_guid,
-                reason=SkipReason.NEEDS_MANUAL,
-                detail=(f"source feature {src_guid} is FsOpenFeature; open "
-                        "inflection features have no closed value set and "
-                        "are not supported by this transfer path"),
-            ))
-        return ActionOutcome.skipped("open/complex feature not supported on this path (reported via exec_skips)", skip_reason=SkipReason.NEEDS_MANUAL, recorded=exec_skips is not None)
+        try:
+            from SIL.LCModel import IFsOpenFeatureFactory, IFsOpenFeature
+        except Exception as _imp_exc:  # noqa: BLE001 -- offline/older LCM build
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "inflection_features_execute_action: IFsOpenFeatureFactory "
+                "not importable -- skipping open feature guid=%s: %s",
+                src_guid, _imp_exc, exc_info=True,
+            )
+            exec_skips = getattr(context, "_exec_skips", None)
+            if exec_skips is not None:
+                exec_skips.append(Skip(
+                    category=GrammarCategory.INFLECTION_FEATURES,
+                    source_guid=src_guid,
+                    reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+                    detail=(f"IFsOpenFeatureFactory not importable on this "
+                            f"LCM build; cannot create open feature {src_guid}"),
+                ))
+            return ActionOutcome.skipped("IFsOpenFeatureFactory not importable on this LCM build", skip_reason=SkipReason.UNSUPPORTED_LCM_TYPE, recorded=exec_skips is not None)
+
+        open_factory = sl.GetService(IFsOpenFeatureFactory)
+        try:
+            new_feat_raw = open_factory.Create(parsed_guid)
+        except Exception as e:
+            raise _create_guid_failure(
+                "IFsOpenFeatureFactory", src_guid, e,
+                detail="(open feature)",
+            ) from e
+        _safe_add_to_owner(new_feat_raw, feature_system.FeaturesOC,
+                           "IFsOpenFeatureFactory", src_guid)
+
+        new_feat = IFsOpenFeature(new_feat_raw)
+        src_feat_typed = IFsOpenFeature(src_feat)
+
+        try:
+            src_props = source.InflectionFeatures.GetSyncableProperties(src_feat_typed)
+            target.InflectionFeatures.ApplySyncableProperties(
+                new_feat, src_props, ws_map=ws_map)
+        except Exception:
+            _copy_multistrings_ws_mapped(
+                src_feat_typed, new_feat, ("Name", "Abbreviation", "Description"),
+                source=source, target=target, ws_map=ws_map)
+
+        # Open-feature-specific scalars. WritingSystem is a WS id string:
+        # translate it through the WS mapping when one exists.
+        src_ws = getattr(src_feat_typed, "WritingSystem", None)
+        if src_ws:
+            new_feat.WritingSystem = ws_map.get(src_ws, src_ws) if ws_map else src_ws
+        src_sel = getattr(src_feat_typed, "WsSelector", None)
+        if src_sel is not None:
+            new_feat.WsSelector = src_sel
+
+        apply_carrier_b(new_feat, ws, tag)
+        return new_feat
 
     # ------------------------------------------------------------
     # CLOSED FEATURE branch (default / existing GOLD working path).
@@ -1995,6 +2078,14 @@ def _stash_complex_feature_type_ref(piece, context):
     feat_guid = _guid_str_from(piece)
     if not feat_guid:
         return
+    # PICKS ASYMMETRY (issue #139, latent): this stash honours an
+    # INFLECTION_FEATURES leaf-pick subset, but `inflection_features_enumerate_source`
+    # does NOT filter by picks. Nothing produces such picks today (selection.py
+    # / ui/ never write INFLECTION_FEATURES into `leaf_item_picks`), so the two
+    # agree. If picks are ever produced, a feature created outside them (e.g.
+    # pulled in by closure) would get no TypeRA edge from the tail. Change the
+    # stash and the enumerator TOGETHER; `test_picks_asymmetry_is_pinned`
+    # fails when either side moves alone.
     selection = getattr(context, "_selection", None)
     if selection is not None:
         try:
@@ -2068,6 +2159,35 @@ def _classify_complex_type_ra(target, feat_guid, type_guid, *,
     return (TYPE_RA_WIRE, tgt_feat, tgt_type, "")
 
 
+def _derive_complex_feature_type_refs(context):
+    """Fallback for plans not built by `build_run_plan` (issue #139):
+    `{complex_feature_guid: struct_type_guid}` read straight from the source for
+    every INFLECTION_FEATURES action in `context._run_plan`. Never raises;
+    returns `{}` when the source or plan cannot be read."""
+    plan = getattr(context, "_run_plan", None)
+    source = getattr(context, "source_handle", None)
+    if plan is None or not hasattr(source, "InflectionFeatures"):
+        return {}
+    wanted = {str(a.source_guid).lower()
+              for a in (getattr(plan, "actions", ()) or ())
+              if a.category == GrammarCategory.INFLECTION_FEATURES}
+    if not wanted:
+        return {}
+    out = {}
+    try:
+        for piece in source.InflectionFeatures.FeatureGetAll():
+            guid = _guid_str_from(piece)
+            if not guid or str(guid).lower() not in wanted:
+                continue
+            scratch = {}
+            holder = type("_Scratch", (), {"_complex_feature_type_refs": scratch})()
+            _stash_complex_feature_type_ref(piece, holder)
+            out.update(scratch)
+    except Exception:  # noqa: BLE001 -- fallback must never break Move
+        return {}
+    return out
+
+
 def _run_complex_feature_type_ra_pass(context, target, tag=None):
     """Wire `IFsComplexFeature.TypeRA` from `plan.complex_feature_type_refs`
     once every feature and struct-type of the run exists (issue #37).
@@ -2080,6 +2200,13 @@ def _run_complex_feature_type_ra_pass(context, target, tag=None):
     import logging as _logging
     log = _logging.getLogger("gramtrans.Lib.categories")
     refs = _binding_map(context, "complex_feature_type_refs") or {}
+    if not refs:
+        # A plan assembled by hand rather than by `build_run_plan` carries no
+        # gathered edges (issue #139). Derive them from the source for the
+        # INFLECTION_FEATURES actions the plan does carry, so TypeRA is not
+        # left null. A `build_run_plan` plan with no complex features derives
+        # nothing, so this is inert for production plans.
+        refs = _derive_complex_feature_type_refs(context)
     skips = []
     writes = 0
     for feat_guid in sorted(refs):
@@ -2107,6 +2234,16 @@ def _run_complex_feature_type_ra_pass(context, target, tag=None):
         object.__setattr__(context, "_complex_type_ra_writes", writes)
     except (AttributeError, TypeError):
         pass
+    # Runtime Preview-vs-Move check (issue #139). Preview recorded how many
+    # "Wire" rows it showed; a different number of writes means the two
+    # diverged (a second writer, or the target changed between Preview and
+    # Move). Warn rather than raise: the data is not at risk, the report is.
+    expected = getattr(getattr(context, "_run_plan", None),
+                       "expected_type_ra_writes", None)
+    if expected is not None and expected != writes:
+        log.warning(
+            "complex-feature TypeRA: Preview promised %d Wire row(s) but Move "
+            "wrote %d", expected, writes)
     return skips
 
 
@@ -3488,19 +3625,40 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                     writes += 1
                     log.info("struct-type %s: FeaturesRS repaired, inserted "
                              "%s", type_guid, inserted)
-            if dropped is not None:
-                for g, label in unresolved:
+            if unresolved:
+                for g, _label in unresolved:
                     log.warning("struct-type %s: FeaturesRS member %s has no "
                                 "target defn in %s.FeaturesOC -- reported as "
                                 "dropped", type_guid, g, attr)
-                    _append_dropped_once(
-                        dropped, _features_rs_drop(type_guid, ref, g, label))
-            for g in target_only:
+                if dropped is not None:
+                    for g, label in unresolved:
+                        _append_dropped_once(
+                            dropped,
+                            _features_rs_drop(type_guid, ref, g, label))
+                else:
+                    # No drop sink on this context: a log line alone would let
+                    # Preview show drops the Move report never mentions.
+                    # Surface them as ONE Skip per type instead (issue #138).
+                    skips.append(Skip(
+                        category=types_cat, source_guid=type_guid,
+                        reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                        detail=(f"struct-type {type_guid} FeaturesRS: "
+                                f"{len(unresolved)} member feature "
+                                f"definition(s) not in the target {attr}."
+                                f"FeaturesOC ("
+                                f"{', '.join(g for g, _ in unresolved)}); "
+                                "FeaturesRS left incomplete"),
+                    ))
+            if target_only:
+                # One Skip per type, not per member (issue #138): a target-only
+                # member is re-reported on every in-scope run, so per-member
+                # rows drown the report.
                 skips.append(Skip(
                     category=types_cat, source_guid=type_guid,
                     reason=SkipReason.NEEDS_MANUAL,
                     detail=(f"target struct-type {type_guid} FeaturesRS holds "
-                            f"{g}, which the source type does not; preserved, "
+                            f"{len(target_only)} member(s) the source type "
+                            f"does not ({', '.join(target_only)}); preserved, "
                             "not removed (review manually)"),
                 ))
         except Exception as exc:  # noqa: BLE001 -- one bad type must not abort
@@ -3548,7 +3706,7 @@ def pos_inflectable_feats_enumerate_source(context: RunContext, selection: Selec
     source = context.source_handle
     results = []
     for pos in _iter_pos(source):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         pos_guid = _guid_str_from(concrete)
         # Issue #58: cast OUTSIDE the read's try, with a duck fallback
         # (`_as_pos`). A cast inside the try silently dropped every fake POS
@@ -3602,7 +3760,7 @@ def pos_inflectable_feats_plan_action(piece, context: RunContext, ws_mapping: WS
     # Check whether the target POS already has this feature defn wired.
     target = context.target_handle
     for pos in _iter_pos(target):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         if _guid_str_from(concrete) != pos_guid:
             continue
         pos_obj_tgt = _as_pos(concrete)  # #58: duck fallback, cast outside try
@@ -3789,7 +3947,7 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
     src_owner_pos = None
     src_owner_pos_guid = None
     for pos in source.POS.GetAll(recursive=True):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         pos_obj = _as_pos(concrete)  # #58: duck fallback, cast outside try
         try:
             for sn in pos_obj.StemNamesOC:
@@ -3872,7 +4030,7 @@ def exception_features_enumerate_source(context: RunContext, selection: Selectio
         return ()
     results = []
     for pos in source.POS.GetAll(recursive=True):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         pos_obj = _as_pos(concrete)  # #58: duck fallback, cast outside try
         try:
             for val in pos_obj.ExceptionFeaturesOC:
@@ -4729,7 +4887,7 @@ def _rule_subclass_info(obj):
     Raises RuntimeError loudly for any unrecognised ClassName (FR-006/SC-008).
     """
     # Unwrap flexicon wrapper if present
-    concrete = getattr(obj, "concrete", obj)
+    concrete = _shared_unwrap(obj)
     try:
         from SIL.LCModel import (
             ICmObject,
@@ -4903,7 +5061,7 @@ def _rules_enumerate_all(source):
     # LCM object to its concrete subclass so subclass-only slots are visible
     # (base-interface-typed OS/OC elements hide them — see _cast_rule_concrete).
     def _unwrap(obj):
-        return _cast_rule_concrete(getattr(obj, "concrete", obj))
+        return _cast_rule_concrete(_shared_unwrap(obj))
 
     # Recurse into an adhoc collection (list-like or OS)
     def _recurse_adhoc(coll):
@@ -5029,7 +5187,7 @@ def adhoc_compound_rules_dependencies(piece):
     # ExcludedLossy warnings, so while it read nothing, a rule referencing a
     # morpheme absent from the target transferred with NO warning -- a silent
     # incompleteness Principle I forbids.
-    concrete = _cast_to_concrete(getattr(piece, "concrete", piece))
+    concrete = _cast_to_concrete(_shared_unwrap(piece))
 
     def _pos_guid_from_msa(msa):
         """Return normalized POS GUID from an owned IMoStemMsa, or None."""
@@ -5587,7 +5745,7 @@ def _as_pos(pos):
     """Unwrap a flexicon wrapper (`.concrete`) and cast to IPartOfSpeech when
     a live LCM host is present; otherwise return the concrete/duck object so
     callbacks run host-free."""
-    concrete = pos.concrete if hasattr(pos, "concrete") else pos
+    concrete = _shared_unwrap(pos)
     try:
         from SIL.LCModel import IPartOfSpeech
         return IPartOfSpeech(concrete)
@@ -6133,6 +6291,32 @@ def target_has_pos_create_infra(target) -> bool:
     return _get_pos_factory(target) is not None
 
 
+def stash_feature_links_for_creatable_pos(context, src_pos, _seen=None) -> None:
+    """Issue #172, Preview twin of the stash in `resolve_or_create_target_pos`
+    (G6): record the source InflectableFeatsRC links of `src_pos` AND of every
+    ancestor POS that Move would have to create with it, so the plan's
+    `feature_category_links` -- what Preview renders -- already names the pairs
+    Move will link. Identity/natural-key present POS are skipped (Move creates
+    nothing there). Idempotent; read-only on the target; never raises."""
+    try:
+        _seen = _seen if _seen is not None else set()
+        pos_guid = _guid_str_from(src_pos)
+        if not pos_guid or pos_guid in _seen:
+            return
+        _seen.add(pos_guid)
+        target = getattr(context, "target_handle", None)
+        if _resolve_target_pos(
+                target, pos_guid, src_pos=src_pos,
+                source_handle=getattr(context, "source_handle", None)) is not None:
+            return
+        _stash_feature_category_links(src_pos, context)
+        owner = getattr(src_pos, "Owner", None)
+        if _owner_is_pos(owner):
+            stash_feature_links_for_creatable_pos(context, owner, _seen)
+    except Exception:  # noqa: BLE001 -- planning bookkeeping, never fatal
+        pass
+
+
 def _guid_arg_for_create(guid_str: str):
     """`.NET Guid` for a factory `.Create(guid, owner)` call, falling back to
     the raw string host-free (matches `owned._guid_for_create`)."""
@@ -6225,6 +6409,18 @@ def resolve_or_create_target_pos(context, src_pos, ws_mapping, tag, _seen=None):
     except Exception:
         return None
     _sync_pos_properties(context, new_pos, src_pos, ws_mapping, tag)
+    # Issue #172: a POS created HERE (dependency closure: an owner/parent of a
+    # picked item, or a POS an allomorph's MsEnvPartOfSpeechRA needs) never
+    # went through `_plan_pos_piece`, so its source InflectableFeatsRC was
+    # never stashed and every (POS, feature) pair was reported as a drop.
+    # Stash it now; the single link pass (`_run_infl_feature_link_pass`, run
+    # post-loop) links to features that already exist in the target and
+    # creates/edits no feature. Runs per created POS, so each ancestor made by
+    # the recursion above is covered too. Never raises (best-effort bookkeeping).
+    try:
+        _stash_feature_category_links(src_pos, context)
+    except Exception:  # noqa: BLE001 -- must not undo a successful create
+        pass
     return new_pos
 
 
@@ -7031,6 +7227,9 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         # before Move writes.
         records.extend(_plan_entryref_type_decisions(
             src_entry, target, resolver_cache, dropped, source=source))
+        # Issue #127: Update rows for refs already on the target.
+        records.extend(_plan_entryref_update_decisions(
+            src_entry, context, target))
         # Feature 024 (T031, US3, FR-008): register the entry into
         # `ctx._copy_set` (the SAME convention `owned.py`'s APR gate uses --
         # `True` is a placeholder marker, Preview never needs a real target
@@ -7303,6 +7502,12 @@ _LEXREF_TYPE_PENDING_KEY = "__categories_lexreftype_pending__"
 # `_LEXREF_TYPE_PENDING_KEY`, so it never collides with the relation caches.
 _LEXREF_TYPE_CREATED_KEY = "__categories_lexreftype_created__"
 
+# Issue #185: set the first time `reproduce_all_lexical_relations` runs against
+# a given `resolver_cache`; a second call raises. The end-of-run sweep deletes
+# an empty lazily-created type, and a later call that re-created that type
+# with the same GUID in the same unit of work loses the object (live, #163).
+_LEXREL_ALL_RAN_KEY = "__categories_lexrel_all_ran__"
+
 
 def _lex_ref_type_label(lex_ref_type) -> str:
     """A human-readable name for a `LexRefType` (`Specific`, `Synonyms`,
@@ -7485,7 +7690,7 @@ def _target_lex_ref_types(target):
     return types, by_guid
 
 
-def _create_target_lex_ref_type(source_type, ctx, dropped):
+def _create_target_lex_ref_type(source_type, ctx, dropped, *, record_failure=True):
     """Create the destination counterpart of `source_type` -- the second half
     of T123's closing ruling, and the leg REACHED ONLY when the natural key
     found nothing.
@@ -7536,16 +7741,17 @@ def _create_target_lex_ref_type(source_type, ctx, dropped):
             "_create_target_lex_ref_type: create failed for %s: %s",
             type_guid, exc, exc_info=True,
         )
-        _append_dropped_once(dropped, DroppedItemRecord(
-            owner_kind="LexRefType",
-            owner_guid=type_guid,
-            owner_label=_lex_ref_type_label(source_type),
-            field_name="MembersOC",
-            item_name=_lex_ref_type_label(source_type),
-            item_guid=type_guid,
-            reason=(f"lexical relation type absent from target and could not "
-                    f"be created: {type(exc).__name__}"),
-        ))
+        if record_failure:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexRefType",
+                owner_guid=type_guid,
+                owner_label=_lex_ref_type_label(source_type),
+                field_name="MembersOC",
+                item_name=_lex_ref_type_label(source_type),
+                item_guid=type_guid,
+                reason=(f"lexical relation type absent from target and could not "
+                        f"be created: {type(exc).__name__}"),
+            ))
         return None
 
     typed = _as_lex_ref_type(new_type) or new_type
@@ -7571,8 +7777,7 @@ def _create_target_lex_ref_type(source_type, ctx, dropped):
 
 
 def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
-                                 ctx=None, plan_time=False,
-                                 allow_create=False, dropped=None):
+                                 ctx=None, plan_time=False, dropped=None):
     """Resolve the target `ILexRefType` whose GUID is `type_guid` off
     `target.Cache.LangProject.LexDbOA.ReferencesOA` (an `ICmPossibilityList`
     of relation TYPES -- possibility-list-shaped, so this reuses
@@ -7628,18 +7833,16 @@ def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
          overlap. AMBIGUITY IS NOT A PICK -- two destination types sharing one
          key leaves the relation unresolved with a reason, never a guess,
          exactly as `_resolve_scoped_referent` treats an ambiguous roster key.
-      4. **CREATE** (`_create_target_lex_ref_type`), and ONLY when leg 3 found
-         nothing -- i.e. a source type genuinely absent from the destination.
-         Reachable only with `allow_create`; at plan time it is predicted
-         as `PLAN_TIME_PENDING` instead, so Preview neither writes nor
-         over-reports a loss Move will not take. Issue #163:
-         `_evaluate_lexical_relation` calls this in predict mode in BOTH
-         modes and creates the type itself, after the structural guards, so
-         a type whose relations all drop is never created.
+      4. **CREATE** is NOT performed here. At plan time leg 4 is predicted as
+         `PLAN_TIME_PENDING` when leg 3 found nothing and `type_guid` is
+         non-empty; Move performs the actual create via
+         `_create_target_lex_ref_type` inside `_evaluate_lexical_relation`
+         only after structural guards pass (issue #163). Issue #187 removed
+         the obsolete `allow_create` keyword that duplicated that path.
 
-    **WHY 3 BEFORE 4 IS THE LOAD-BEARING HALF.** Create-first would mint a
-    second copy of all 7 FLEx default relation types on every pair, every run.
-    The key leg is what makes the create leg safe to have at all.
+    **WHY 3 BEFORE CREATE IS THE LOAD-BEARING HALF.** Create-first would mint
+    a second copy of all 7 FLEx default relation types on every pair, every
+    run. The key leg is what makes the lazy create safe to have at all.
 
     Backwards compatible: called with two positional arguments this is exactly
     the GUID-only lookup it was, because every fallback leg is gated on a
@@ -7714,7 +7917,7 @@ def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
             ))
             return None
 
-    # LEG 4 -- create, reachable only now.
+    # LEG 4 -- predict-only here; Move creates via `_evaluate_lexical_relation`.
     if plan_time:
         # Predicted only when Move could really take the leg: a source type
         # with no GUID cannot be created GUID-preservingly, and predicting a
@@ -7722,14 +7925,7 @@ def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
         # loss -- the one direction `_process_referent_will_be_created`'s
         # docstring names as the failure that must not happen.
         return PLAN_TIME_PENDING if type_guid else None
-    if not allow_create or ctx is None:
-        return None
-    if dropped is None:
-        raise ValueError(
-            "_resolve_target_lex_ref_type: allow_create requires a real "
-            "`dropped` list -- a create failure must be reported, not "
-            "silently discarded")
-    return _create_target_lex_ref_type(source_type, ctx, dropped)
+    return None
 
 
 def _append_type_not_found(dropped, source_type, type_guid, rel_guid):
@@ -7869,7 +8065,7 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
     # (Preview) only after the structural guards below have passed.
     target_type = _resolve_target_lex_ref_type(
         target, type_guid, source_type=source_type, ctx=ctx,
-        plan_time=True, allow_create=False, dropped=dropped,
+        plan_time=True, dropped=dropped,
     )
     if target_type is None:
         _append_type_not_found(dropped, source_type, type_guid, rel_guid)
@@ -7960,18 +8156,11 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
                     type_guid, _lex_ref_type_label(source_type))
         else:
             target_type = _create_target_lex_ref_type(
-                source_type, ctx, dropped)
+                source_type, ctx, dropped, record_failure=False)
             if target_type is None:
-                # KNOWN P2 (issue #163 QC cycle 1; comment only, behaviour
-                # deliberately unchanged): when the type create ITSELF fails
-                # here, Move emits TWO records for one loss --
-                # `_create_target_lex_ref_type`'s LexRefType "could not be
-                # created" record (keyed by type_guid) AND
-                # `_append_type_not_found`'s per-relation record (keyed by
-                # rel_guid) -- while Preview, which only records
-                # `pending_types` and never attempts the create, emits NONE
-                # for the same relation. The two modes' drop lists therefore
-                # differ on this (unpredictable, factory-failure) path.
+                # Issue #186: lazy create failure is reported once via
+                # `_append_type_not_found` (per-relation key). The create
+                # helper must not also append its type-keyed record.
                 _append_type_not_found(dropped, source_type, type_guid,
                                        rel_guid)
                 return None
@@ -8027,7 +8216,8 @@ def _rebuild_targets_rs_in_source_order(existing, copied_members) -> None:
         pass
 
 
-def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
+def _discard_empty_lazy_lex_ref_type(target, target_type, created_types,
+                                     dropped=None):
     """Issue #163 (QC cycle 1): undo a lazy type create whose relation then
     failed to be created, so the failure leaves no EMPTY relation type behind.
 
@@ -8047,6 +8237,11 @@ def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
     Fail-soft like `_discard_partial_process_rule`: a delete that raised must
     not replace the relation's reported loss with a crash; it is logged and
     the type is left as it was. Returns True only when the type was deleted.
+
+    Issue #185 (never silent): when `dropped` is given, a successful delete
+    appends an info `DroppedItemRecord` (Preview announced this type as a
+    create; Move did not create it), and a delete that raised appends a
+    warning record (an empty type was left in the target).
     """
     type_guid = _guid_str_from(target_type)
     if not type_guid or created_types.get(type_guid) is None:
@@ -8065,17 +8260,45 @@ def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
             "lexical relation type %s created this run: %s",
             type_guid, exc, exc_info=True,
         )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexRefType",
+                owner_guid=type_guid,
+                owner_label=_lex_ref_type_label(target_type),
+                field_name="MembersOC",
+                item_name=_lex_ref_type_label(target_type),
+                item_guid=type_guid,
+                reason=("lexical relation type created this run has no "
+                        "relations (all failed to create) and could not be "
+                        f"removed; an empty type remains: {type(exc).__name__}"),
+                severity="warning",
+            ))
         return False
     created_types.pop(type_guid, None)
+    if dropped is not None:
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexRefType",
+            owner_guid=type_guid,
+            owner_label=_lex_ref_type_label(target_type),
+            field_name="MembersOC",
+            item_name=_lex_ref_type_label(target_type),
+            item_guid=type_guid,
+            reason=("lexical relation type was not created: none of its "
+                    "relations could be created, so the empty type was "
+                    "removed (Preview announced it as a create)"),
+        ))
     return True
 
 
-def _sweep_empty_lazy_lex_ref_types(target, created_types) -> None:
+def _sweep_empty_lazy_lex_ref_types(target, created_types, dropped=None) -> None:
     """Issue #163: after the relation walk, delete every relation type
     lazily created this run that STILL has no relations (all its relation
-    creates failed). Pre-existing types are never in `created_types`."""
+    creates failed). Pre-existing types are never in `created_types`.
+    Issue #185: each deleted type is reported to `dropped`. Run ONCE per run
+    (`reproduce_all_lexical_relations` enforces it)."""
     for type_guid, target_type in list(created_types.items()):
-        _discard_empty_lazy_lex_ref_type(target, target_type, created_types)
+        _discard_empty_lazy_lex_ref_type(
+            target, target_type, created_types, dropped)
 
 
 def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
@@ -8221,9 +8444,7 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
 
     # Issue #141: name the relation so Preview can show it -- the relation
     # type's label, the same one the drop records use.
-    src_type = getattr(src_relation, "Owner", None)
-    if src_type is not None:
-        src_type = _as_lex_ref_type(src_type) or src_type
+    src_type = _relation_type_of(src_relation)
     record = ReferenceDecisionRecord(
         owner_kind="LexReference",
         owner_guid=rel_guid,
@@ -8231,6 +8452,7 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
         action=ReferenceAction.CREATE,
         item_name=_lex_ref_type_label(src_type),
         item_guid=rel_guid,
+        type_guid=_guid_str_from(src_type) if src_type is not None else "",
     )
     if rel_guid:
         planned[rel_guid] = record
@@ -8280,6 +8502,17 @@ def _as_lex_ref_type(obj):
         return ILexRefType(obj)
     except Exception:
         return None
+
+
+def _relation_type_of(src_relation):
+    """The relation's owning `LexRefType`, cast via `_as_lex_ref_type` (raw
+    `Owner` when no cast is possible), or `None`. Single helper for the
+    Preview planners so the type GUID is derived the same way everywhere
+    (issue #165)."""
+    owner = getattr(src_relation, "Owner", None)
+    if owner is None:
+        return None
+    return _as_lex_ref_type(owner) or owner
 
 
 def _iter_lex_ref_types(ref_list):
@@ -8380,15 +8613,43 @@ def reproduce_all_lexical_relations(context, tag, resolver_cache, dropped):
     there is no other call site left anywhere in the closure walk. Per-
     MappingType structural rulings (pair exactly-2-else-drop-whole, tree
     root=TargetsRS[0], collection/sequence/unidirectional copied-subset) are
-    UNCHANGED."""
+    UNCHANGED.
+
+    Issue #185: the sweep runs in a `finally` so a raising walk still
+    cleans up empty types. The once-per-run rule is enforced at the
+    production call site by `reproduce_all_lexical_relations_once` (this
+    function stays re-callable because unit tests drive it repeatedly over a
+    growing copy_set)."""
     source = context.source_handle
     copy_set = getattr(context, "_copy_set", None) or {}
-    for src_relation in _iter_relations_touching_copy_set(
-            source, copy_set, dropped):
-        reproduce_lexical_relation(src_relation, context, tag, resolver_cache, dropped)
-    _sweep_empty_lazy_lex_ref_types(
-        context.target_handle,
-        resolver_cache.setdefault(_LEXREF_TYPE_CREATED_KEY, {}))
+    try:
+        for src_relation in _iter_relations_touching_copy_set(
+                source, copy_set, dropped):
+            reproduce_lexical_relation(
+                src_relation, context, tag, resolver_cache, dropped)
+    finally:
+        _sweep_empty_lazy_lex_ref_types(
+            context.target_handle,
+            resolver_cache.setdefault(_LEXREF_TYPE_CREATED_KEY, {}),
+            dropped)
+
+
+def reproduce_all_lexical_relations_once(context, tag, resolver_cache, dropped):
+    """Issue #185: the production entry point (`transfer.execute`) for
+    `reproduce_all_lexical_relations`. Enforces that it runs ONCE per run
+    (per `resolver_cache`): the end-of-run sweep deletes empty lazily-created
+    relation types, and a second pass that re-created one with the same GUID
+    in the same unit of work loses the object in LCM (shown live, #163).
+    A second call raises RuntimeError before touching the project."""
+    if resolver_cache.get(_LEXREL_ALL_RAN_KEY):
+        raise RuntimeError(
+            "reproduce_all_lexical_relations ran twice in one run: the "
+            "end-of-run sweep deletes empty lazily-created relation types, "
+            "and re-creating one with the same GUID in the same unit of work "
+            "loses the object (issue #185)")
+    resolver_cache[_LEXREL_ALL_RAN_KEY] = True
+    return reproduce_all_lexical_relations(
+        context, tag, resolver_cache, dropped)
 
 
 def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
@@ -8402,11 +8663,10 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
     Preview/Move-each-get-their-own-resolver_cache convention), so the two
     modes converge on the same relations in, same decisions out. Returns
     the list of `ReferenceDecisionRecord` for every relation that WOULD be
-    reproduced -- callers fold this into `RunPlan`-level bookkeeping
-    (`Lib/preview.py` currently threads reference decisions per-action; this
-    single pass is not owned by any one action, so its records are surfaced
-    via `context._dropped`/a dedicated plan-level collector at the call
-    site rather than one action's `reference_decisions` tuple).
+    reproduced. This single pass is not owned by any one action, so
+    `Lib/preview.py.build_run_plan` folds the list into
+    `RunPlan.lexical_relation_decisions` rather than one action's
+    `reference_decisions` tuple (drops go to `dropped`).
 
     Issue #142: a relation type absent from the target (predicted
     `PLAN_TIME_PENDING`, which Move will CREATE) also yields one
@@ -8427,7 +8687,7 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
             source, copy_set, dropped):
         record = plan_lexical_relation_decision(
             src_relation, context, resolver_cache, dropped)
-        src_type = getattr(src_relation, "Owner", None)
+        src_type = _relation_type_of(src_relation)
         type_guid = _guid_str_from(src_type) if src_type is not None else ""
         if type_guid in pending and type_guid not in announced:
             announced.add(type_guid)
@@ -9294,6 +9554,20 @@ def _wire_subsense_msas(src_parent_sense, src_entry, new_entry, context, tag,
             msa_by_src_guid, dropped, copy_set)
 
 
+def _copy_supplemental_scalars(owner_class, src, new, context, ws_map, dropped,
+                               owner_guid):
+    """Issue #135: copy the text fields flexicon's GetSyncableProperties omits
+    (see `Lib/scalar_fields.py`). Never raises."""
+    if __package__:
+        from .scalar_fields import copy_supplemental_fields
+    else:  # pragma: no cover
+        from scalar_fields import copy_supplemental_fields  # type: ignore
+    copy_supplemental_fields(
+        owner_class, src, new, source=context.source_handle,
+        target=context.target_handle, ws_map=ws_map, dropped=dropped,
+        owner_guid=owner_guid, owner_label=_owner_label_for(owner_class, src))
+
+
 def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     """Atomic owned-child closure write for one LexEntry (E2), shared by
     AFFIXES + STEMS execute_action.
@@ -9366,6 +9640,8 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         target.LexEntry.ApplySyncableProperties(new_entry, props, ws_map=ws_map)
     except (AttributeError, TypeError):
         pass
+    _copy_supplemental_scalars(
+        "LexEntry", src_entry, new_entry, context, ws_map, dropped, src_guid)
     apply_residue(new_entry, ws, tag)
     if in_plan_entries is not None:
         try:
@@ -9442,6 +9718,8 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
             target.Senses.ApplySyncableProperties(new_sense, sprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
+        _copy_supplemental_scalars(
+            "LexSense", src_sense, new_sense, context, ws_map, dropped, s_guid)
         # Feature 024 (T030, US3): sense-owned children -- ExamplesOS (+ each
         # example's TranslationsOC) and recursive sub-senses (Sense.SensesOS,
         # `OwnedObjectSpec.recurse=True`), both via the SAME
@@ -12718,7 +12996,7 @@ def _tss_remap_ws_runs(src_tss, tgt_handle, src_id_by_handle, tgt_handle_by_id,
 
 
 def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
-                                 existing=False):
+                                 existing=False, plan=None):
     """Issue #114: write a LexEntryRef's two VALUE fields -- `HideMinorEntry`
     (Int32) and `Summary` (IMultiString) -- from the per-ref record stashed by
     `_stash_entry_bindings`.
@@ -12743,7 +13021,13 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
     alternative with no target writing system, a raising write, or a write the
     read-back does not show is a `DroppedItemRecord` on the ref -- never
     silent. Returns the list of field labels actually written (for tests and
-    the log)."""
+    the log).
+
+    Issue #127 (Principle III): when `plan` is a list this is the READ-ONLY
+    Preview twin -- the SAME decisions run, but each would-be write is
+    appended to `plan` as `(field_label, old_text, new_text)` instead of
+    written (same labels as the Move return value), so Preview's Update rows
+    equal Move's writes by construction."""
     if __package__:
         from .conflict import _merge_delta
     else:  # pragma: no cover - script-mode import shim
@@ -12773,7 +13057,9 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
                   "HideMinorEntry unreadable on the target (%s: %s)"
                   % (type(exc).__name__, exc))
             do_write = False
-        if do_write:
+        if do_write and plan is not None:
+            plan.append(("HideMinorEntry", str(tgt_hide), str(src_hide)))
+        elif do_write:
             try:
                 target_ref.HideMinorEntry = src_hide
                 back = getattr(target_ref, "HideMinorEntry", None)
@@ -12811,6 +13097,10 @@ def _merge_entryref_value_fields(rec, target_ref, target, ws_map, dropped,
                 _drop("Summary", tgt_ws,
                       "no target writing system for Summary alternative %r "
                       "(mapped from source %r)" % (tgt_ws, src_ws))
+                continue
+            if plan is not None:
+                plan.append(("Summary@%s" % tgt_ws,
+                             str(tgt_alts.get(tgt_ws, "")), str(text)))
                 continue
             try:
                 new_tss = None
@@ -12860,6 +13150,76 @@ def _plan_entryref_type_decisions(src_entry, target, resolver_cache, dropped,
             "LexEntryRef", ref_guid, type_src, target, resolver_cache, dropped,
             skip_fields=type_skip, source=source))
     return records
+
+
+def _plan_entryref_update_decisions(src_entry, context, target):
+    """Issue #127 (Principle III): Preview twin of what Move's INV-1 arm does
+    to a source `LexEntryRef` ALREADY present on the target -- the value merge
+    (`_merge_entryref_value_fields`, run in its read-only `plan` mode) and the
+    C2 link additions (`_run_post_pass_a`: Component/Primary/ShowComplexForms
+    lexemes missing from the existing ref). Returns one UPDATE
+    `ReferenceDecisionRecord` per change, `item_name` = "old -> new" for a
+    value, or the lexeme GUID for a link addition. Read-only."""
+    entry_guid = _guid_str_from(src_entry)
+    recs = (_binding_map(context, "entryref_create_bindings") or {}).get(
+        entry_guid) or ()
+    if not recs:
+        return []
+    remap = getattr(context, "identity_remap", None) or {}
+    target_entry = _resolve_target_by_guid(
+        target, remap.get(entry_guid, entry_guid))
+    if target_entry is None:
+        return []
+    entry_refs = getattr(_cast_lcm(target_entry, "ILexEntry"),
+                         "EntryRefsOS", None)
+    if entry_refs is None:
+        return []
+    existing = {}
+    for r in entry_refs:
+        r_typed = _cast_lcm(r, "ILexEntryRef")
+        existing[_guid_str_from(r_typed)] = r_typed
+    dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
+    ws_map = getattr(context, "_ws_map", None)
+    copy_set = getattr(context, "_copy_set", None) or {}
+    out = []
+    for rec in recs:
+        ref_guid = rec.get("ref_guid")
+        tgt_ref = existing.get(ref_guid) if ref_guid else None
+        if tgt_ref is None:
+            continue  # Move creates it; the create rows cover that
+        changes = []
+        _merge_entryref_value_fields(
+            rec, tgt_ref, target, ws_map, dropped, existing=True, plan=changes)
+        for field, old, new in changes:
+            out.append(ReferenceDecisionRecord(
+                owner_kind="LexEntryRef", owner_guid=ref_guid,
+                field_name=field, action=ReferenceAction.UPDATE,
+                item_name="%s -> %s" % (old, new)))
+        for field, key in (("ComponentLexemesRS", "components"),
+                           ("PrimaryLexemesRS", "primaries"),
+                           ("ShowComplexFormsInRS", "show_complex_forms_in")):
+            seq = getattr(tgt_ref, field, None)
+            if seq is None:
+                continue
+            have = {_guid_str_from(x) for x in seq}
+            for g in rec.get(key) or []:
+                tg = remap.get(g, g)
+                # Move: unresolvable lexemes are Skips, never added; a lexeme
+                # this run creates (in `_copy_set`) is added. LCM's Primary
+                # side effect already puts a primary into ShowComplexFormsIn.
+                if (tg in have
+                        or (field == "ShowComplexFormsInRS"
+                            and g in (rec.get("primaries") or []))
+                        or (_resolve_target_by_guid(target, tg) is None
+                            and g not in copy_set)):
+                    continue
+                out.append(ReferenceDecisionRecord(
+                    owner_kind="LexEntryRef", owner_guid=ref_guid,
+                    field_name=field, action=ReferenceAction.UPDATE,
+                    item_name="add " + g, item_guid=g))
+    return out
 
 
 def _run_entryref_create_pass(context, target, tag=None):
@@ -13300,13 +13660,18 @@ def _run_infl_feature_link_pass(context, target, tag=None):
             if target_pos is None:
                 target_pos = _target_pos_for_source_guid(context, target, pos_guid)
             if target_pos is None:
-                skips.append(Skip(
-                    category=GrammarCategory.GRAM_CATEGORIES,
-                    source_guid=pos_guid,
-                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
-                    detail=(f"pos_guid={pos_guid} not in target after "
-                            "categories+features transfer"),
-                ))
+                # Issue #170: reported ONCE. With a drop collector the unsettled
+                # deferred pairs become DroppedItemRecords in
+                # `_reconcile_deferred_infl_pairs`; a Skip as well would count the
+                # same loss in two outcome buckets.
+                if dropped is None:
+                    skips.append(Skip(
+                        category=GrammarCategory.GRAM_CATEGORIES,
+                        source_guid=pos_guid,
+                        reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                        detail=(f"pos_guid={pos_guid} not in target after "
+                                "categories+features transfer"),
+                    ))
                 continue
             # CAST DISCIPLINE (research.md T004-C): InflectableFeatsRC requires an
             # IPartOfSpeech cast on the live LCM runtime; fakes fall through.
@@ -13318,12 +13683,13 @@ def _run_infl_feature_link_pass(context, target, tag=None):
                 pos_typed = target_pos
             feats_rc = getattr(pos_typed, "InflectableFeatsRC", None)
             if feats_rc is None:
-                skips.append(Skip(
-                    category=GrammarCategory.GRAM_CATEGORIES,
-                    source_guid=pos_guid,
-                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
-                    detail=f"InflectableFeatsRC unavailable on target POS {pos_guid}",
-                ))
+                if dropped is None:  # issue #170: see the unresolved-POS branch
+                    skips.append(Skip(
+                        category=GrammarCategory.GRAM_CATEGORIES,
+                        source_guid=pos_guid,
+                        reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                        detail=f"InflectableFeatsRC unavailable on target POS {pos_guid}",
+                    ))
                 continue
             for feature_guid in feature_guids:
                 target_feat = _resolve_target_by_guid(target, feature_guid)
@@ -13391,13 +13757,6 @@ def _run_infl_feature_link_pass(context, target, tag=None):
                 settled.add(_infl_pair_key(pos_guid, feature_guid))
     finally:
         _flush_infl_link_pass_progress()
-        import sys as _sys
-        if _sys.exc_info()[0] is not None and skips:
-            try:
-                object.__setattr__(
-                    context, "_infl_feature_link_skips_stash", list(skips))
-            except (AttributeError, TypeError):
-                pass
     return skips
 
 
@@ -16302,7 +16661,7 @@ def phonological_rules_dependencies(piece):
     except ImportError:
         return ()
 
-    raw = getattr(piece, "_obj", getattr(piece, "concrete", piece))
+    raw = _shared_unwrap(piece)
     refs: list[str] = []
 
     def _add(obj):
@@ -16531,7 +16890,7 @@ def _build_rule_rc_index(target, phon_data):
             for pos in pos_ops.GetAll():
                 pg = _guid_str_from(pos)
                 if pg:
-                    pos_by_guid[pg] = getattr(pos, "_obj", pos)
+                    pos_by_guid[pg] = _shared_unwrap(pos)
         except (AttributeError, TypeError):
             pass
     prf_list = getattr(phon_data, "PhonRuleFeatsOA", None) if phon_data is not None else None
@@ -16719,7 +17078,7 @@ def _phon_rule_source_projection(context, target):
             for obj in accessor.GetAll():
                 g = _guid_str_from(obj)
                 if g:
-                    out[g] = getattr(obj, "_obj", obj)
+                    out[g] = _shared_unwrap(obj)
         except (AttributeError, TypeError):
             pass
         return out
@@ -16980,8 +17339,8 @@ def phonological_rules_plan_action(piece, context, ws_mapping):
             target_iter = ()
         tgt_wrapped = _find_target_obj_by_guid(target_iter, src_guid)
         if tgt_wrapped is not None:
-            raw_src = getattr(piece, "_obj", piece)
-            raw_tgt = getattr(tgt_wrapped, "_obj", tgt_wrapped)
+            raw_src = _shared_unwrap(piece)
+            raw_tgt = _shared_unwrap(tgt_wrapped)
             # Issue #52: compare the source rule PROJECTED into the target's
             # identity space (see `_phon_rule_source_projection`), not by raw
             # source GUIDs -- otherwise a rule whose references were wired to
@@ -17411,7 +17770,7 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
     for r in source.PhonRules.GetAll():
         if _guid_str_from(r) == src_guid:
             # PhonRules.GetAll() yields flexicon wrappers; unwrap to raw LCM.
-            src_rule = getattr(r, "_obj", r)
+            src_rule = _shared_unwrap(r)
             break
     if src_rule is None:
         return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
@@ -18371,7 +18730,7 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
         tgt_strat_by_guid = {}
         try:
             for ts in target.Strata.GetAll():
-                tgt_strat_by_guid[_guid_str_from(ts)] = getattr(ts, "_obj", ts)
+                tgt_strat_by_guid[_guid_str_from(ts)] = _shared_unwrap(ts)
         except (AttributeError, TypeError):
             pass
         resolved_initial = (
@@ -18421,6 +18780,26 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
     except Exception:
         pass
     return new_rule
+
+
+# LCM PITFALL (issues #47, #163, #189): DELETE THEN SAME-GUID RE-CREATE IN ONE
+# UNIT OF WORK LOSES THE OBJECT.
+#
+# Deleting an LCM object and then creating another object with the SAME GUID
+# inside one unit of work is not safe. Measured live twice:
+#   * #47: a re-created PhSequenceContext / PhSegRuleRHS was persisted with its
+#     PRE-DELETE XML (dangling `objsur` members), see
+#     `_detach_phon_rule_owned_tree`.
+#   * #163: an inline `LexReferences.DeleteType` followed by a lazy re-create of
+#     the type under the source GUID left the target with neither the type nor
+#     its surviving relation. Unit tests and static review both passed that
+#     design; only the live gate caught it.
+# RULES: (1) identity is the GUID, so REUSE or reparent an existing object
+# rather than delete-and-mint; (2) if a discard is unavoidable, it must run
+# where no same-GUID create can follow in the run (e.g. the end-of-run
+# `_sweep_empty_lazy_lex_ref_types`, not inline mid-walk); (3) deleting an
+# object whose GUID will never be created again (a source-absent context, a
+# one-shot rule shell) is fine. Audit of current mid-walk discards: #189.
 
 
 def _delete_pooled_context(pool, ctx):
@@ -18611,7 +18990,7 @@ def _execute_phon_rule_structural_update(overwrite, source, target, report_sink,
     src_rule = None
     for r in source.PhonRules.GetAll():
         if _guid_str_from(r) == src_guid:
-            src_rule = getattr(r, "_obj", r)
+            src_rule = _shared_unwrap(r)
             break
     if src_rule is None:
         report_sink.Warning(
@@ -19368,6 +19747,29 @@ CLOSURE_EDGES_VERIFIED: dict = {
     # of the objects, so read NO_DATA), stated rather than rounded up.
     # EXCEPTION_FEATURES is NOT registered: NO_DATA on every corpus.
     # -----------------------------------------------------------------------
+    # Issue #109 -- complex feature -> its struct type. EXPLICIT
+    # dependency_category (no `(INFLECTION_FEATURES, None)` wildcard).
+    # SELECTION edge only: the walker never reorders dispatch, so
+    # INFLECTION_FEATURES still dispatches before FEATURE_STRUCT_TYPES.
+    DependencyKind.INFLECTION_FEATURE_TO_STRUCT_TYPE: {
+        "category": GrammarCategory.INFLECTION_FEATURES,
+        "producer": inflection_features_type_dependencies,
+        "dependency_category": GrammarCategory.FEATURE_STRUCT_TYPES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-11-01) over "
+            "'Mbugwe Lizzie', 'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.INFLECTION_FEATURE_TO_STRUCT_TYPE = CONFIRMED on "
+            "ALL THREE (4 edges over 4 distinct struct types / 2 over 2 / "
+            "1 over 1, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0, unkeyed_pieces 0 -- every far GUID "
+            "resolves against feature_struct_types_enumerate_source) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, "
+            "asserted by tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered; live "
+            "single-run proof in "
+            "tests/integration/test_issue109_infl_type_closure_live.py"
+        ),
+    },
     DependencyKind.STEM_NAME_TO_POS: {
         "category": GrammarCategory.STEM_NAMES,
         "producer": stem_names_pos_dependencies,
@@ -19571,3 +19973,230 @@ def closure_dependencies_for(context, selection=None, registry=None):
         return tuple(refs)
 
     return _dependencies
+
+
+# ---------------------------------------------------------------------------
+# Issue #134: end-of-run repair of create-time-only reference wiring
+# ---------------------------------------------------------------------------
+#
+# The #37/#108 pattern: a reference wired only when its owner is CREATED is
+# never revisited once the owner is ALREADY_PRESENT, and is wired against a
+# target that does not exist yet when the owner's category dispatches BEFORE
+# the target's. Two HIGH sites of #134, repaired here after every category:
+#
+# * `IPhSegRuleRHS.InputPOSesRC` -- PHONOLOGICAL_RULES dispatches before
+#   GRAM_CATEGORIES, so the POS is absent at create time; the miss was
+#   recorded as a drop and only repaired one run late.
+# * `IMoAlloAdhocProhib` `FirstAllomorphRA`/`RestOfAllosRS` and
+#   `IMoMorphAdhocProhib` `FirstMorphemeRA`/`RestOfMorphsRS` -- ADHOC
+#   dispatches before STEMS (allomorphs/MSAs), and the miss was SILENT.
+#
+# INSERT-ONLY: nothing already in the target is moved or removed. A target
+# chain that is not a prefix of the source chain is reported, not rewritten.
+# Idempotent: a second run finds every chain complete and writes nothing.
+
+def _late_ref_guid_chain(items):
+    return [g for g in (_guid_str_from(x) for x in items) if g]
+
+
+def _repair_adhoc_prohib_chain(src_rule, tgt_rule, class_name, target, dropped,
+                               skips):
+    """Complete one adhoc prohibition's `First*RA` + `RestOf*RS` members.
+
+    Measured live (Mbugwe -> Target): the create path wires the members that
+    already exist (here the `RestOf` ones) and silently skips the rest (the
+    `First` MSA, created later by STEMS), so First and Rest are repaired
+    separately. First is set only when null. Rest is insert-only: the target's
+    members must be an in-order subsequence of the source's (else NEEDS_MANUAL,
+    untouched) and each missing one is inserted at its source position.
+    Unresolvable members are `DroppedItemRecord`s. Returns writes made."""
+    if class_name == "MoAlloAdhocProhib":
+        first_attr, rest_attr, pool = (
+            "FirstAllomorphRA", "RestOfAllosRS", _iter_all_allomorphs)
+    else:
+        first_attr, rest_attr, pool = (
+            "FirstMorphemeRA", "RestOfMorphsRS", _iter_all_msas)
+    rule_guid = _guid_str_from(src_rule)
+    label = _owner_label_for(class_name, src_rule)
+    src_first = getattr(src_rule, first_attr, None)
+    src_rest = list(getattr(src_rule, rest_attr, None) or [])
+    tgt_first = getattr(tgt_rule, first_attr, None)
+    tgt_rest = getattr(tgt_rule, rest_attr)
+    src_rest_g = _late_ref_guid_chain(src_rest)
+    tgt_rest_g = _late_ref_guid_chain(tgt_rest)
+    it = iter(src_rest_g)
+    if not all(g in it for g in tgt_rest_g):  # not an in-order subsequence
+        skips.append(Skip(
+            category=GrammarCategory.ADHOC_COMPOUND_RULES,
+            source_guid=rule_guid, reason=SkipReason.NEEDS_MANUAL,
+            detail=(f"target {class_name} {rule_guid} {rest_attr} "
+                    f"{tgt_rest_g} is not an in-order subset of the source "
+                    f"{src_rest_g}; left as-is (review manually)")))
+        return 0
+    by_guid = {}
+    for obj in pool(target):
+        g = _guid_str_from(obj)
+        if g and g not in by_guid:
+            by_guid[g] = obj
+
+    def _drop(field, src_obj, g):
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind=class_name, owner_guid=rule_guid,
+                owner_label=label, field_name=field,
+                item_name=_rule_ref_display_name(src_obj)
+                or f"guid={_short_guid(g)}",
+                item_guid=g or "",
+                reason="member absent from target -- prohibition left "
+                       "incomplete"))
+
+    writes = 0
+    if src_first is not None and tgt_first is None:
+        g = _guid_str_from(src_first)
+        found = by_guid.get(g)
+        if found is None:
+            _drop(first_attr, src_first, g)
+        else:
+            setattr(tgt_rule, first_attr, found)
+            writes += 1
+    idx = 0
+    present = set(tgt_rest_g)
+    for src_obj in src_rest:
+        g = _guid_str_from(src_obj)
+        if g in present:
+            idx += 1
+            continue
+        found = by_guid.get(g)
+        if found is None:
+            _drop(rest_attr, src_obj, g)
+            continue
+        tgt_rest.Insert(idx, found)
+        idx += 1
+        writes += 1
+    return writes
+
+
+def _repair_adhoc_prohib_refs(context, target, picks, dropped, skips):
+    source = context.source_handle
+    tgt_by_guid = {}
+    for obj in _rules_enumerate_all(target):
+        g = _guid_str_from(obj)
+        if g:
+            tgt_by_guid[g] = obj
+    writes = 0
+    for src_rule in _rules_enumerate_all(source):
+        g = _guid_str_from(src_rule)
+        class_name = getattr(src_rule, "ClassName", None)
+        if class_name not in ("MoAlloAdhocProhib", "MoMorphAdhocProhib"):
+            continue
+        if picks is not None and g not in picks:
+            continue
+        tgt_rule = tgt_by_guid.get(g)
+        if tgt_rule is None:
+            continue
+        try:
+            writes += _repair_adhoc_prohib_chain(
+                src_rule, _cast_rule_concrete(tgt_rule), class_name, target,
+                dropped, skips)
+        except Exception as exc:  # noqa: BLE001 -- one rule must not abort
+            skips.append(Skip(
+                category=GrammarCategory.ADHOC_COMPOUND_RULES,
+                source_guid=g, reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"adhoc member repair failed "
+                        f"({type(exc).__name__}: {exc})")))
+    return writes
+
+
+def _repair_rule_input_poses(context, target, picks, dropped, skips):
+    """Add the `InputPOSesRC` members a PHONOLOGICAL_RULES-time wiring missed
+    (POS created later in the run), and retire the stale drop record."""
+    source = context.source_handle
+    try:
+        phon_data = target.Cache.LangProject.PhonologicalDataOA
+    except (AttributeError, TypeError):
+        return 0
+    from SIL.LCModel import IPhRegularRule
+    index = _build_rule_rc_index(target, phon_data)
+    tgt_rules = {}
+    for r in target.PhonRules.GetAll():
+        g = _guid_str_from(r)
+        if g:
+            tgt_rules[g] = getattr(r, "_obj", r)  # unwrap flexicon wrapper
+    writes = 0
+    for src_rule in (getattr(x, "_obj", x) for x in source.PhonRules.GetAll()):
+        rule_guid = _guid_str_from(src_rule)
+        if picks is not None and rule_guid not in picks:
+            continue
+        tgt_rule = tgt_rules.get(rule_guid)
+        if tgt_rule is None or getattr(src_rule, "ClassName", None) != "PhRegularRule":
+            continue
+        try:
+            tgt_rhs = {_guid_str_from(x): x for x in
+                       IPhRegularRule(tgt_rule).RightHandSidesOS}
+            for src_rhs in IPhRegularRule(src_rule).RightHandSidesOS:
+                rhs_guid = _guid_str_from(src_rhs)
+                new_rhs = tgt_rhs.get(rhs_guid)
+                if new_rhs is None:
+                    continue
+                have = set(_late_ref_guid_chain(new_rhs.InputPOSesRC))
+                for src_item in list(src_rhs.InputPOSesRC):
+                    ig = _guid_str_from(src_item)
+                    found = _resolve_rule_rc_item(
+                        context, "InputPOSesRC", src_item, index)
+                    if found is None:
+                        continue  # still absent: the create-time drop stands
+                    if _guid_str_from(found) not in have:
+                        new_rhs.InputPOSesRC.Add(found)
+                        have.add(_guid_str_from(found))
+                        writes += 1
+                    if dropped is not None:
+                        stale = []
+                        _report_dropped_rule_ref(
+                            stale, rule_guid, rhs_guid, "InputPOSesRC", ig,
+                            src_item)
+                        key = _dropped_key(stale[0])
+                        dropped[:] = [d for d in dropped
+                                      if _dropped_key(d) != key]
+        except Exception as exc:  # noqa: BLE001 -- one rule must not abort
+            skips.append(Skip(
+                category=GrammarCategory.PHONOLOGICAL_RULES,
+                source_guid=rule_guid, reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"InputPOSesRC repair failed "
+                        f"({type(exc).__name__}: {exc})")))
+    return writes
+
+
+def _run_late_rule_ref_repair_pass(context, target, tag=None):
+    """Issue #134: repair phon-rule `InputPOSesRC` and adhoc-prohibition
+    member chains after every category exists. Returns Skips; write counts
+    are left on the context (`_late_rule_ref_writes`) as live-gate evidence."""
+    plan = getattr(context, "_run_plan", None)
+    selection = getattr(plan, "selection", None)
+
+    def _picks(cat):
+        try:
+            return selection.leaf_picks_for(cat) if selection else None
+        except (AttributeError, TypeError):
+            return None
+
+    dropped = getattr(context, "_dropped", None)
+    skips: list = []
+    counts = {"input_poses": 0, "adhoc": 0}
+    for key, fn, cat in (
+            ("input_poses", _repair_rule_input_poses,
+             GrammarCategory.PHONOLOGICAL_RULES),
+            ("adhoc", _repair_adhoc_prohib_refs,
+             GrammarCategory.ADHOC_COMPOUND_RULES)):
+        try:
+            counts[key] = fn(context, target, _picks(cat), dropped, skips)
+        except Exception as exc:  # noqa: BLE001 -- keep the run's writes
+            skips.append(Skip(
+                category=cat, source_guid="",
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=f"late reference repair failed "
+                       f"({type(exc).__name__}: {exc})"))
+    try:
+        object.__setattr__(context, "_late_rule_ref_writes", counts)
+    except (AttributeError, TypeError):
+        pass
+    return skips

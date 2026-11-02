@@ -957,8 +957,8 @@ _AMBIGUOUS_IDENTITY_SKIP_CLASSES = {
     # whose objects are ILexEntryType, and LexEntryInflType is a subclass the
     # census counts as its own row.
     "COMPLEX_FORM_TYPES": frozenset({"LexEntryType", "LexEntryInflType"}),
-    # "INFLECTION_FEATURES covers FsClosedFeature and FsComplexFeature"
-    "INFLECTION_FEATURES": frozenset({"FsClosedFeature", "FsComplexFeature"}),
+    # "INFLECTION_FEATURES covers FsClosedFeature, FsComplexFeature and FsOpenFeature (#29)"
+    "INFLECTION_FEATURES": frozenset({"FsClosedFeature", "FsComplexFeature", "FsOpenFeature"}),
     # ---- T048g: derived from the walk, not quoted from an omission -------
     # AFFIXES and STEMS are entry walks, and each has EXACTLY ONE
     # `ALREADY_PRESENT_BY_GUID` emission site: `affixes_plan_action`

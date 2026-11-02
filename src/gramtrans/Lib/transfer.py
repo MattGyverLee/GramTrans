@@ -25,6 +25,7 @@ if __package__:
         ActionOutcome,
         OUTCOME_FAILED,
         OUTCOME_SKIPPED,
+        CreatedPosChildren,
         DroppedItemRecord,
         GrammarCategory,
         LeafExecutionFailure,
@@ -60,6 +61,7 @@ else:
         ActionOutcome,
         OUTCOME_FAILED,
         OUTCOME_SKIPPED,
+        CreatedPosChildren,
         DroppedItemRecord,
         GrammarCategory,
         LeafExecutionFailure,
@@ -175,8 +177,36 @@ def _strip_ref_fields(src_props: dict, fields) -> None:
 # Public API
 # ============================================================================
 
+# Issue #132 (never-silent audit): post-loop `_ensure_*` safety nets used to
+# log swallowed exceptions only. Each pass gets a stable synthetic
+# `source_guid` so `LeafExecutionFailure` validation passes.
 
-def _ensure_171_subpass(exec_ctx, target, tag, exec_skips):
+
+def _record_post_pass_failure(
+    failures: list | None,
+    *,
+    pass_name: str,
+    category: GrammarCategory,
+    exc: BaseException | None = None,
+    message: str | None = None,
+) -> None:
+    if failures is None:
+        return
+    if exc is not None:
+        exc_type = type(exc).__name__
+        detail = message or str(exc)
+    else:
+        exc_type = "PostPassFailed"
+        detail = message or pass_name
+    failures.append(LeafExecutionFailure(
+        category=category,
+        source_guid=f"post-pass:{pass_name}",
+        exception_type=exc_type,
+        message=detail,
+    ))
+
+
+def _ensure_171_subpass(exec_ctx, target, tag, exec_skips, post_pass_failures=None):
     """Run the 17.1 sub-pass if the AFFIX_TEMPLATES tail did not (FR-333).
 
     `categories._run_171_subpass` wires `MoInflAffMsa.SlotsRC` (the affix's
@@ -207,8 +237,14 @@ def _ensure_171_subpass(exec_ctx, target, tag, exec_skips):
         pass
     try:
         late_skips = _run_171_subpass(exec_ctx, target, tag)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 -- must not lose the run's writes
         _log.exception("execute: 17.1 sub-pass safety net FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="171-subpass",
+            category=GrammarCategory.AFFIX_TEMPLATES,
+            exc=exc,
+        )
         return
     if late_skips and exec_skips is not None:
         try:
@@ -228,10 +264,15 @@ def _ensure_171_subpass(exec_ctx, target, tag, exec_skips):
 #: `_ensure_matched_nc_segments`, which resolves each member properly.
 _UPDATE_UNWRITABLE_KEYS: dict = {
     GrammarCategory.NATURAL_CLASSES: ("PhonemeGuids",),
+    # Issue #22: `Questions` is an aggregate read of QuestionsOS (owned
+    # ICmDomainQ objects). The base `ApplySyncableProperties` has no
+    # `item.Questions` to write, so leaving it in would force an UPDATE on
+    # every re-run and then be reported as a partial apply.
+    GrammarCategory.SEMANTIC_DOMAINS: ("Questions",),
 }
 
 
-def _ensure_matched_nc_segments(exec_ctx, target, exec_skips):
+def _ensure_matched_nc_segments(exec_ctx, target, exec_skips, post_pass_failures=None):
     """Issue #54: run `categories._wire_matched_nc_segments` once, AFTER the
     leaf-dispatch loop.
 
@@ -256,9 +297,15 @@ def _ensure_matched_nc_segments(exec_ctx, target, exec_skips):
         pass
     try:
         late_skips = _wire_matched_nc_segments(exec_ctx, target, plan)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         _log.exception(
             "execute: key-matched natural-class member pass FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="matched-nc-segments",
+            category=GrammarCategory.NATURAL_CLASSES,
+            exc=exc,
+        )
         return
     if late_skips and exec_skips is not None:
         try:
@@ -267,7 +314,7 @@ def _ensure_matched_nc_segments(exec_ctx, target, exec_skips):
             pass
 
 
-def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips):
+def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips, post_pass_failures=None):
     """Run T119's feature-structure owner pass AFTER every category (038,
     2026-08-28).
 
@@ -316,9 +363,15 @@ def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips):
         pass
     try:
         late_skips = _wire_owner_feat_strucs(exec_ctx, target, plan)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         _log.exception(
             "execute: feature-structure owner pass FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="owner-feat-strucs",
+            category=GrammarCategory.STEMS,
+            exc=exc,
+        )
         return
     if late_skips and exec_skips is not None:
         try:
@@ -327,7 +380,7 @@ def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips):
             pass
 
 
-def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
+def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips, post_pass_failures=None):
     """Issue #133: run `categories._run_infl_feature_link_pass` -- the SINGLE
     writer of a POS's `InflectableFeatsRC` -- once, AFTER the leaf-dispatch
     loop.
@@ -352,6 +405,12 @@ def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
     if getattr(exec_ctx, "_run_plan", None) is None:
         cause = ("the InflectableFeatsRC link pass did not run: the run has "
                  "no RunPlan, so there is no link map to write from")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="infl-feature-links",
+            category=GrammarCategory.INFLECTION_FEATURES,
+            message=cause,
+        )
     else:
         try:
             if __package__:
@@ -364,6 +423,12 @@ def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
                 "execute: InflectableFeatsRC link pass FAILED (swallowed)")
             cause = ("the InflectableFeatsRC link pass raised "
                      f"{type(exc).__name__}: {exc}")
+            _record_post_pass_failure(
+                post_pass_failures,
+                pass_name="infl-feature-links",
+                category=GrammarCategory.INFLECTION_FEATURES,
+                exc=exc,
+            )
             # Issue #171: partial skips and the write count are flushed in a
             # ``finally`` on the pass; recover the skips when the pass did not
             # return normally.
@@ -380,10 +445,16 @@ def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
         else:
             from categories import _reconcile_deferred_infl_pairs  # type: ignore
         _reconcile_deferred_infl_pairs(exec_ctx, cause)
-    except Exception:  # noqa: BLE001 -- reconciliation must not raise out
+    except Exception as exc:  # noqa: BLE001 -- reconciliation must not raise out
         _log.exception(
             "execute: deferred InflectableFeatsRC reconciliation FAILED "
             "(swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="infl-feature-links-reconcile",
+            category=GrammarCategory.INFLECTION_FEATURES,
+            exc=exc,
+        )
     if late_skips and exec_skips is not None:
         try:
             exec_skips.extend(late_skips)
@@ -391,7 +462,7 @@ def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
             pass
 
 
-def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips):
+def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips, post_pass_failures=None):
     """Issue #128: run the LexEntryRef C1 (create + value merge) and C2
     (component/primary wiring) tail passes AFTER the leaf-dispatch loop, on
     any run whose scope includes the lexicon -- including one that planned
@@ -421,6 +492,14 @@ def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips):
     except Exception as exc:  # noqa: BLE001 -- must not raise out of execute()
         _log.exception(
             "execute: entry-ref safety-net import FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="entryref-import",
+            category=GrammarCategory.STEMS,
+            exc=exc,
+            message=("entry-ref safety-net passes did not run: import "
+                     f"failed ({type(exc).__name__}: {exc})"),
+        )
         _dropped_sink = getattr(exec_ctx, "_dropped", None)
         if _dropped_sink is not None:
             _dropped_sink.append(DroppedItemRecord(
@@ -444,8 +523,14 @@ def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips):
             pass
         try:
             late_skips = runner(exec_ctx, target, tag)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             _log.exception("execute: %s safety net FAILED (swallowed)", flag)
+            _record_post_pass_failure(
+                post_pass_failures,
+                pass_name=flag.lstrip("_"),
+                category=GrammarCategory.STEMS,
+                exc=exc,
+            )
             continue
         if late_skips and exec_skips is not None:
             try:
@@ -454,7 +539,7 @@ def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips):
                 pass
 
 
-def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips):
+def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips, post_pass_failures=None):
     """Issue #37: wire `IFsComplexFeature.TypeRA` AFTER the leaf-dispatch
     loop, via `categories._run_complex_feature_type_ra_pass`.
 
@@ -482,9 +567,15 @@ def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips):
         pass
     try:
         late_skips = _run_complex_feature_type_ra_pass(exec_ctx, target)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         _log.exception(
             "execute: complex-feature TypeRA pass FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="complex-feature-type-ra",
+            category=GrammarCategory.INFLECTION_FEATURES,
+            exc=exc,
+        )
         return
     if late_skips and exec_skips is not None:
         try:
@@ -493,7 +584,7 @@ def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips):
             pass
 
 
-def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips):
+def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips, post_pass_failures=None):
     """Issue #108: repair `IFsFeatStrucType.FeaturesRS` (both feature
     systems) AFTER the leaf-dispatch loop, via
     `categories._run_struct_type_features_rs_pass`.
@@ -522,9 +613,44 @@ def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips):
         pass
     try:
         late_skips = _run_struct_type_features_rs_pass(exec_ctx, target)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         _log.exception(
             "execute: struct-type FeaturesRS repair pass FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="struct-type-features-rs",
+            category=GrammarCategory.FEATURE_STRUCT_TYPES,
+            exc=exc,
+        )
+        return
+    if late_skips and exec_skips is not None:
+        try:
+            exec_skips.extend(late_skips)
+        except (AttributeError, TypeError):
+            pass
+
+
+def _ensure_late_rule_refs(exec_ctx, target, exec_skips):
+    """Issue #134: repair phon-rule `InputPOSesRC` and adhoc-prohibition
+    member chains AFTER the leaf-dispatch loop (their targets -- POS,
+    allomorphs, MSAs -- are created by categories that dispatch later).
+    Own latch; never raises."""
+    if getattr(exec_ctx, "_did_late_rule_refs", False):
+        return
+    if getattr(exec_ctx, "_run_plan", None) is None:
+        return
+    if __package__:
+        from .categories import _run_late_rule_ref_repair_pass
+    else:
+        from categories import _run_late_rule_ref_repair_pass  # type: ignore
+    try:
+        object.__setattr__(exec_ctx, "_did_late_rule_refs", True)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        late_skips = _run_late_rule_ref_repair_pass(exec_ctx, target)
+    except Exception:
+        _log.exception("execute: late rule-reference repair FAILED (swallowed)")
         return
     if late_skips and exec_skips is not None:
         try:
@@ -571,6 +697,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Issue #133: (source POS guid, feature guid) pairs enrichment deferred to
     # the InflectableFeatsRC link pass; reconciled after it so none vanishes.
     _deferred_infl_pairs: list = []
+    _src_pos_index: dict = {}  # issue #137: guid -> source POS, built once
     _resolver_cache: dict = {}
     # Issue #130: created here (not at the exec_ctx attach below) so the
     # OVERWRITE loop, which runs first, can record MSA slot-link outcomes on
@@ -664,6 +791,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # child whose dedicated category create path runs later in this same
     # execute() -- see `_enrich_owned_collections`.
     _measured_enrichments: list = []
+    _created_pos_children: list = []  # Issue #126: measured, per created POS
     _planned_action_guids = frozenset(
         a.source_guid for a in getattr(plan, "actions", ())
         if getattr(a, "source_guid", None)
@@ -687,6 +815,9 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             f"  [{_cat.value}] {_n} planned merge(s) NOT applied: the UPDATE"
             " (Merge) executor is not wired for this category"
         )
+    # Issue #14 (NEW-3): one guid-keyed index per ops accessor, built lazily
+    # on first lookup and shared across the whole overwrite loop.
+    _guid_indexes = {}
     for ow in getattr(plan, "overwrites", ()):
         # identity_remap ENTRY overwrites are handled inside _execute_layer3
         # (where identity_remap, target_verb, target_slot_by_guid, env_guid_to_target
@@ -705,6 +836,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                 enrichments=_measured_enrichments,
                 planned_action_guids=_planned_action_guids,
                 deferred_pairs=_deferred_infl_pairs,
+                guid_indexes=_guid_indexes,
             )
             if _update_skips:
                 extra_skips.extend(_update_skips)
@@ -981,12 +1113,19 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             # not on the next run. Own try: a fill failure must not turn the
             # (successful) POS create into a leaf failure.
             try:
-                _fill_created_pos_collections(
+                _fill_rows = _fill_created_pos_collections(
                     action, _result, source, target, report_sink,
                     ws_map=ws_map, dropped=_dropped,
                     planned_action_guids=_planned_action_guids,
                     deferred_pairs=_deferred_infl_pairs,
+                    src_pos_index=_src_pos_index,
                 )
+                if _fill_rows:  # Issue #126: counted in the Move report
+                    _created_pos_children.append(CreatedPosChildren(
+                        owner_guid=action.source_guid,
+                        owner_label=action.summary,
+                        collections=tuple(_fill_rows),
+                    ))
             except Exception as _fill_exc:  # noqa: BLE001 -- LCM/COM failures are wide
                 _log.exception(
                     "execute leaf-dispatch: created-POS collection fill FAILED "
@@ -1063,9 +1202,16 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # template tail already ran it.
     # Issue #133: the single InflectableFeatsRC writer, after every POS and
     # feature of the run exists -- and on a run that planned no action at all.
-    _ensure_infl_feature_links(exec_ctx, target, tag, _exec_skips)
+    _post_pass_failure_start = len(_leaf_execution_failures)
+    _ensure_infl_feature_links(
+        exec_ctx, target, tag, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
 
-    _ensure_171_subpass(exec_ctx, target, tag, _exec_skips)
+    _ensure_171_subpass(
+        exec_ctx, target, tag, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
 
     # T119's feature-structure owner pass, AFTER the 17.1 sub-pass and after
     # every category. It used to run INSIDE that sub-pass, i.e. anchored to
@@ -1073,23 +1219,37 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # objects that own 1,003 of the feature structures it is meant to fill.
     # Every one of them resolved to a non-existent owner and was discarded
     # silently. See `_ensure_owner_feat_strucs` for the measurement.
-    _ensure_owner_feat_strucs(exec_ctx, target, tag, _exec_skips)
+    _ensure_owner_feat_strucs(exec_ctx, target, tag, _exec_skips, _leaf_execution_failures)
 
     # Issue #54: a starter `PhNCSegments` the plan matched by natural key gets
     # its source class's members, after every create (see the helper).
-    _ensure_matched_nc_segments(exec_ctx, target, _exec_skips)
+    _ensure_matched_nc_segments(exec_ctx, target, _exec_skips, _leaf_execution_failures)
 
     # Issue #128: LexEntryRef value merge + C2 wiring, also on a 0-action
     # re-run (see helper). After every category so all lexemes exist.
-    _ensure_entryref_passes(exec_ctx, target, tag, _exec_skips)
+    _ensure_entryref_passes(
+        exec_ctx, target, tag, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
 
     # Issue #37: complex-feature TypeRA, after every feature and struct-type
     # of the run exists -- and on a re-run that planned neither.
-    _ensure_complex_feature_type_ra(exec_ctx, target, _exec_skips)
+    _ensure_complex_feature_type_ra(
+        exec_ctx, target, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
 
     # Issue #108: struct-type FeaturesRS, after every feature defn and
     # struct-type of the run exists -- and on a re-run that planned neither.
-    _ensure_struct_type_features_rs(exec_ctx, target, _exec_skips)
+    _ensure_struct_type_features_rs(
+        exec_ctx, target, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
+    leaf_failed += len(_leaf_execution_failures) - _post_pass_failure_start
+
+    # Issue #134: phon-rule InputPOSesRC + adhoc member chains, after every
+    # category (POS / STEMS dispatch after the rules that reference them).
+    _ensure_late_rule_refs(exec_ctx, target, _exec_skips)
 
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check
@@ -1136,9 +1296,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # SAME kind of fully-settled copy_set, so the two converge on
     # identical relations-in/decisions-out.
     if __package__:
-        from .categories import reproduce_all_lexical_relations
+        from .categories import (
+            reproduce_all_lexical_relations_once as reproduce_all_lexical_relations,
+        )
     else:
-        from categories import reproduce_all_lexical_relations  # type: ignore
+        from categories import (  # type: ignore
+            reproduce_all_lexical_relations_once as reproduce_all_lexical_relations,
+        )
     reproduce_all_lexical_relations(exec_ctx, tag, _resolver_cache, _dropped)
 
     # Feature 026 (texts-wordforms, T010): apply the text + wordform walk.
@@ -1236,7 +1400,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Fold exactly those (never another leg's projection, which Move re-decides
     # and may resolve). Move's own records go first: on an identity collision
     # the Move-time record and its reason win, and the drop appears once.
-    _report_dropped = merge_dropped_records(_dropped, move_blind_plan_drops(plan))
+    # Issue #192: not for a text Move skipped whole -- its Skip says so.
+    _skipped_texts = ()
+    if isinstance(_text_outcome, dict):
+        _skipped_texts = [getattr(sk, "source_guid", "")
+                          for sk in (_text_outcome.get("skips") or ())]
+    _report_dropped = merge_dropped_records(
+        _dropped, move_blind_plan_drops(plan, _skipped_texts))
     # Feature 038 T045: hand the report the MEASURED enrichment records in
     # place of the plan's PROJECTION, so a Move report says what the writes
     # achieved. Substitution, never addition: `report._build_from_plan` UNIONs
@@ -1277,6 +1447,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         # the report at all (per_category[*].added is computed from the
         # PLAN, not actual write outcomes).
         extra_leaf_execution_failures=tuple(_leaf_execution_failures),
+        extra_created_pos_children=tuple(_created_pos_children),
         not_added=tuple(_not_added),
         text_added=_texts_added,
         text_updated=_texts_updated,
@@ -2054,7 +2225,7 @@ def _create_pos_with_guid(target, src_guid: str, src_props, tag: ImportResidueTa
         return None  # wrong-class object; skip
 
     factory = IPartOfSpeechFactory(target.GetFactory(IPartOfSpeechFactory))
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     pos_list = ICmPossibilityList(cache.LangProject.PartsOfSpeechOA)
     new_pos = factory.Create(DotNetGuid.Parse(src_guid), pos_list)
     target.POS.ApplySyncableProperties(new_pos, src_props)
@@ -2093,7 +2264,7 @@ def _create_template_with_guid(target, owner_pos, src_guid: str, src_props,
     new_template = factory.Create(DotNetGuid.Parse(src_guid))
     owner_pos.AffixTemplatesOS.Add(new_template)
     target.MorphRules.ApplySyncableProperties(new_template, src_props)
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     apply_carrier_b(new_template, cache.DefaultAnalWs, tag)
     report_sink.Info(f"  Template created  guid={src_guid}")
     return new_template
@@ -2129,7 +2300,7 @@ def _create_slot_with_guid(target, owner_pos, src_guid: str, slot_name: str,
     factory = IMoInflAffixSlotFactory(target.GetFactory(IMoInflAffixSlotFactory))
     new_slot = factory.Create(DotNetGuid.Parse(src_guid))
     owner_pos.AffixSlotsOC.Add(new_slot)
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     ws = cache.DefaultAnalWs
     IMoInflAffixSlot(new_slot).Name.set_String(ws, TsStringUtils.MakeString(slot_name, ws))
     apply_carrier_b(new_slot, ws, tag)
@@ -2271,7 +2442,7 @@ def _find_source_template_by_guid(source, guid_str: str, owner_pos_guid: str = N
             candidate_poses.append(_unwrap(pos))
     for src_pos in candidate_poses:
         for t in source.MorphRules.GetAllAffixTemplatesForPOS(src_pos):
-            concrete = t.concrete
+            concrete = _shared_unwrap(t)
             if _guid_str(concrete) == guid_str:
                 return t
     return None
@@ -2583,7 +2754,7 @@ def _execute_overwrite_identity_remap(
         tgt_entry, src_props,
         fill_gaps=fill_gaps,
     )
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     apply_residue(tgt_entry, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
     report_sink.Info(f"  LexEntry identity-remap overwritten  guid={src_guid}")
 
@@ -2651,7 +2822,7 @@ def _find_target_morph_type_by_guid(target, morph_type_guid: str):
     GUID."""
     from SIL.LCModel import ICmObject
     try:
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         lex_db = cache.LangProject.LexDbOA
         morph_types_list = lex_db.MorphTypesOA
         for mt in morph_types_list.PossibilitiesOS:
@@ -2670,7 +2841,7 @@ def _find_target_env_by_guid(target, env_guid: str):
     except AttributeError:
         return None
     for e in envs:
-        concrete = e.concrete if hasattr(e, "concrete") else e
+        concrete = _shared_unwrap(e)
         if str(ICmObject(concrete).Guid).lower() == env_guid:
             return concrete
     return None
@@ -2703,7 +2874,7 @@ def _create_environment_with_guid(target, src_guid: str, report_sink,
 
     factory = IPhEnvironmentFactory(target.GetFactory(IPhEnvironmentFactory))
     new_env = factory.Create(DotNetGuid.Parse(src_guid))
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     cache.LangProject.PhonologicalDataOA.EnvironmentsOS.Add(new_env)
     # Carrier B residue (PhEnvironment has Description).
     ws = cache.DefaultAnalWs
@@ -2740,7 +2911,7 @@ def _create_lexentry_with_guid(target, src_guid: str, src_entry, source,
         return None  # wrong-class object; skip
 
     factory = ILexEntryFactory(target.GetFactory(ILexEntryFactory))
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     lex_db = ILexDb(cache.LangProject.LexDbOA)
     new_entry = factory.Create(DotNetGuid.Parse(src_guid), lex_db)
     src_props = source.LexEntry.GetSyncableProperties(src_entry)
@@ -2871,7 +3042,7 @@ def _create_inflaff_msa_with_guid(target, new_entry, new_sense, src_guid: str, s
         identity_remap[src_guid] = new_guid
 
     new_ia = IMoInflAffMsa(new_msa)
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     apply_residue(new_msa, cache.DefaultAnalWs, tag)
     report_sink.Info(
         f"  IMoInflAffMsa created  src={src_guid[:8]}  new={new_guid[:8]}"
@@ -2957,7 +3128,7 @@ def _create_allomorph_with_guid(target, new_entry, src_guid: str, src_allo, sour
             report_sink.Warning(f"  [L3] Allomorph references env {env_guid[:8]} not in target")
             continue
         new_ia.PhoneEnvRC.Add(tgt_env)
-    cache = getattr(target, "Cache")
+    cache = target.Cache
     apply_residue(new_allo, cache.DefaultAnalWs, tag)
     report_sink.Info(f"  IMoAffixAllomorph created  src={src_guid[:8]}  new={new_guid[:8]}")
     return new_allo
@@ -3290,6 +3461,96 @@ def _check_add_only(field_name, before, live, report_sink, src_guid):
     return True
 
 
+_TEMPLATE_SLOT_SEQS = (
+    "PrefixSlotsRS", "SuffixSlotsRS", "EncliticSlotsRS",
+    "ProcliticSlotsRS", "SlotsRS",
+)
+
+
+def _as_template(obj):
+    """`obj` cast to `IMoInflAffixTemplate` (the `*SlotsRS` sequences are
+    invisible on the base proxy `AffixTemplatesOS` yields); unchanged when the
+    cast is unavailable (offline fakes)."""
+    try:
+        from SIL.LCModel import IMoInflAffixTemplate
+        return IMoInflAffixTemplate(obj)
+    except Exception:  # noqa: BLE001 -- no CLR / not castable: duck-typed
+        return obj
+
+
+def _wire_enriched_template_slots(src_tpl, new_tpl, tgt_pos, target,
+                                  report_sink, src_guid):
+    """Issue #137: give a template CREATED by enrichment its slot references.
+
+    `_create_collection_child` copies scalars only, so the new template had
+    empty `PrefixSlotsRS` / `SuffixSlotsRS` (and the other three sequences),
+    unlike the dedicated `affix_templates_execute_action`, which wires all
+    five by GUID. Same rule here: each source slot is resolved BY GUID, first
+    among the destination POS's own `AffixSlotsOC` (filled just before this
+    collection), then across every destination POS, and appended in source
+    order. A slot that cannot be resolved (typically one deferred to its own
+    SLOTS PlannedAction, which has not run yet) yields a `DroppedItemRecord`
+    rather than a silent hole.
+
+    Returns the list of `DroppedItemRecord` for unresolved slots.
+    """
+    cats = _categories_mod()
+    src_t, new_t = _as_template(src_tpl), _as_template(new_tpl)
+    slot_index: dict = {}
+
+    def _index(slots):
+        for slot in slots or ():
+            g = (cats._guid_str_from(slot) or "").lower()
+            if g:
+                slot_index.setdefault(g, slot)
+
+    _, own_slots = cats._pos_owned_collection(tgt_pos, "AffixSlotsOC")
+    _index(own_slots)
+    scanned_all = False
+    drops: list = []
+    for seq_name in _TEMPLATE_SLOT_SEQS:
+        try:
+            src_seq = getattr(src_t, seq_name, None)
+            tgt_seq = getattr(new_t, seq_name, None)
+        except Exception:  # noqa: BLE001 -- an unreadable member is "absent"
+            continue
+        if not src_seq or tgt_seq is None:
+            continue
+        have = {(cats._guid_str_from(x) or "").lower() for x in tgt_seq}
+        for src_slot in src_seq:
+            sg = (cats._guid_str_from(src_slot) or "").lower()
+            if not sg or sg in have:
+                continue
+            if sg not in slot_index and not scanned_all:
+                scanned_all = True
+                try:
+                    for pos in target.POS.GetAll(recursive=True):
+                        _, slots = cats._pos_owned_collection(
+                            cats._unwrap_lcm(pos), "AffixSlotsOC")
+                        _index(slots)
+                except Exception:  # noqa: BLE001 -- reported as unresolved below
+                    pass
+            slot = slot_index.get(sg)
+            try:
+                if slot is None:
+                    raise LookupError("slot not (yet) present in the destination")
+                tgt_seq.Add(slot)
+                have.add(sg)
+            except Exception as exc:  # noqa: BLE001 -- LCM/COM failures are wide
+                reason = (f"template slot reference not wired: "
+                          f"{type(exc).__name__}: {exc}")
+                drops.append(DroppedItemRecord(
+                    owner_kind=_ENRICH_OWNER_KIND, owner_guid=src_guid,
+                    owner_label=src_guid,
+                    field_name="AffixTemplatesOS." + seq_name,
+                    item_name="IMoInflAffixSlot", item_guid=sg, reason=reason,
+                ))
+                report_sink.Warning(
+                    f"  [enrich] AffixTemplatesOS.{seq_name}: {reason}"
+                    f"  slot={sg[:8]}  guid={src_guid[:8]}")
+    return drops
+
+
 def _create_collection_child(spec, child, receiver, live, target):
     """Create one owned child, GUID preserved, and attach it.
 
@@ -3378,6 +3639,10 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
     already_present = 0
     deferred = 0
     drops: list = []
+    #: drops that belong to a NEW child's own sub-structure (template slot
+    #: refs, a created sub-POS's collections): reported, but not counted
+    #: against this collection's own add/drop accounting.
+    extra_drops: list = []
 
     def _drop(child, reason):
         drops.append(DroppedItemRecord(
@@ -3484,6 +3749,20 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
         added += 1
         candidates.append(new_child)
 
+        if field_name == "AffixTemplatesOS":
+            extra_drops.extend(_wire_enriched_template_slots(
+                child, new_child, tgt_obj, target, report_sink, src_guid))
+        elif spec is not None and spec.recurse:
+            # Issue #137: a sub-POS created here has no PlannedAction of its
+            # own (one that did was deferred above), so nothing else would
+            # ever fill its slots / templates / stem names / ... Same writer,
+            # same deferral rules, one level down (recursing again for any
+            # nested sub-POS).
+            extra_drops.extend(_fill_created_sub_pos(
+                child, new_child, source, target, report_sink, src_guid,
+                ws_map, ws_handles, source_ws_handles, planned_action_guids,
+                deferred_pairs))
+
     _check_add_only(field_name, before, live, report_sink, src_guid)
 
     return EnrichedCollection(
@@ -3493,7 +3772,42 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
         dropped=len(drops),
         dropped_records=tuple(drops),
         deferred=deferred,
-    ), drops
+    ), drops + extra_drops
+
+
+def _fill_created_sub_pos(src_child, new_child, source, target, report_sink,
+                          owner_guid, ws_map, ws_handles, source_ws_handles,
+                          planned_action_guids, deferred_pairs):
+    """Issue #137: fill the seven owned collections of a sub-POS that
+    enrichment itself just created. Returns its `DroppedItemRecord`s."""
+    cats = _categories_mod()
+    if __package__:
+        from .models import POS_OWNED_COLLECTION_FIELDS
+    else:
+        from models import POS_OWNED_COLLECTION_FIELDS  # type: ignore
+    specs = _enrichment_specs()
+    src_inner = cats._unwrap_lcm(src_child)
+    tgt_inner = cats._unwrap_lcm(new_child)
+    child_guid = cats._guid_str_from(src_child) or owner_guid
+    drops: list = []
+    rows = []
+    for field_name in POS_OWNED_COLLECTION_FIELDS:
+        row, d = _enrich_one_collection(
+            field_name, specs.get(field_name), src_inner, tgt_inner,
+            source, target, report_sink, child_guid, ws_map, ws_handles,
+            source_ws_handles, planned_action_guids,
+            deferred_pairs=deferred_pairs,
+        )
+        drops.extend(d)
+        if row.added or row.dropped:
+            rows.append(row)
+    if rows:
+        report_sink.Info(
+            f"  [enrich] created sub-POS owned collections filled"
+            f"  guid={child_guid[:8]}  " + " | ".join(
+                f"{c.field_name}: added={c.added} dropped={c.dropped}"
+                for c in rows))
+    return drops
 
 
 def _enrich_owned_collections(overwrite, src_obj, tgt_obj, source, target,
@@ -3601,7 +3915,7 @@ def _record_unfilled_pos_collections(action, dropped, reason):
 def _fill_created_pos_collections(action, created, source, target, report_sink,
                                   ws_map=None, dropped=None,
                                   planned_action_guids=frozenset(),
-                                  deferred_pairs=None):
+                                  deferred_pairs=None, src_pos_index=None):
     """Give a POS this run just CREATED its seven owned collections (#107).
 
     `gram_categories_execute_action` creates the POS and copies its scalars;
@@ -3637,14 +3951,20 @@ def _fill_created_pos_collections(action, created, source, target, report_sink,
         from models import POS_OWNED_COLLECTION_FIELDS  # type: ignore
 
     src_guid = (action.source_guid or "").lower()
-    src_obj = None
-    try:
-        for pos in source.POS.GetAll(recursive=True):
-            if (cats._guid_str_from(pos) or "").lower() == src_guid:
-                src_obj = pos
-                break
-    except Exception:  # noqa: BLE001 -- an unreadable source is reported below
-        src_obj = None
+    # Issue #137: one guid -> POS index per run (`src_pos_index`, owned by the
+    # caller), built in a single GetAll pass, instead of an O(n) scan per
+    # created POS.
+    if src_pos_index is None:
+        src_pos_index = {}
+    if not src_pos_index:
+        try:
+            for pos in source.POS.GetAll(recursive=True):
+                g = (cats._guid_str_from(pos) or "").lower()
+                if g:
+                    src_pos_index.setdefault(g, pos)
+        except Exception:  # noqa: BLE001 -- an unreadable source is reported below
+            pass
+    src_obj = src_pos_index.get(src_guid)
     if src_obj is None:
         report_sink.Warning(
             f"  [{action.category.value}] created POS: source object not found,"
@@ -3686,7 +4006,7 @@ def _fill_created_pos_collections(action, created, source, target, report_sink,
 def _execute_update_semantic(overwrite, source, target, report_sink, tag: ImportResidueTag,
                              ws_map=None, dropped=None, enrichments=None,
                              planned_action_guids=frozenset(),
-                             deferred_pairs=None):
+                             deferred_pairs=None, guid_indexes=None):
     """Apply the non-destructive UPDATE write semantic (T012, FR-003) for a
     PlannedOverwrite whose category mode is ConflictMode.UPDATE.
 
@@ -3819,8 +4139,8 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             return []
 
         # Locate the source and target objects by GUID.
-        src_obj = _find_obj_by_guid(src_ops, src_guid)
-        tgt_obj = _find_obj_by_guid(tgt_ops, tgt_guid)
+        src_obj = _find_obj_by_guid(src_ops, src_guid, index_cache=guid_indexes)
+        tgt_obj = _find_obj_by_guid(tgt_ops, tgt_guid, index_cache=guid_indexes)
         if tgt_obj is None and dest.resolved:
             tgt_obj = dest.obj
         if src_obj is None or tgt_obj is None:
@@ -3872,7 +4192,7 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             )
         else:
             # UPDATE: non-destructive field writes.
-            cache = getattr(target, "Cache")
+            cache = target.Cache
             # Tag-history decision (#87): earlier runs' tag lines are KEPT.
             # The source Description write replaces the whole alternative, so
             # capture them first and re-append them before this run's line.
@@ -4058,6 +4378,9 @@ _OPS_ACCESSOR_FOR_CATEGORY: dict = {
     GrammarCategory.EXCEPTION_FEATURES:     "ExceptionFeatures",
     GrammarCategory.NATURAL_CLASSES:        "NaturalClasses",
     GrammarCategory.PHONOLOGICAL_FEATURES:  "PhonologicalFeatures",
+    # Issue #22: the Preview plans a Merge for every diverged semantic domain
+    # (measured live: 1730), but with no accessor here each one was a no-op.
+    GrammarCategory.SEMANTIC_DOMAINS:       "SemanticDomains",
     # NOTE: flexicon's FLExProject exposes this Operations class as
     # `.PhonRules`, never `.PhonologicalRules` (see FLExProject.py's
     # `PhonRules` property) -- this entry previously pointed at a
@@ -4074,22 +4397,41 @@ _OPS_ACCESSOR_FOR_CATEGORY: dict = {
 }
 
 
-def _find_obj_by_guid(ops, guid_str: str):
+def _find_obj_by_guid(ops, guid_str: str, index_cache=None):
     """Return the first object in ops.GetAll() whose GUID matches `guid_str`.
 
     Returns None if not found or if GetAll raises.
+
+    Issue #14 (NEW-3): with `index_cache` (a dict owned by the caller, one
+    per run) the first lookup against an `ops` builds a guid -> object index
+    in a single `GetAll()` pass and later lookups are O(1). A miss in a
+    cached index falls back to one fresh linear scan (refreshing the index),
+    so an object created after the index was built is still found.
     """
-    try:
-        for obj in ops.GetAll():
-            try:
-                obj_guid = str(getattr(obj, "Guid", None) or "").lower()
-            except Exception:
-                continue
-            if obj_guid == guid_str.lower():
-                return obj
-    except Exception:
-        pass
-    return None
+    want = guid_str.lower()
+
+    def _scan():
+        found = {}
+        try:
+            for obj in ops.GetAll():
+                try:
+                    g = str(getattr(obj, "Guid", None) or "").lower()
+                except Exception:
+                    continue
+                found.setdefault(g, obj)
+        except Exception:
+            pass
+        return found
+
+    if index_cache is None:
+        return _scan().get(want)
+    key = id(ops)
+    entry = index_cache.get(key)
+    if entry is not None and entry[0] is ops and want in entry[1]:
+        return entry[1][want]
+    index = _scan()
+    index_cache[key] = (ops, index)  # hold ops so id() cannot be recycled
+    return index.get(want)
 
 
 def _lcm_slot(slot):
@@ -4353,7 +4695,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             GrammarCategory.POS, overwrite.target_guid, tag.run_id,
         )
         target.POS.ApplySyncableProperties(tgt_obj, src_props, ws_map=ws_map)
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_obj, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  POS overwritten  guid={src_guid}")
         return ow_skips
@@ -4397,7 +4739,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         tgt_pre_props = strip_residue_props(target.MorphRules.GetSyncableProperties(tgt_tpl))
         src_props = source.MorphRules.GetSyncableProperties(src_tpl_wrap)
         target.MorphRules.ApplySyncableProperties(tgt_tpl, src_props, ws_map=ws_map)
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_tpl, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  Template overwritten  guid={src_guid}")
         return
@@ -4434,7 +4776,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         # via the MorphRules accessor on slots specifically; Phase 1.0 only
         # re-applies the residue tag here. Phase 1.1 will copy the slot
         # name + description via direct property access (Name multistring).
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_slot, cache.DefaultAnalWs, tag)
         report_sink.Info(f"  Slot tagged (overwrite, no syncable props)  guid={src_guid}")
         return
@@ -4521,7 +4863,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             # the ADD/closure path's default union semantic.
             clear_before_add=True,
         )
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_entry, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  LexEntry overwritten ({cat.value})  guid={src_guid}")
         return list(ow_skips) + list(dropped[_dropped_before:])
@@ -4646,7 +4988,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                 item_guid=str(_raw_sense_type_guid),
                 reason="unresolved custom SenseTypeRA reference (no source object available)",
             ))
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_sense, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  LexSense overwritten  guid={src_guid}")
         return list(ow_skips) + list(dropped[_dropped_before:])
@@ -4742,7 +5084,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                         f"  IMoInflAffMsa slot re-sync skipped: owning category "
                         f"{pos_guid[:8]}… is not resolvable in the target by "
                         f"GUID or by natural key; slot membership left unchanged")
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_msa, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  IMoInflAffMsa overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
         return _msa_skips
@@ -4794,7 +5136,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                 GrammarCategory.ALLOMORPH, overwrite.target_guid, tag.run_id,
             )
             target.Allomorphs.ApplySyncableProperties(tgt_allo, src_props, ws_map=ws_map)
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_allo, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  IMoAffixAllomorph overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
         return ow_skips
@@ -4825,7 +5167,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                 target.Environments.ApplySyncableProperties(tgt_env, src_props, ws_map=ws_map)
             except AttributeError:
                 pass
-        cache = getattr(target, "Cache")
+        cache = target.Cache
         apply_residue(tgt_env, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  PhEnvironment overwritten  guid={src_guid}")
         return

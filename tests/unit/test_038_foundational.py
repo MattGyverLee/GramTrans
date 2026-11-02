@@ -513,6 +513,8 @@ class TestClosureRegistryShipsEmpty:
             DependencyKind.STEM_NAME_TO_POS,
             DependencyKind.INFLECTION_CLASS_TO_POS,
             DependencyKind.POS_INFLECTABLE_FEAT_TO_POS,
+            # Issue #109.
+            DependencyKind.INFLECTION_FEATURE_TO_STRUCT_TYPE,
         }
         categories_mod._closure_registry_by_category(registry)
         for kind, entry in registry.items():
@@ -542,7 +544,9 @@ class TestClosureRegistryShipsEmpty:
                               # Issue #67 owner-POS rows.
                               GrammarCategory.STEM_NAMES,
                               GrammarCategory.INFLECTION_CLASSES,
-                              GrammarCategory.POS_INFLECTABLE_FEATS}
+                              GrammarCategory.POS_INFLECTABLE_FEATS,
+                              # Issue #109.
+                              GrammarCategory.INFLECTION_FEATURES}
         dep_fn = categories_mod.closure_dependencies_for(_ctx())
         for cat in GrammarCategory:
             if cat in registered:

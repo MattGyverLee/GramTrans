@@ -23,6 +23,7 @@ if __package__:
     from .models import (
         CategoryScope,
         ClosureEdge,
+        ConflictMode,
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
@@ -50,6 +51,7 @@ else:
     from models import (
         CategoryScope,
         ClosureEdge,
+        ConflictMode,
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
@@ -337,7 +339,7 @@ _OVERWRITE_ENTRY_REF_FIELDS = frozenset(
 
 
 def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
-                                    keep_fields, source=None):
+                                    keep_fields, source=None, resolver_cache=None):
     """Read-only `decide_reference` pass over `keep_fields` only (the
     OVERWRITE-path resolver's actual scope, see `_OVERWRITE_*_REF_FIELDS`
     above) for a single ENTRY/SENSE `PlannedOverwrite` -- populates
@@ -345,7 +347,8 @@ def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
     Update/Report *before* Move ever writes (Principle III), the same
     guarantee `PlannedAction.reference_decisions` gives the ADD path.
 
-    Uses a call-local `resolver_cache`/`dropped` (this function has no
+    Uses the caller's run-wide `resolver_cache` when given (issue #165; else a
+    call-local one) and a call-local `dropped` (this function has no
     `RunContext` to read a per-run collector from -- the verb-vertical
     planner functions that call this predate the context-based leaf-category
     plan_action functions). Never raises: any resolver failure yields an
@@ -364,7 +367,8 @@ def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
         ) - keep_fields
         return _decide_reference_fields(
             owner_class, owner_guid, src_obj, target,
-            resolver_cache={}, dropped=[], skip_fields=skip_fields, source=source,
+            resolver_cache=resolver_cache if resolver_cache is not None else {},
+            dropped=[], skip_fields=skip_fields, source=source,
         )
     except (AttributeError, TypeError, KeyError):
         return ()
@@ -465,6 +469,44 @@ def _materialise_closure_edges(visit_order, pulled_in_by, registry) -> tuple:
                 verified_by=verified_by,
             ))
     return tuple(edges)
+
+
+def _link_mode_skip(result, selection):
+    """Issue #22 Part 3 (preview/move agreement under LINK).
+
+    A GUID-matched ``write_mode="merge"`` overwrite is what the category
+    planners emit whenever source and target fields differ; it is the right
+    plan under UPDATE (Merge). Under ``ConflictMode.LINK`` Move writes nothing
+    to an existing item (``transfer.execute``: "LINK mode -- item present, no
+    field writes"), so Preview must not promise the merge. Returns a
+    ``Skip(ALREADY_PRESENT_BY_GUID)`` that says the item is linked and that
+    the compared differences are deliberately not written, or ``None`` when
+    the overwrite must stay in the plan (any other mode, or a match that is
+    not a plain GUID merge: natural-key matches carry the identity the
+    executor resolves references through, and other write modes are not
+    field merges).
+    """
+    if getattr(result, "write_mode", "") != "merge":
+        return None
+    if getattr(result, "match_via", "guid") != "guid":
+        return None
+    try:
+        mode = selection.conflict_mode_for(result.category)
+    except Exception:  # noqa: BLE001 -- unknown category: leave the plan alone
+        return None
+    if mode != ConflictMode.LINK:
+        return None
+    return Skip(
+        category=result.category,
+        source_guid=result.source_guid,
+        reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+        detail=(
+            f"GUID {str(result.source_guid)[:8]}... present in target; LINK "
+            "mode links by GUID and writes no fields, so the differences "
+            f"found are NOT applied ({result.summary})"
+        ),
+    )
+
 
 
 def _walk_verified_closure(context, selection, actions, overwrites) -> tuple:
@@ -1166,6 +1208,79 @@ def expand_lexicon_categories(selection: Selection):
     return dataclasses.replace(selection, categories=categories), (note,)
 
 
+def lexicon_pick_notes(selection: Selection) -> tuple:
+    """Issue #117: say, in Preview, whether AFFIXES / STEMS are narrowed.
+
+    Per-item picks (`affix_picks` / `stem_picks` / `leaf_item_picks`) filter
+    `affixes_enumerate_source` / `stems_enumerate_source`. A selected lexicon
+    carrier with NO picks transfers every entry; that is stated, so an empty
+    pick set is never mistaken for "nothing picked, nothing transferred" or
+    for a filter that silently failed.
+    """
+    notes = []
+    for cat, noun in ((GrammarCategory.AFFIXES, "affix"),
+                      (GrammarCategory.STEMS, "stem")):
+        if not selection.is_on(cat):
+            continue
+        picks = selection.leaf_picks_for(cat)
+        if picks is None:
+            notes.append(
+                f"{cat.value}: no {noun} picks set -- every {noun} entry in "
+                "the source is planned")
+        else:
+            n = len(picks)
+            notes.append(
+                f"{cat.value}: only the {n} picked {noun} "
+                f"entr{'y' if n == 1 else 'ies'} planned (plus the "
+                "dependencies they need); other source entries are left out")
+    return tuple(notes)
+
+
+# Issue #126: mirrors `transfer._ENRICHMENT_CATEGORIES` (POS is aliased to
+# gram_categories); the categories whose ADD runs `_fill_created_pos_collections`.
+_POS_ADD_CATEGORIES = frozenset({
+    GrammarCategory.GRAM_CATEGORIES,
+    GrammarCategory.POS,
+})
+
+
+def _attach_created_pos_children(actions: list, context) -> None:
+    """Issue #126: stamp `PlannedAction.owned_children` on every POS ADD, in
+    place. Read-only on both projects; never breaks Preview (logged)."""
+    if __package__:
+        from . import categories as _cats126
+    else:
+        import categories as _cats126  # type: ignore
+    idx = [i for i, a in enumerate(actions)
+           if isinstance(a, PlannedAction)
+           and a.category in _POS_ADD_CATEGORIES]
+    if not idx:
+        return
+    try:
+        wanted = {str(actions[i].source_guid or "").lower() for i in idx}
+        found = {}
+        for pos in context.source_handle.POS.GetAll(recursive=True):
+            g = (_cats126._guid_str_from(pos) or "").lower()
+            if g in wanted:
+                found[g] = pos
+    except Exception:  # noqa: BLE001 -- Preview must survive; logged
+        _log.exception("build_run_plan: created-POS children gather failed")
+        return
+    for i in idx:
+        a = actions[i]
+        src = found.get(str(a.source_guid or "").lower())
+        if src is None:
+            continue
+        try:
+            rows = _cats126.project_created_pos_children(src, context)
+        except Exception:  # noqa: BLE001
+            _log.exception("build_run_plan: created-POS children projection "
+                           "failed guid=%s", a.source_guid)
+            continue
+        if rows:
+            actions[i] = dataclasses.replace(a, owned_children=rows)
+
+
 def build_run_plan(
     context: RunContext,
     selection: Selection,
@@ -1190,11 +1305,22 @@ def build_run_plan(
     effective selection and a note saying so (`RunPlan.category_notes`).
     """
     selection, _category_notes = expand_lexicon_categories(selection)
+    _category_notes = tuple(_category_notes) + lexicon_pick_notes(selection)
     actions: List[PlannedAction] = []
     skips: List[Skip] = []
     overwrites: List[PlannedOverwrite] = []
     excluded_lossy: List[ExcludedLossy] = []
     identity_remap: dict = {}
+
+    # Issue #146/#165: the run's marked planning cache. Created BEFORE the
+    # (legacy) verb-vertical walk so its overwrite-decision pass shares it
+    # instead of a per-call `{}` (which re-reported repeated CREATEs).
+    _resolver_cache: dict = {}
+    if __package__:
+        from .references import mark_planning_cache as _mark_planning_cache
+    else:
+        from references import mark_planning_cache as _mark_planning_cache  # type: ignore
+    _mark_planning_cache(_resolver_cache)
 
     # Walk every selected POS (or all top-level POSes when categories[POS]
     # is True and pos_picks is empty). For each POS, walk its closure:
@@ -1215,7 +1341,8 @@ def build_run_plan(
         for src_pos in _select_source_poses(source, selection):
             _pos_count += 1
             _plan_pos_closure(source, target, src_pos, selection, actions, skips, overwrites)
-            _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy, identity_remap=identity_remap)
+            _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites, excluded_lossy, identity_remap=identity_remap,
+                                  resolver_cache=_resolver_cache)
     _log.debug(
         "build_run_plan: verb-vertical closure enabled=%s over %d source POS(es); "
         "actions so far=%d", _VERB_VERTICAL_ENABLED, _pos_count, len(actions),
@@ -1311,14 +1438,6 @@ def build_run_plan(
     # item cache for the resolver, mirroring `_dropped` above. Shared across
     # every reference field/owner so a possibility already resolved earlier
     # in the walk short-circuits to LINK without re-deciding.
-    _resolver_cache: dict = {}
-    # Issue #146: a planning cache -- a planned CREATE primes it with a
-    # placeholder so later references show LINK, as Move's real cache does.
-    if __package__:
-        from .references import mark_planning_cache as _mark_planning_cache
-    else:
-        from references import mark_planning_cache as _mark_planning_cache  # type: ignore
-    _mark_planning_cache(_resolver_cache)
     object.__setattr__(context, '_resolver_cache', _resolver_cache)
 
     # Feature 024 (T029/T030, US3, FR-009a): per-run copy-set dict
@@ -1468,7 +1587,11 @@ def build_run_plan(
             if isinstance(result, Skip):
                 skips.append(result)
             elif isinstance(result, PlannedOverwrite):
-                overwrites.append(result)
+                _linked = _link_mode_skip(result, selection)
+                if _linked is not None:
+                    skips.append(_linked)
+                else:
+                    overwrites.append(result)
             elif isinstance(result, (PlannedAction, CreateDefinitionAction)):
                 # CreateDefinitionAction (custom-field schema create) is a
                 # standalone dataclass, NOT a PlannedAction subclass. Without
@@ -1620,6 +1743,15 @@ def build_run_plan(
     # `_resolver_cache` (genres/tags) and `_dropped` collectors as the rest of
     # the walk so the never-silent guarantee is uniform (FR-023).
     _text_plans: list = []
+    # Issue #166: the source GUIDs of every POS this run will CREATE, so a
+    # wordform analysis whose CategoryRA is one of them plans a LINK (rebound at
+    # Move once the grammar leg has created it) instead of a drop. POS creation
+    # preserves the source GUID, so the GUID is the join key.
+    object.__setattr__(context, '_planned_pos_guids', {
+        str(a.source_guid).lower() for a in actions
+        if getattr(a, 'category', None) in (GrammarCategory.GRAM_CATEGORIES,
+                                            GrammarCategory.POS)
+        and getattr(a, 'source_guid', None)})
     if selection.is_on(GrammarCategory.TEXTS):
         if __package__:
             from .texts import plan_texts as _plan_texts
@@ -1672,6 +1804,11 @@ def build_run_plan(
         actions, overwrites, skips, _LEAF_DISPATCH_CATEGORIES,
         _pull_in_pieces, _deselected_but_present,
     )
+
+    # Issue #126 (Principle III): project the owned children each created POS
+    # will receive, so Preview lists what `_fill_created_pos_collections`
+    # writes. After the pull-in: a pulled-in POS is an ADD too.
+    _attach_created_pos_children(actions, context)
 
     # Issue #33: narrow `msa_slot_bindings` from "every bound MSA in the
     # source" to "the bindings THIS RUN touches". Runs here, after the
@@ -1740,7 +1877,7 @@ def build_run_plan(
         len(actions), len(skips), len(overwrites), len(excluded_lossy), len(_dropped),
         len(_closure_edges), len(_incompleteness), len(_enrichments),
     )
-    return RunPlan(
+    _plan = RunPlan(
         context=context,
         selection=selection,
         ws_mapping=ws_mapping,
@@ -1802,6 +1939,13 @@ def build_run_plan(
         # Issues #141/#142: lexical-relation + new relation-type CREATEs.
         lexical_relation_decisions=tuple(_lexical_relation_records or ()),
     )
+    # Issue #139: remember Preview's Wire count so the Move tail can check it.
+    try:
+        object.__setattr__(_plan, "expected_type_ra_writes",
+                           count_complex_feature_type_ra_wires(_plan))
+    except Exception:  # noqa: BLE001 -- bookkeeping must never break planning
+        pass
+    return _plan
 
 
 # ============================================================================
@@ -1845,6 +1989,11 @@ def render_reversal_decisions(plan: RunPlan) -> Tuple[str, ...]:
         return ()
     by_ws: dict = {}
     for decision in plan.reversal_decisions:
+        if not decision.reversal_form_alts:
+            # Issue #188 parity: Move drops a formless top-level entry
+            # before creating/linking its index, so Preview must not
+            # announce an index (or an entry) that Move will never write.
+            continue
         by_ws.setdefault(decision.target_ws_id, []).append(decision)
 
     lines: List[str] = []
@@ -2056,6 +2205,13 @@ def render_complex_feature_type_refs(plan: RunPlan) -> Tuple[str, ...]:
     return tuple(lines)
 
 
+def count_complex_feature_type_ra_wires(plan: RunPlan) -> int:
+    """Number of "Wire" rows `render_complex_feature_type_refs` shows (issue
+    #139): the TypeRA write count Preview promises Move."""
+    return sum(1 for r in render_complex_feature_type_refs(plan)
+               if r.strip().startswith("Wire"))
+
+
 def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
     """Issue #108 (Principle III): render `plan.struct_type_feature_refs` --
     one row per in-scope struct-type (both feature systems), classified by
@@ -2119,13 +2275,17 @@ def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
 # Issue #116: the sense fields whose resolver decisions the Preview pane
 # itemizes. Feature 030's two fields only -- they are the ones that can CREATE
 # new possibility-list items (thesaurus) or LINK project-level appendixes the
-# user may not know are shared. The 024 reference-field rows on the same
-# `PlannedAction.reference_decisions` tuple are deliberately not rendered here
-# (they include one owned-object CREATE row per example/pronunciation and
-# would swamp the pane); see the #116 implementation report.
+# user may not know are shared. The other reference-decision rows on the same
+# `PlannedAction.reference_decisions` tuple (they include one owned-object
+# CREATE row per example/pronunciation) are NOT itemized per row; issue #143
+# renders them as a per-(owner, field, action) count summary
+# (`render_other_reference_decisions`) and serializes every row in the run
+# report JSON.
 _SENSE_LIST_REF_FIELDS = ("AppendixesRC", "ThesaurusItemsRC")
 
-_SENSE_LIST_REF_LABELS = (
+# Shared by the #116/#147 sense-list renderer and the #144 reversal/text
+# renderer (issue #164: one vocabulary, one order).
+_REF_ACTION_LABELS = (
     ("create", "Create"),
     ("update", "Update"),
     ("link", "Link"),
@@ -2176,6 +2336,35 @@ def _capped_rows(lines, cap: int, noun: str, indent: str = "    ",
     return out
 
 
+def _aggregate_ref_rows(decisions, extract) -> dict:
+    """Shared aggregator (issue #164) behind both Preview renderers: one row
+    per ``(field, action, guid)``.
+
+    `extract(d)` returns ``((field, guid), name, ancestors, owner)``. `owner`
+    is added to the row's `owners` set; when None the row's `count` is bumped
+    instead (decisions without a stable owner GUID)."""
+    rows: dict = {}
+    for d in decisions:
+        act = getattr(getattr(d, "action", None), "value", "")
+        (field, guid), name, ancestors, owner = extract(d)
+        key = (field, act, guid)
+        row = rows.get(key)
+        if row is None:
+            rows[key] = row = {
+                "name": name,
+                "ancestors": ancestors,
+                "owners": set(),
+                "count": 0,
+                "planned": False,
+            }
+        if owner is None:
+            row["count"] += 1
+        else:
+            row["owners"].add(owner)
+        row["planned"] = row["planned"] or bool(getattr(d, "planned", False))
+    return rows
+
+
 def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
     """Issue #116 (030 FR-008, Principle III): render the CREATE / LINK /
     UPDATE / not-transferred decisions the 030 sense resolvers
@@ -2199,27 +2388,17 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
     A LINK to an item this run creates (`planned`) is labelled as such, and
     counted on its own collapse line, so it never reads as already in the
     target."""
-    rows: dict = {}
-    for action in getattr(plan, "actions", ()) or ():
-        for d in getattr(action, "reference_decisions", ()) or ():
-            if getattr(d, "field_name", "") not in _SENSE_LIST_REF_FIELDS:
-                continue
-            act = getattr(getattr(d, "action", None), "value", "")
-            key = (d.field_name, act, d.item_guid)
-            row = rows.get(key)
-            if row is None:
-                rows[key] = row = {
-                    "name": d.item_name,
-                    "ancestors": tuple(getattr(d, "new_ancestors", ()) or ()),
-                    "owners": set(),
-                    "planned": False,
-                }
-            row["owners"].add(d.owner_guid)
-            row["planned"] = row["planned"] or bool(getattr(d, "planned", False))
+    decisions = [
+        d for action in getattr(plan, "actions", ()) or ()
+        for d in getattr(action, "reference_decisions", ()) or ()
+        if getattr(d, "field_name", "") in _SENSE_LIST_REF_FIELDS]
+    rows = _aggregate_ref_rows(decisions, lambda d: (
+        (d.field_name, d.item_guid), d.item_name,
+        tuple(getattr(d, "new_ancestors", ()) or ()), d.owner_guid))
     if not rows:
         return ()
     lines: List[str] = ["  Sense appendix / thesaurus references:"]
-    for act, label in _SENSE_LIST_REF_LABELS:
+    for act, label in _REF_ACTION_LABELS:
         keys = sorted(k for k in rows if k[1] == act)
         if act == "link" and len(keys) > SENSE_LIST_REF_ROW_CAP:
             # Issue #147: collapse to one count line per field. Items this
@@ -2266,77 +2445,67 @@ def render_sense_list_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
 # reference decisions
 # ============================================================================
 
-# Row cap: shares `SENSE_LIST_REF_ROW_CAP` (single source of truth). Rows past
-# it collapse into one "+N more" line. #147's `_capped_rows` is NOT reused
-# because it emits a different string ("... and N more ... not shown here").
-
-# Same vocabulary and order as `_SENSE_LIST_REF_LABELS`.
-_REF_DECISION_LABELS = (
-    ("create", "Create"),
-    ("update", "Update"),
-    ("link", "Link"),
-    ("report_dropped", "Not transferred"),
-)
-
+# Row cap: shares `SENSE_LIST_REF_ROW_CAP` and `_capped_rows` with the #147
+# sense-list renderer, PER ACTION KIND (issue #164), so a flood of Link rows
+# cannot push Create / Not-transferred rows (which carry reasons) out of the
+# pane. Both renderers emit the same "... and N more ... not shown here" line.
 
 def _ref_decision_rows(decisions) -> dict:
     """Aggregate live `ReferenceDecision`s to one row per (action, item GUID)
     with the number of owners that reference it. The item is named from
     `source_item` (a CREATE has no `target_item`); a CREATE row also carries
     the ancestors in its chain (`ancestors_to_create[:-1]`), which Move
-    creates only when the target lacks them."""
+    creates only when the target lacks them.
+
+    Issue #164: same aggregation core as the sense-list renderer
+    (`_aggregate_ref_rows`); only the key/name extraction differs."""
     if __package__:
         from . import references as _references
     else:
         import references as _references  # type: ignore
-    rows: dict = {}
-    for d in decisions:
-        act = getattr(getattr(d, "action", None), "value", "")
+
+    def _extract(d):
         item = getattr(d, "source_item", None)
         guid = _references._guid_str(item) if item is not None else ""
         if not guid and getattr(d, "dropped", None) is not None:
             guid = d.dropped.item_guid
-        row = rows.get((act, guid))
-        if row is None:
-            name = _references._item_label(item) if item is not None else ""
-            if not name and getattr(d, "dropped", None) is not None:
-                name = d.dropped.item_name
-            chain = tuple(getattr(d, "ancestors_to_create", ()) or ())[:-1]
-            rows[(act, guid)] = row = {
-                "name": name,
-                "ancestors": tuple(_references._item_label(a) for a in chain),
-                "count": 0,
-                "planned": False,
-            }
-        row["count"] += 1
-        row["planned"] = row["planned"] or bool(getattr(d, "planned", False))
-    return rows
+        name = _references._item_label(item) if item is not None else ""
+        if not name and getattr(d, "dropped", None) is not None:
+            name = d.dropped.item_name
+        chain = tuple(getattr(d, "ancestors_to_create", ()) or ())[:-1]
+        return (("", guid), name,
+                tuple(_references._item_label(x) for x in chain), None)
+
+    rows = _aggregate_ref_rows(decisions, _extract)
+    return {(k[1], k[2]): v for k, v in rows.items()}
 
 
 def _render_ref_decision_section(title: str, rows: dict, unit: str,
                                  units: str) -> List[str]:
     """One titled block of Create/Update/Link/Not-transferred rows, capped at
-    `SENSE_LIST_REF_ROW_CAP` rows."""
+    `SENSE_LIST_REF_ROW_CAP` rows PER ACTION KIND (issue #164)."""
     if not rows:
         return []
     body: List[str] = []
-    for act, label in _REF_DECISION_LABELS:
+    for act, label in _REF_ACTION_LABELS:
+        kind_lines: List[str] = []
         for key in sorted(k for k in rows if k[0] == act):
             row = rows[key]
             n = row["count"]
             line = (f"    {label}  '{row['name']}' {{{key[1]}}}"
                     f"  ({n} {unit if n == 1 else units})")
             if act == "create" and row["ancestors"]:
-                line += (" -- under " + " > ".join(f"'{a}'" for a in row["ancestors"])
+                line += (" -- under " + " > ".join(f"'{x}'" for x in row["ancestors"])
                          + " (created too if absent)")
             if act == "link" and row["planned"]:
                 line += PLANNED_LINK_ROW_SUFFIX
             if act == "report_dropped":
                 line += " -- see dropped items for the reason"
-            body.append(line)
-    if len(body) > SENSE_LIST_REF_ROW_CAP:
-        extra = len(body) - SENSE_LIST_REF_ROW_CAP
-        body = body[:SENSE_LIST_REF_ROW_CAP] + [f"    +{extra} more"]
+            kind_lines.append(line)
+        body.extend(_capped_rows(
+            kind_lines, SENSE_LIST_REF_ROW_CAP, f"{label} rows",
+            suffix=("; the dropped-items list names every one"
+                    if act == "report_dropped" else "")))
     lines = [f"  {title}:"] + body
     # A Create row with planned Link rows for the same GUID: Move creates the
     # item once and the other references link to it.
@@ -2352,6 +2521,42 @@ def _iter_reversal_pos_decisions(decisions):
         if decision.pos_decision is not None:
             yield decision.pos_decision
         yield from _iter_reversal_pos_decisions(decision.sub_entry_decisions)
+
+
+def render_other_reference_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #143 (Principle III): per-category SUMMARY of the reference
+    decisions on `PlannedAction` / `PlannedOverwrite.reference_decisions`
+    that no other renderer shows -- owned children, pictures, entry-ref
+    types, allomorph refs, relation types.
+
+    Design decision: a count per (owner kind, field, action), NOT one row per
+    decision. These rows are one-per-example/pronunciation/picture and would
+    swamp the pane; the complete per-row list is serialized in the run
+    report JSON (`reference_decisions`). Row count is bounded by the number
+    of distinct field names, so no cap is needed. The 030 sense appendix /
+    thesaurus fields are excluded (`render_sense_list_reference_decisions`
+    itemizes them). Returns `()` when there are none."""
+    counts: dict = {}
+    items = (tuple(getattr(plan, "actions", ()) or ())
+             + tuple(getattr(plan, "overwrites", ()) or ()))
+    for item in items:
+        for d in getattr(item, "reference_decisions", ()) or ():
+            if getattr(d, "field_name", "") in _SENSE_LIST_REF_FIELDS:
+                continue
+            act = getattr(getattr(d, "action", None), "value", "")
+            key = (getattr(d, "owner_kind", ""), getattr(d, "field_name", ""),
+                   act)
+            counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return ()
+    labels = dict(_REF_ACTION_LABELS)
+    lines: List[str] = ["  Other reference decisions (summary; the run report "
+                        "JSON lists every one):"]
+    for (owner, field_name, act) in sorted(counts):
+        n = counts[(owner, field_name, act)]
+        lines.append(f"    {labels.get(act, act)}  {owner}.{field_name}: "
+                     f"{n} reference{'s' if n != 1 else ''}")
+    return tuple(lines)
 
 
 def render_reversal_and_text_decisions(plan: RunPlan) -> Tuple[str, ...]:
@@ -2402,6 +2607,23 @@ def render_reversal_and_text_decisions(plan: RunPlan) -> Tuple[str, ...]:
     return tuple(lines)
 
 
+def render_entryref_update_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #127 (Principle III): one Update row per change Move will make to
+    a LexEntryRef already present in the target (value merge of
+    HideMinorEntry/Summary, and C2 lexeme link additions), from the UPDATE
+    `ReferenceDecisionRecord`s of owner_kind "LexEntryRef"."""
+    rows = [
+        f"    Update  LexEntryRef {{{d.owner_guid}}}  {d.field_name}: {d.item_name}"
+        for action in getattr(plan, "actions", ()) or ()
+        for d in getattr(action, "reference_decisions", ()) or ()
+        if getattr(d, "owner_kind", "") == "LexEntryRef"
+        and getattr(getattr(d, "action", None), "value", "") == "update"]
+    if not rows:
+        return ()
+    return tuple(["  Existing entry references (updated in the target):"]
+                 + _capped_rows(rows, SENSE_LIST_REF_ROW_CAP, "Update rows"))
+
+
 def render_lexical_relation_decisions(plan: RunPlan) -> Tuple[str, ...]:
     """Issues #141/#142 (Principle III): show the lexical relations Move will
     create, and any relation type it must create first, BEFORE Move writes.
@@ -2414,19 +2636,26 @@ def render_lexical_relation_decisions(plan: RunPlan) -> Tuple[str, ...]:
     if not decisions:
         return ()
     new_types = [d for d in decisions if d.owner_kind == "LexRefType"]
+    # Issue #165: group by type GUID (+ label), not label alone, so two
+    # distinct types that share a name stay separate lines. A record with no
+    # type GUID falls back to label-only grouping.
     per_type: dict = {}
     for d in decisions:
         if d.owner_kind == "LexReference":
             name = d.item_name or "(unnamed type)"
-            per_type[name] = per_type.get(name, 0) + 1
+            key = (name, getattr(d, "type_guid", "") or "")
+            per_type[key] = per_type.get(key, 0) + 1
     lines: List[str] = ["  Lexical relations:"]
     for d in new_types:
         lines.append(f"    Create relation type '{d.item_name or '(unnamed)'}'"
                      f" {{{d.item_guid}}}")
-    for name in sorted(per_type):
-        n = per_type[name]
+    for key in sorted(per_type):
+        name, type_guid = key
+        n = per_type[key]
+        same_label = sum(1 for k in per_type if k[0] == name)
+        suffix = f" {{{type_guid}}}" if type_guid and same_label > 1 else ""
         lines.append(f"    Create {n} relation{'s' if n != 1 else ''} of type "
-                     f"'{name}'")
+                     f"'{name}'{suffix}")
     return tuple(lines)
 
 
@@ -2454,9 +2683,39 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         + tuple(render_complex_feature_type_refs(plan))
         + tuple(render_struct_type_features_rs(plan))
         + tuple(render_sense_list_reference_decisions(plan))
+        + tuple(render_other_reference_decisions(plan))
         + tuple(render_reversal_and_text_decisions(plan))
         + tuple(render_lexical_relation_decisions(plan))
+        + tuple(render_entryref_update_decisions(plan))
     )
+
+
+def safe_preview_extra_lines(plan: RunPlan, render=None) -> Tuple[Tuple[str, ...], str]:
+    """Issue #164 (Principle I): run the Preview extra-lines renderer without
+    letting a renderer bug abort the Preview -- and, on the module paths, the
+    Move that follows it.
+
+    Returns ``(lines, warning)``: `lines` is the renderer's output (``()`` on
+    failure) and `warning` is ``""`` on success, else one line naming the
+    failure for the caller to surface (`report.Warning` / the stats panel).
+    `render` defaults to `render_preview_extra_lines`; callers pass their own
+    module-level name so a patched renderer is honoured. Preview is
+    read-only, so degrading to "no extra lines + a warning" loses nothing
+    that Move depends on."""
+    renderer = render if render is not None else render_preview_extra_lines
+    try:
+        return tuple(renderer(plan)), ""
+    except Exception as exc:  # noqa: BLE001 - boundary: report, don't abort
+        return (), (f"Preview detail lines could not be rendered "
+                    f"({type(exc).__name__}: {exc}); the preview above is "
+                    f"incomplete.")
+
+
+def preview_extra_lines_or_warning(plan: RunPlan, render=None) -> Tuple[str, ...]:
+    """GUI form of `safe_preview_extra_lines` (issue #164): the extra lines,
+    with a trailing ``[WARN]`` line when the renderer failed."""
+    lines, warning = safe_preview_extra_lines(plan, render)
+    return lines + (("[WARN] " + warning,) if warning else ())
 
 
 # ============================================================================
@@ -2580,7 +2839,7 @@ def _rules_missing_ref_warnings(
         """Guess stranded_ref_kind from the rule subclass fields."""
         try:
             from SIL.LCModel import ICmObject
-            class_name = ICmObject(getattr(rule_obj, "concrete", rule_obj)).ClassName
+            class_name = ICmObject(_shared_unwrap(rule_obj)).ClassName
         except Exception:
             class_name = getattr(rule_obj, "class_name",
                                  getattr(rule_obj, "ClassName", "")) or ""
@@ -3541,6 +3800,7 @@ def _plan_layer3_for_pos(
     overwrites: List[PlannedOverwrite],
     excluded_lossy: Optional[List[ExcludedLossy]] = None,
     identity_remap: dict = None,
+    resolver_cache: Optional[dict] = None,
 ) -> None:
     """Layer 3 (LexEntry / Sense / MSA / Allomorph / PhEnvironment) walk for
     affix entries whose IMoInflAffMsa.PartOfSpeechRA points at `src_pos`."""
@@ -3548,6 +3808,7 @@ def _plan_layer3_for_pos(
         source, target, src_pos, selection, actions, skips, overwrites,
         excluded_lossy=excluded_lossy,
         identity_remap=identity_remap if identity_remap is not None else {},
+        resolver_cache=resolver_cache,
     )
 
 
@@ -3627,7 +3888,7 @@ def _plan_verb_vertical_inner(
 
     # ----- Templates + slots -----
     for src_template_wrap in source.MorphRules.GetAllAffixTemplatesForPOS(src_verb):
-        src_template = src_template_wrap.concrete
+        src_template = _shared_unwrap(src_template_wrap)
         tpl_guid = _guid_str(src_template)
 
         slots_present = any(
@@ -3727,6 +3988,7 @@ def _plan_layer3_verb_affixes_inner(
     overwrites: Optional[List[PlannedOverwrite]] = None,
     excluded_lossy: Optional[List[ExcludedLossy]] = None,
     identity_remap: dict = None,
+    resolver_cache: Optional[dict] = None,
 ) -> None:
     """Walk Layer 3 for a single source POS: every source LexEntry whose
     Sense's MSA is an IMoInflAffMsa pointing at this POS. Each yields
@@ -3747,6 +4009,10 @@ def _plan_layer3_verb_affixes_inner(
 
     if identity_remap is None:
         identity_remap = {}
+
+    # Issue #165: run-wide planning cache for the overwrite-decision passes.
+    if resolver_cache is None:
+        resolver_cache = {}
 
     # Per-scope closure for Layer 3 categories.
     # NONE -> closure off for that category; AS_NEEDED or ALL -> closure on.
@@ -3869,6 +4135,7 @@ def _plan_layer3_verb_affixes_inner(
                     reference_decisions=_overwrite_reference_decisions(
                         "LexEntry", entry_guid, entry, target,
                         _OVERWRITE_ENTRY_REF_FIELDS, source=source,
+                    resolver_cache=resolver_cache,
                     ),
                 ))
                 identity_remap[entry_guid] = resolution.target_guid
@@ -3893,6 +4160,7 @@ def _plan_layer3_verb_affixes_inner(
                 reference_decisions=_overwrite_reference_decisions(
                     "LexEntry", entry_guid, entry, target,
                     _OVERWRITE_ENTRY_REF_FIELDS, source=source,
+                resolver_cache=resolver_cache,
                 ),
             ))
             for _sense, sense_guid in sense_actions:
@@ -3907,6 +4175,7 @@ def _plan_layer3_verb_affixes_inner(
                     reference_decisions=_overwrite_reference_decisions(
                         "LexSense", sense_guid, _sense, target,
                         _OVERWRITE_SENSE_REF_FIELDS, source=source,
+                    resolver_cache=resolver_cache,
                     ),
                 ))
             # Phase 1.2 (FR-104): MSAs and Allomorphs are matched by

@@ -305,3 +305,77 @@ class TestPreviewRender:
         target = _FakeTarget([_FakeComplexFeat(F1)], [_FakeType(T1)])
         plan = self._plan(target, {F1: T1})
         assert any("TypeRA" in ln for ln in preview.render_preview_extra_lines(plan))
+
+
+# ============================================================================
+# Issue #139 follow-ups
+# ============================================================================
+
+class TestIssue139:
+
+    def test_picks_asymmetry_is_pinned(self) -> None:
+        """The stash honours INFLECTION_FEATURES picks; the enumerator does not.
+        Latent today (nothing produces such picks). If this fails because the
+        enumerator now filters, fix the pair together and update the note in
+        `_stash_complex_feature_type_ref`."""
+        import inspect
+        src = inspect.getsource(categories.inflection_features_enumerate_source)
+        assert "leaf_picks_for" not in src.replace("`leaf_picks_for(", "")
+        assert "leaf_picks_for(GrammarCategory.INFLECTION_FEATURES)" in \
+            inspect.getsource(categories._stash_complex_feature_type_ref)
+        assert "PICKS ASYMMETRY" in inspect.getsource(
+            categories._stash_complex_feature_type_ref)
+
+    def test_hand_built_plan_derives_type_ra_from_source(self) -> None:
+        t1 = _FakeType(T1)
+        src_feat = _FakeComplexFeat(F1, _FakeType(T1))
+        src = _NS(InflectionFeatures=_NS(FeatureGetAll=lambda: [src_feat]))
+        tgt_feat = _FakeComplexFeat(F1)
+        target = _FakeTarget([tgt_feat], [t1])
+        ctx = _ctx(target)
+        object.__setattr__(ctx, "source_handle", src)
+        action = _NS(category=GrammarCategory.INFLECTION_FEATURES, source_guid=F1)
+        # hand-built: no gathered refs at all
+        object.__setattr__(ctx, "_run_plan", _NS(
+            actions=(action,), complex_feature_type_refs={}))
+        categories._run_complex_feature_type_ra_pass(ctx, target)
+        assert tgt_feat.TypeRA is t1
+        assert ctx._complex_type_ra_writes == 1
+
+    def test_hand_built_plan_without_actions_derives_nothing(self) -> None:
+        src_feat = _FakeComplexFeat(F1, _FakeType(T1))
+        src = _NS(InflectionFeatures=_NS(FeatureGetAll=lambda: [src_feat]))
+        tgt_feat = _FakeComplexFeat(F1)
+        target = _FakeTarget([tgt_feat], [_FakeType(T1)])
+        ctx = _ctx(target)
+        object.__setattr__(ctx, "source_handle", src)
+        object.__setattr__(ctx, "_run_plan", _NS(
+            actions=(), complex_feature_type_refs={}))
+        categories._run_complex_feature_type_ra_pass(ctx, target)
+        assert tgt_feat.TypeRA is None
+
+    def _run_with_expected(self, expected, caplog):
+        import logging
+        t1 = _FakeType(T1)
+        feat = _FakeComplexFeat(F1)
+        target = _FakeTarget([feat], [t1])
+        ctx = _ctx(target)
+        object.__setattr__(ctx, "_run_plan", _NS(
+            actions=(), complex_feature_type_refs={F1: T1},
+            expected_type_ra_writes=expected))
+        with caplog.at_level(logging.WARNING, logger="gramtrans.Lib.categories"):
+            categories._run_complex_feature_type_ra_pass(ctx, target)
+        return [r for r in caplog.records if "Preview promised" in r.getMessage()]
+
+    def test_count_mismatch_warns(self, caplog) -> None:
+        assert len(self._run_with_expected(2, caplog)) == 1
+
+    def test_count_match_or_unknown_is_silent(self, caplog) -> None:
+        assert self._run_with_expected(1, caplog) == []
+        assert self._run_with_expected(None, caplog) == []
+
+    def test_count_helper_matches_render(self) -> None:
+        t1 = _FakeType(T1)
+        target = _FakeTarget([_FakeComplexFeat(F1)], [t1])
+        plan = TestPreviewRender()._plan(target, {F1: T1})
+        assert preview.count_complex_feature_type_ra_wires(plan) == 1
