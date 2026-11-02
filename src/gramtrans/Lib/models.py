@@ -4762,6 +4762,10 @@ class RunReport:
     # Issue #84: `RunPlan.category_notes`, carried through so Preview and
     # Move reports both say how the selection was dispatched.
     category_notes: tuple = ()  # tuple[str, ...]
+    # Issue #143: every ReferenceDecisionRecord the plan's actions/overwrites
+    # carry, flattened, so the run-report JSON serializes them (Preview
+    # computed them but nothing rendered or serialized them).
+    reference_decisions: tuple = ()  # tuple[ReferenceDecisionRecord, ...]
 
     def __post_init__(self) -> None:
         # ---- T080 (SC-010 audit): the ADD bucket's first invariant.

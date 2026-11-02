@@ -438,6 +438,12 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         outcome_counted=not_added is not None,
         # Issue #84: how the selection was dispatched (lexicon expansion).
         category_notes=tuple(getattr(plan, "category_notes", ())),
+        # Issue #143: the 024/029/030 reference decisions the plan carries on
+        # its actions and overwrites, flattened for the JSON artifact.
+        reference_decisions=tuple(
+            d for item in (tuple(getattr(plan, "actions", ()) or ())
+                           + tuple(getattr(plan, "overwrites", ()) or ()))
+            for d in (getattr(item, "reference_decisions", ()) or ())),
         # Feature 038: the four plan-side buckets flow straight through, so
         # the report surfaces below have something to render. All four are
         # empty on a plan built before 038's producers exist, which is why
@@ -1050,6 +1056,9 @@ def _reference_decision_json(d) -> dict:
         "action": _enum_name(action) if action is not None else "",
         "item_name": getattr(d, "item_name", ""),
         "item_guid": getattr(d, "item_guid", ""),
+        "planned": bool(getattr(d, "planned", False)),
+        "new_ancestors": [
+            list(x) for x in (getattr(d, "new_ancestors", ()) or ())],
     }
 
 
@@ -1734,6 +1743,15 @@ def _to_snapshot_json(self) -> str:
     if relocated_items:
         payload["relocated_items"] = [
             _dropped_item_json(d) for d in relocated_items
+        ]
+
+    # Issue #143: every reference decision (owned children, pictures, entry-ref
+    # types, allomorph refs, sense appendix/thesaurus), uncapped. Additive and
+    # omit-when-empty like `relocated_items`, so a run with none is unchanged.
+    reference_decisions = tuple(getattr(self, "reference_decisions", ()))
+    if reference_decisions:
+        payload["reference_decisions"] = [
+            _reference_decision_json(d) for d in reference_decisions
         ]
 
     # ---- Feature 038 (transfer fidelity gaps) --------------------------
