@@ -264,6 +264,11 @@ def _ensure_171_subpass(exec_ctx, target, tag, exec_skips, post_pass_failures=No
 #: `_ensure_matched_nc_segments`, which resolves each member properly.
 _UPDATE_UNWRITABLE_KEYS: dict = {
     GrammarCategory.NATURAL_CLASSES: ("PhonemeGuids",),
+    # Issue #22: `Questions` is an aggregate read of QuestionsOS (owned
+    # ICmDomainQ objects). The base `ApplySyncableProperties` has no
+    # `item.Questions` to write, so leaving it in would force an UPDATE on
+    # every re-run and then be reported as a partial apply.
+    GrammarCategory.SEMANTIC_DOMAINS: ("Questions",),
 }
 
 
@@ -684,6 +689,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Issue #133: (source POS guid, feature guid) pairs enrichment deferred to
     # the InflectableFeatsRC link pass; reconciled after it so none vanishes.
     _deferred_infl_pairs: list = []
+    _src_pos_index: dict = {}  # issue #137: guid -> source POS, built once
     _resolver_cache: dict = {}
     # Issue #130: created here (not at the exec_ctx attach below) so the
     # OVERWRITE loop, which runs first, can record MSA slot-link outcomes on
@@ -1104,6 +1110,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                     ws_map=ws_map, dropped=_dropped,
                     planned_action_guids=_planned_action_guids,
                     deferred_pairs=_deferred_infl_pairs,
+                    src_pos_index=_src_pos_index,
                 )
                 if _fill_rows:  # Issue #126: counted in the Move report
                     _created_pos_children.append(CreatedPosChildren(
@@ -1385,7 +1392,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Fold exactly those (never another leg's projection, which Move re-decides
     # and may resolve). Move's own records go first: on an identity collision
     # the Move-time record and its reason win, and the drop appears once.
-    _report_dropped = merge_dropped_records(_dropped, move_blind_plan_drops(plan))
+    # Issue #192: not for a text Move skipped whole -- its Skip says so.
+    _skipped_texts = ()
+    if isinstance(_text_outcome, dict):
+        _skipped_texts = [getattr(sk, "source_guid", "")
+                          for sk in (_text_outcome.get("skips") or ())]
+    _report_dropped = merge_dropped_records(
+        _dropped, move_blind_plan_drops(plan, _skipped_texts))
     # Feature 038 T045: hand the report the MEASURED enrichment records in
     # place of the plan's PROJECTION, so a Move report says what the writes
     # achieved. Substitution, never addition: `report._build_from_plan` UNIONs
@@ -3440,6 +3453,96 @@ def _check_add_only(field_name, before, live, report_sink, src_guid):
     return True
 
 
+_TEMPLATE_SLOT_SEQS = (
+    "PrefixSlotsRS", "SuffixSlotsRS", "EncliticSlotsRS",
+    "ProcliticSlotsRS", "SlotsRS",
+)
+
+
+def _as_template(obj):
+    """`obj` cast to `IMoInflAffixTemplate` (the `*SlotsRS` sequences are
+    invisible on the base proxy `AffixTemplatesOS` yields); unchanged when the
+    cast is unavailable (offline fakes)."""
+    try:
+        from SIL.LCModel import IMoInflAffixTemplate
+        return IMoInflAffixTemplate(obj)
+    except Exception:  # noqa: BLE001 -- no CLR / not castable: duck-typed
+        return obj
+
+
+def _wire_enriched_template_slots(src_tpl, new_tpl, tgt_pos, target,
+                                  report_sink, src_guid):
+    """Issue #137: give a template CREATED by enrichment its slot references.
+
+    `_create_collection_child` copies scalars only, so the new template had
+    empty `PrefixSlotsRS` / `SuffixSlotsRS` (and the other three sequences),
+    unlike the dedicated `affix_templates_execute_action`, which wires all
+    five by GUID. Same rule here: each source slot is resolved BY GUID, first
+    among the destination POS's own `AffixSlotsOC` (filled just before this
+    collection), then across every destination POS, and appended in source
+    order. A slot that cannot be resolved (typically one deferred to its own
+    SLOTS PlannedAction, which has not run yet) yields a `DroppedItemRecord`
+    rather than a silent hole.
+
+    Returns the list of `DroppedItemRecord` for unresolved slots.
+    """
+    cats = _categories_mod()
+    src_t, new_t = _as_template(src_tpl), _as_template(new_tpl)
+    slot_index: dict = {}
+
+    def _index(slots):
+        for slot in slots or ():
+            g = (cats._guid_str_from(slot) or "").lower()
+            if g:
+                slot_index.setdefault(g, slot)
+
+    _, own_slots = cats._pos_owned_collection(tgt_pos, "AffixSlotsOC")
+    _index(own_slots)
+    scanned_all = False
+    drops: list = []
+    for seq_name in _TEMPLATE_SLOT_SEQS:
+        try:
+            src_seq = getattr(src_t, seq_name, None)
+            tgt_seq = getattr(new_t, seq_name, None)
+        except Exception:  # noqa: BLE001 -- an unreadable member is "absent"
+            continue
+        if not src_seq or tgt_seq is None:
+            continue
+        have = {(cats._guid_str_from(x) or "").lower() for x in tgt_seq}
+        for src_slot in src_seq:
+            sg = (cats._guid_str_from(src_slot) or "").lower()
+            if not sg or sg in have:
+                continue
+            if sg not in slot_index and not scanned_all:
+                scanned_all = True
+                try:
+                    for pos in target.POS.GetAll(recursive=True):
+                        _, slots = cats._pos_owned_collection(
+                            cats._unwrap_lcm(pos), "AffixSlotsOC")
+                        _index(slots)
+                except Exception:  # noqa: BLE001 -- reported as unresolved below
+                    pass
+            slot = slot_index.get(sg)
+            try:
+                if slot is None:
+                    raise LookupError("slot not (yet) present in the destination")
+                tgt_seq.Add(slot)
+                have.add(sg)
+            except Exception as exc:  # noqa: BLE001 -- LCM/COM failures are wide
+                reason = (f"template slot reference not wired: "
+                          f"{type(exc).__name__}: {exc}")
+                drops.append(DroppedItemRecord(
+                    owner_kind=_ENRICH_OWNER_KIND, owner_guid=src_guid,
+                    owner_label=src_guid,
+                    field_name="AffixTemplatesOS." + seq_name,
+                    item_name="IMoInflAffixSlot", item_guid=sg, reason=reason,
+                ))
+                report_sink.Warning(
+                    f"  [enrich] AffixTemplatesOS.{seq_name}: {reason}"
+                    f"  slot={sg[:8]}  guid={src_guid[:8]}")
+    return drops
+
+
 def _create_collection_child(spec, child, receiver, live, target):
     """Create one owned child, GUID preserved, and attach it.
 
@@ -3528,6 +3631,10 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
     already_present = 0
     deferred = 0
     drops: list = []
+    #: drops that belong to a NEW child's own sub-structure (template slot
+    #: refs, a created sub-POS's collections): reported, but not counted
+    #: against this collection's own add/drop accounting.
+    extra_drops: list = []
 
     def _drop(child, reason):
         drops.append(DroppedItemRecord(
@@ -3634,6 +3741,20 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
         added += 1
         candidates.append(new_child)
 
+        if field_name == "AffixTemplatesOS":
+            extra_drops.extend(_wire_enriched_template_slots(
+                child, new_child, tgt_obj, target, report_sink, src_guid))
+        elif spec is not None and spec.recurse:
+            # Issue #137: a sub-POS created here has no PlannedAction of its
+            # own (one that did was deferred above), so nothing else would
+            # ever fill its slots / templates / stem names / ... Same writer,
+            # same deferral rules, one level down (recursing again for any
+            # nested sub-POS).
+            extra_drops.extend(_fill_created_sub_pos(
+                child, new_child, source, target, report_sink, src_guid,
+                ws_map, ws_handles, source_ws_handles, planned_action_guids,
+                deferred_pairs))
+
     _check_add_only(field_name, before, live, report_sink, src_guid)
 
     return EnrichedCollection(
@@ -3643,7 +3764,42 @@ def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
         dropped=len(drops),
         dropped_records=tuple(drops),
         deferred=deferred,
-    ), drops
+    ), drops + extra_drops
+
+
+def _fill_created_sub_pos(src_child, new_child, source, target, report_sink,
+                          owner_guid, ws_map, ws_handles, source_ws_handles,
+                          planned_action_guids, deferred_pairs):
+    """Issue #137: fill the seven owned collections of a sub-POS that
+    enrichment itself just created. Returns its `DroppedItemRecord`s."""
+    cats = _categories_mod()
+    if __package__:
+        from .models import POS_OWNED_COLLECTION_FIELDS
+    else:
+        from models import POS_OWNED_COLLECTION_FIELDS  # type: ignore
+    specs = _enrichment_specs()
+    src_inner = cats._unwrap_lcm(src_child)
+    tgt_inner = cats._unwrap_lcm(new_child)
+    child_guid = cats._guid_str_from(src_child) or owner_guid
+    drops: list = []
+    rows = []
+    for field_name in POS_OWNED_COLLECTION_FIELDS:
+        row, d = _enrich_one_collection(
+            field_name, specs.get(field_name), src_inner, tgt_inner,
+            source, target, report_sink, child_guid, ws_map, ws_handles,
+            source_ws_handles, planned_action_guids,
+            deferred_pairs=deferred_pairs,
+        )
+        drops.extend(d)
+        if row.added or row.dropped:
+            rows.append(row)
+    if rows:
+        report_sink.Info(
+            f"  [enrich] created sub-POS owned collections filled"
+            f"  guid={child_guid[:8]}  " + " | ".join(
+                f"{c.field_name}: added={c.added} dropped={c.dropped}"
+                for c in rows))
+    return drops
 
 
 def _enrich_owned_collections(overwrite, src_obj, tgt_obj, source, target,
@@ -3751,7 +3907,7 @@ def _record_unfilled_pos_collections(action, dropped, reason):
 def _fill_created_pos_collections(action, created, source, target, report_sink,
                                   ws_map=None, dropped=None,
                                   planned_action_guids=frozenset(),
-                                  deferred_pairs=None):
+                                  deferred_pairs=None, src_pos_index=None):
     """Give a POS this run just CREATED its seven owned collections (#107).
 
     `gram_categories_execute_action` creates the POS and copies its scalars;
@@ -3787,14 +3943,20 @@ def _fill_created_pos_collections(action, created, source, target, report_sink,
         from models import POS_OWNED_COLLECTION_FIELDS  # type: ignore
 
     src_guid = (action.source_guid or "").lower()
-    src_obj = None
-    try:
-        for pos in source.POS.GetAll(recursive=True):
-            if (cats._guid_str_from(pos) or "").lower() == src_guid:
-                src_obj = pos
-                break
-    except Exception:  # noqa: BLE001 -- an unreadable source is reported below
-        src_obj = None
+    # Issue #137: one guid -> POS index per run (`src_pos_index`, owned by the
+    # caller), built in a single GetAll pass, instead of an O(n) scan per
+    # created POS.
+    if src_pos_index is None:
+        src_pos_index = {}
+    if not src_pos_index:
+        try:
+            for pos in source.POS.GetAll(recursive=True):
+                g = (cats._guid_str_from(pos) or "").lower()
+                if g:
+                    src_pos_index.setdefault(g, pos)
+        except Exception:  # noqa: BLE001 -- an unreadable source is reported below
+            pass
+    src_obj = src_pos_index.get(src_guid)
     if src_obj is None:
         report_sink.Warning(
             f"  [{action.category.value}] created POS: source object not found,"
@@ -4208,6 +4370,9 @@ _OPS_ACCESSOR_FOR_CATEGORY: dict = {
     GrammarCategory.EXCEPTION_FEATURES:     "ExceptionFeatures",
     GrammarCategory.NATURAL_CLASSES:        "NaturalClasses",
     GrammarCategory.PHONOLOGICAL_FEATURES:  "PhonologicalFeatures",
+    # Issue #22: the Preview plans a Merge for every diverged semantic domain
+    # (measured live: 1730), but with no accessor here each one was a no-op.
+    GrammarCategory.SEMANTIC_DOMAINS:       "SemanticDomains",
     # NOTE: flexicon's FLExProject exposes this Operations class as
     # `.PhonRules`, never `.PhonologicalRules` (see FLExProject.py's
     # `PhonRules` property) -- this entry previously pointed at a
