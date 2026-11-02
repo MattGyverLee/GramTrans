@@ -88,6 +88,7 @@ if __package__:
     )
     from .residue import ImportResidueTag, strip_residue_text
     from . import matcher as _matcher
+    from .lcm_unwrap import unwrap as _shared_unwrap
     from .models import MatchBasis as _MatchBasis
 else:
     from models import (  # type: ignore
@@ -122,6 +123,7 @@ else:
     )
     from residue import ImportResidueTag, strip_residue_text  # type: ignore
     import matcher as _matcher  # type: ignore
+    from lcm_unwrap import unwrap as _shared_unwrap  # type: ignore
     from models import MatchBasis as _MatchBasis  # type: ignore
 
 
@@ -268,15 +270,16 @@ _FEAT_STRUC_MAX_DEPTH = 8
 
 
 def _unwrap_lcm(obj):
-    """The LCM object behind a flexicon wrapper (`._obj`), else `obj` itself.
+    """The LCM object behind a flexicon wrapper, else `obj` itself (#173).
+
+    Delegates to `lcm_unwrap.unwrap` (`.concrete` -> `_concrete` -> `_obj`).
 
     `*_enumerate_source` yields raw LCM objects for some categories and
     flexicon `RuleCollection`-style wrappers for others (see `_guid_str_from`'s
     branch 2). A wrapper does not forward `Cache` or the typed `Fs*` members,
     so unwrap before any structural `getattr`.
     """
-    inner = getattr(obj, "_obj", None)
-    return obj if inner is None else inner
+    return _shared_unwrap(obj)
 
 
 def _cast_to_concrete(obj):
@@ -3548,7 +3551,7 @@ def pos_inflectable_feats_enumerate_source(context: RunContext, selection: Selec
     source = context.source_handle
     results = []
     for pos in _iter_pos(source):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         pos_guid = _guid_str_from(concrete)
         # Issue #58: cast OUTSIDE the read's try, with a duck fallback
         # (`_as_pos`). A cast inside the try silently dropped every fake POS
@@ -3602,7 +3605,7 @@ def pos_inflectable_feats_plan_action(piece, context: RunContext, ws_mapping: WS
     # Check whether the target POS already has this feature defn wired.
     target = context.target_handle
     for pos in _iter_pos(target):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         if _guid_str_from(concrete) != pos_guid:
             continue
         pos_obj_tgt = _as_pos(concrete)  # #58: duck fallback, cast outside try
@@ -3789,7 +3792,7 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
     src_owner_pos = None
     src_owner_pos_guid = None
     for pos in source.POS.GetAll(recursive=True):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         pos_obj = _as_pos(concrete)  # #58: duck fallback, cast outside try
         try:
             for sn in pos_obj.StemNamesOC:
@@ -3872,7 +3875,7 @@ def exception_features_enumerate_source(context: RunContext, selection: Selectio
         return ()
     results = []
     for pos in source.POS.GetAll(recursive=True):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        concrete = _shared_unwrap(pos)
         pos_obj = _as_pos(concrete)  # #58: duck fallback, cast outside try
         try:
             for val in pos_obj.ExceptionFeaturesOC:
@@ -4729,7 +4732,7 @@ def _rule_subclass_info(obj):
     Raises RuntimeError loudly for any unrecognised ClassName (FR-006/SC-008).
     """
     # Unwrap flexicon wrapper if present
-    concrete = getattr(obj, "concrete", obj)
+    concrete = _shared_unwrap(obj)
     try:
         from SIL.LCModel import (
             ICmObject,
@@ -4903,7 +4906,7 @@ def _rules_enumerate_all(source):
     # LCM object to its concrete subclass so subclass-only slots are visible
     # (base-interface-typed OS/OC elements hide them — see _cast_rule_concrete).
     def _unwrap(obj):
-        return _cast_rule_concrete(getattr(obj, "concrete", obj))
+        return _cast_rule_concrete(_shared_unwrap(obj))
 
     # Recurse into an adhoc collection (list-like or OS)
     def _recurse_adhoc(coll):
@@ -5029,7 +5032,7 @@ def adhoc_compound_rules_dependencies(piece):
     # ExcludedLossy warnings, so while it read nothing, a rule referencing a
     # morpheme absent from the target transferred with NO warning -- a silent
     # incompleteness Principle I forbids.
-    concrete = _cast_to_concrete(getattr(piece, "concrete", piece))
+    concrete = _cast_to_concrete(_shared_unwrap(piece))
 
     def _pos_guid_from_msa(msa):
         """Return normalized POS GUID from an owned IMoStemMsa, or None."""
@@ -5587,7 +5590,7 @@ def _as_pos(pos):
     """Unwrap a flexicon wrapper (`.concrete`) and cast to IPartOfSpeech when
     a live LCM host is present; otherwise return the concrete/duck object so
     callbacks run host-free."""
-    concrete = pos.concrete if hasattr(pos, "concrete") else pos
+    concrete = _shared_unwrap(pos)
     try:
         from SIL.LCModel import IPartOfSpeech
         return IPartOfSpeech(concrete)
@@ -16431,7 +16434,7 @@ def phonological_rules_dependencies(piece):
     except ImportError:
         return ()
 
-    raw = getattr(piece, "_obj", getattr(piece, "concrete", piece))
+    raw = _shared_unwrap(piece)
     refs: list[str] = []
 
     def _add(obj):
@@ -16660,7 +16663,7 @@ def _build_rule_rc_index(target, phon_data):
             for pos in pos_ops.GetAll():
                 pg = _guid_str_from(pos)
                 if pg:
-                    pos_by_guid[pg] = getattr(pos, "_obj", pos)
+                    pos_by_guid[pg] = _shared_unwrap(pos)
         except (AttributeError, TypeError):
             pass
     prf_list = getattr(phon_data, "PhonRuleFeatsOA", None) if phon_data is not None else None
@@ -16848,7 +16851,7 @@ def _phon_rule_source_projection(context, target):
             for obj in accessor.GetAll():
                 g = _guid_str_from(obj)
                 if g:
-                    out[g] = getattr(obj, "_obj", obj)
+                    out[g] = _shared_unwrap(obj)
         except (AttributeError, TypeError):
             pass
         return out
@@ -17109,8 +17112,8 @@ def phonological_rules_plan_action(piece, context, ws_mapping):
             target_iter = ()
         tgt_wrapped = _find_target_obj_by_guid(target_iter, src_guid)
         if tgt_wrapped is not None:
-            raw_src = getattr(piece, "_obj", piece)
-            raw_tgt = getattr(tgt_wrapped, "_obj", tgt_wrapped)
+            raw_src = _shared_unwrap(piece)
+            raw_tgt = _shared_unwrap(tgt_wrapped)
             # Issue #52: compare the source rule PROJECTED into the target's
             # identity space (see `_phon_rule_source_projection`), not by raw
             # source GUIDs -- otherwise a rule whose references were wired to
@@ -17540,7 +17543,7 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
     for r in source.PhonRules.GetAll():
         if _guid_str_from(r) == src_guid:
             # PhonRules.GetAll() yields flexicon wrappers; unwrap to raw LCM.
-            src_rule = getattr(r, "_obj", r)
+            src_rule = _shared_unwrap(r)
             break
     if src_rule is None:
         return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
@@ -18500,7 +18503,7 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
         tgt_strat_by_guid = {}
         try:
             for ts in target.Strata.GetAll():
-                tgt_strat_by_guid[_guid_str_from(ts)] = getattr(ts, "_obj", ts)
+                tgt_strat_by_guid[_guid_str_from(ts)] = _shared_unwrap(ts)
         except (AttributeError, TypeError):
             pass
         resolved_initial = (
@@ -18760,7 +18763,7 @@ def _execute_phon_rule_structural_update(overwrite, source, target, report_sink,
     src_rule = None
     for r in source.PhonRules.GetAll():
         if _guid_str_from(r) == src_guid:
-            src_rule = getattr(r, "_obj", r)
+            src_rule = _shared_unwrap(r)
             break
     if src_rule is None:
         report_sink.Warning(

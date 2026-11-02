@@ -27,9 +27,11 @@ from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Set, Tup
 from gramtrans.Lib.ws_fonts import LabelRun, WsRole, runs_to_text
 
 if __package__:
+    from .lcm_unwrap import unwrap as _shared_unwrap
     from .models import (CategoryScope, DroppedItemRecord, GrammarCategory,
                          Selection, SimilarCandidate)
 else:
+    from lcm_unwrap import unwrap as _shared_unwrap  # type: ignore
     from models import (CategoryScope, DroppedItemRecord, GrammarCategory,  # type: ignore
                         Selection, SimilarCandidate)
 
@@ -3104,7 +3106,7 @@ def _rules_walk_adhoc(source):
         except (TypeError, AttributeError):
             return
         for raw in items:
-            obj = getattr(raw, "concrete", raw)
+            obj = _shared_unwrap(raw)
             yield obj, parent_guid
             members = getattr(obj, "MembersOC", None)
             if members is not None:
@@ -3128,7 +3130,7 @@ def _rules_walk_adhoc(source):
     # Flexicon wrapper fallback
     try:
         for raw in source.MorphRules.GetAllAdhocCoProhibitions():
-            obj = getattr(raw, "concrete", raw)
+            obj = _shared_unwrap(raw)
             yield obj, None
             members = getattr(obj, "MembersOC", None)
             if members is not None:
@@ -3144,13 +3146,13 @@ def _rules_walk_compound(source):
     try:
         morph_data = source.Cache.LangProject.MorphologicalDataOA
         for raw in morph_data.CompoundRulesOS:
-            yield getattr(raw, "concrete", raw)
+            yield _shared_unwrap(raw)
         return
     except AttributeError:
         pass
     try:
         for raw in source.MorphRules.GetAllCompoundRules():
-            yield getattr(raw, "concrete", raw)
+            yield _shared_unwrap(raw)
     except (AttributeError, TypeError):
         pass
 
