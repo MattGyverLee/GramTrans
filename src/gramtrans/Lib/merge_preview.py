@@ -1169,6 +1169,27 @@ def _find_target_template_by_guid(target: Any, guid: str, owner_pos_guid: str) -
 # ---- Direct-read fallbacks for gap categories (T026) -----------------------
 
 
+def _lcm_read_errors() -> tuple[type[BaseException], ...]:
+    """Exception classes a direct LCM attribute read may legitimately raise.
+
+    pythonnet surfaces .NET/COM failures as ``System.Exception`` subclasses
+    (which derive from Python's ``Exception``); ordinary Python read failures
+    are ``AttributeError`` / ``TypeError`` / ``ValueError`` / ``LookupError``.
+    Programming errors (``NameError``, ``ImportError``, ...) are deliberately
+    NOT included so they propagate instead of being masked (issue #7 item 1).
+    ``System`` is imported lazily: it is unavailable without a CLR.
+    """
+    errs: tuple[type[BaseException], ...] = (
+        AttributeError, TypeError, ValueError, LookupError,
+    )
+    try:
+        from System import Exception as _NetException  # type: ignore
+        errs = errs + (_NetException,)
+    except Exception:  # noqa: BLE001 -- no CLR (unit tests / no pythonnet)
+        pass
+    return errs
+
+
 def _direct_read_gap(
     obj: Any,
     include_optional_bool: bool = False,
@@ -1200,7 +1221,7 @@ def _direct_read_gap(
             if opt_val is not None:
                 result["Optional"] = bool(opt_val)
 
-    except Exception as _exc:  # noqa: BLE001 — LCM exception types not statically known
+    except _lcm_read_errors() as _exc:
         logging.debug("_direct_read_gap: hard failure reading gap object %r: %s", obj, _exc)
         return None
 
@@ -1235,7 +1256,10 @@ def _ws_defs(handle: Any) -> list[tuple[str, Any]]:
 # Each entry: (ops_attr, finder_fn, needs_owner, is_gap)
 # ops_attr: attribute name on the project handle (flexicon project accessor).
 # finder_fn: callable(target, guid[, owner_guid]) -> obj | None
-# needs_owner: True for template (two-level finder).
+# needs_owner: True when the finder is owner-scoped. Sense/allomorph take
+#   ``owner_entry_guid`` as OPTIONAL (falls back to a global scan, O(N*M) on
+#   large projects); template/slot owners are mandatory but those are gap
+#   categories read via ``_find_gap_object`` (the finder_fn is not used).
 # is_gap: True for Slots / PhonologicalFeatures / StemNames (direct-read fallback).
 #
 # Accessor names flagged "confirm" in data-model.md are CONFIRMED from the
@@ -1474,9 +1498,9 @@ def props_for(
 
     # -- Covered / finder-needed categories via GetSyncableProperties ---------
     try:
-        if needs_owner and resolved == "template":
-            obj = finder_fn(handle, guid, owner_guid)
-        elif needs_owner:
+        # Template is a gap category (handled above), so only the optional-owner
+        # sense/allomorph finders reach here.
+        if needs_owner:
             obj = finder_fn(handle, guid, owner_guid) if owner_guid else finder_fn(handle, guid)
         else:
             obj = finder_fn(handle, guid)
