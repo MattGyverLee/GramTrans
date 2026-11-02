@@ -166,6 +166,7 @@ def test_a_pass_that_raises_midway_keeps_the_pairs_it_settled(monkeypatch):
                        {"pos-num": ["feat-1", "feat-2"]})
     transfer._ensure_infl_feature_links(ctx, target, None, ctx._exec_skips)
     assert [c.guid for c in created.InflectableFeatsRC] == ["feat-1"]
+    assert ctx._infl_feature_link_writes == 1
     drops = _infl_drops(ctx)
     assert [d.item_guid for d in drops] == ["feat-2"]   # feat-1 settled, no drop
 

@@ -13249,6 +13249,28 @@ def _run_infl_feature_link_pass(context, target, tag=None):
     skips = []
     writes = 0
     dropped = getattr(context, "_dropped", None)
+
+    def _flush_infl_link_pass_progress():
+        """Persist partial link-pass tallies even when the loop raises (#171).
+
+        Reconciliation already keeps ``_infl_pairs_settled`` across a mid-pass
+        failure because it is attached before the loop. Without this flush the
+        confirmed write count and the Skip list lived only in locals and were
+        lost when an exception escaped before the function returned."""
+        try:
+            object.__setattr__(
+                context, "_infl_feature_link_writes",
+                int(getattr(context, "_infl_feature_link_writes", 0) or 0)
+                + writes,
+            )
+        except (AttributeError, TypeError):
+            pass
+        if skips:
+            try:
+                object.__setattr__(context, "_infl_feature_link_skips_stash", list(skips))
+            except (AttributeError, TypeError):
+                pass
+
     # Pairs this pass SETTLED (linked, already linked, or dropped with a
     # record). `_reconcile_deferred_infl_pairs` reports every deferred pair
     # that is not in here. Shared across invocations on one context and
@@ -13266,114 +13288,116 @@ def _run_infl_feature_link_pass(context, target, tag=None):
     else:
         bindings = _binding_map(context, "feature_category_links") or {}
 
-    for pos_guid, feature_guids in bindings.items():
-        # IDENTITY FIRST, and through the object repository, because that is
-        # both the cheap answer and the one the offline fakes implement
-        # (`get_object_by_guid`; the contract note above). Only when it finds
-        # nothing does T095's resolver run, which re-tries identity over the
-        # POS scope and then consults the natural key -- so a run where every
-        # GUID was preserved behaves exactly as it did before T095.
-        target_pos = _resolve_target_by_guid(target, pos_guid)
-        if target_pos is None:
-            target_pos = _target_pos_for_source_guid(context, target, pos_guid)
-        if target_pos is None:
-            skips.append(Skip(
-                category=GrammarCategory.GRAM_CATEGORIES,
-                source_guid=pos_guid,
-                reason=SkipReason.DEPENDENCY_UNRESOLVED,
-                detail=(f"pos_guid={pos_guid} not in target after "
-                        "categories+features transfer"),
-            ))
-            continue
-        # CAST DISCIPLINE (research.md T004-C): InflectableFeatsRC requires an
-        # IPartOfSpeech cast on the live LCM runtime; fakes fall through.
-        pos_typed = target_pos
-        try:
-            from SIL.LCModel import IPartOfSpeech
-            pos_typed = IPartOfSpeech(target_pos)
-        except Exception:
-            pos_typed = target_pos
-        feats_rc = getattr(pos_typed, "InflectableFeatsRC", None)
-        if feats_rc is None:
-            skips.append(Skip(
-                category=GrammarCategory.GRAM_CATEGORIES,
-                source_guid=pos_guid,
-                reason=SkipReason.DEPENDENCY_UNRESOLVED,
-                detail=f"InflectableFeatsRC unavailable on target POS {pos_guid}",
-            ))
-            continue
-        for feature_guid in feature_guids:
-            target_feat = _resolve_target_by_guid(target, feature_guid)
-            if target_feat is None:
-                # Issue #133: never silently deferred, and reported ONCE. The
-                # feature is absent from the target (INFLECTION_FEATURES not
-                # selected, or it did not transfer), so the pair cannot be
-                # linked. The DroppedItemRecord is the report; a Skip is
-                # emitted only when there is no drop collector to hold it.
-                if dropped is not None:
-                    _append_dropped_once(dropped, _infl_link_drop(
-                        pos_guid, feature_guid,
-                        "feature definition is not in the target "
-                        "MsFeatureSystemOA.FeaturesOC, so the part of speech "
-                        "cannot be linked to it (select INFLECTION_FEATURES "
-                        "so it transfers first; a later run links it)"))
-                else:
-                    skips.append(Skip(
-                        category=GrammarCategory.INFLECTION_FEATURES,
-                        source_guid=feature_guid,
-                        reason=SkipReason.DEPENDENCY_UNRESOLVED,
-                        detail=(f"feature_guid={feature_guid} not in target "
-                                "after features transfer"),
-                    ))
-                settled.add(_infl_pair_key(pos_guid, feature_guid))
+    try:
+        for pos_guid, feature_guids in bindings.items():
+            # IDENTITY FIRST, and through the object repository, because that is
+            # both the cheap answer and the one the offline fakes implement
+            # (`get_object_by_guid`; the contract note above). Only when it finds
+            # nothing does T095's resolver run, which re-tries identity over the
+            # POS scope and then consults the natural key -- so a run where every
+            # GUID was preserved behaves exactly as it did before T095.
+            target_pos = _resolve_target_by_guid(target, pos_guid)
+            if target_pos is None:
+                target_pos = _target_pos_for_source_guid(context, target, pos_guid)
+            if target_pos is None:
+                skips.append(Skip(
+                    category=GrammarCategory.GRAM_CATEGORIES,
+                    source_guid=pos_guid,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=(f"pos_guid={pos_guid} not in target after "
+                            "categories+features transfer"),
+                ))
                 continue
-            feat_g = _guid_str_from(target_feat)
-            error = None
+            # CAST DISCIPLINE (research.md T004-C): InflectableFeatsRC requires an
+            # IPartOfSpeech cast on the live LCM runtime; fakes fall through.
+            pos_typed = target_pos
             try:
-                already = any(
-                    (existing is target_feat) or (_guid_str_from(existing) == feat_g)
-                    for existing in feats_rc
-                )
-                if already:
+                from SIL.LCModel import IPartOfSpeech
+                pos_typed = IPartOfSpeech(target_pos)
+            except Exception:
+                pos_typed = target_pos
+            feats_rc = getattr(pos_typed, "InflectableFeatsRC", None)
+            if feats_rc is None:
+                skips.append(Skip(
+                    category=GrammarCategory.GRAM_CATEGORIES,
+                    source_guid=pos_guid,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=f"InflectableFeatsRC unavailable on target POS {pos_guid}",
+                ))
+                continue
+            for feature_guid in feature_guids:
+                target_feat = _resolve_target_by_guid(target, feature_guid)
+                if target_feat is None:
+                    # Issue #133: never silently deferred, and reported ONCE. The
+                    # feature is absent from the target (INFLECTION_FEATURES not
+                    # selected, or it did not transfer), so the pair cannot be
+                    # linked. The DroppedItemRecord is the report; a Skip is
+                    # emitted only when there is no drop collector to hold it.
+                    if dropped is not None:
+                        _append_dropped_once(dropped, _infl_link_drop(
+                            pos_guid, feature_guid,
+                            "feature definition is not in the target "
+                            "MsFeatureSystemOA.FeaturesOC, so the part of speech "
+                            "cannot be linked to it (select INFLECTION_FEATURES "
+                            "so it transfers first; a later run links it)"))
+                    else:
+                        skips.append(Skip(
+                            category=GrammarCategory.INFLECTION_FEATURES,
+                            source_guid=feature_guid,
+                            reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                            detail=(f"feature_guid={feature_guid} not in target "
+                                    "after features transfer"),
+                        ))
                     settled.add(_infl_pair_key(pos_guid, feature_guid))
                     continue
-                feats_rc.Add(target_feat)
-            except Exception as exc:  # noqa: BLE001 -- reported, not swallowed
-                error = f"{type(exc).__name__}: {exc}"
-            # Issue #133: read the collection BACK (the #111/#120 model). An
-            # Add that returned normally proves nothing; only membership on
-            # read-back counts the pair as linked.
-            confirmed, readback_error = _infl_feat_in_collection(
-                feats_rc, target_feat, feat_g)
-            if confirmed:
-                writes += 1
+                feat_g = _guid_str_from(target_feat)
+                error = None
+                try:
+                    already = any(
+                        (existing is target_feat) or (_guid_str_from(existing) == feat_g)
+                        for existing in feats_rc
+                    )
+                    if already:
+                        settled.add(_infl_pair_key(pos_guid, feature_guid))
+                        continue
+                    feats_rc.Add(target_feat)
+                except Exception as exc:  # noqa: BLE001 -- reported, not swallowed
+                    error = f"{type(exc).__name__}: {exc}"
+                # Issue #133: read the collection BACK (the #111/#120 model). An
+                # Add that returned normally proves nothing; only membership on
+                # read-back counts the pair as linked.
+                confirmed, readback_error = _infl_feat_in_collection(
+                    feats_rc, target_feat, feat_g)
+                if confirmed:
+                    writes += 1
+                    settled.add(_infl_pair_key(pos_guid, feature_guid))
+                    continue
+                detail = error or readback_error or (
+                    "Add returned normally but the feature is absent from "
+                    "InflectableFeatsRC on read-back")
+                # Not DEPENDENCY_UNRESOLVED: both endpoints resolved, the WRITE
+                # failed. NOT_REPRODUCIBLE is "reached it, cannot faithfully write
+                # it", and the Skip carries the link's own category.
+                skips.append(Skip(
+                    category=GrammarCategory.POS_INFLECTABLE_FEATS,
+                    source_guid=pos_guid,
+                    reason=SkipReason.NOT_REPRODUCIBLE,
+                    detail=(f"WRITE_FAILED: InflectableFeatsRC link "
+                            f"pos={pos_guid} feature={feature_guid}: {detail}"),
+                ))
+                if dropped is not None:
+                    _append_dropped_once(dropped, _infl_link_drop(
+                        pos_guid, feature_guid, "WRITE_FAILED: " + detail))
                 settled.add(_infl_pair_key(pos_guid, feature_guid))
-                continue
-            detail = error or readback_error or (
-                "Add returned normally but the feature is absent from "
-                "InflectableFeatsRC on read-back")
-            # Not DEPENDENCY_UNRESOLVED: both endpoints resolved, the WRITE
-            # failed. NOT_REPRODUCIBLE is "reached it, cannot faithfully write
-            # it", and the Skip carries the link's own category.
-            skips.append(Skip(
-                category=GrammarCategory.POS_INFLECTABLE_FEATS,
-                source_guid=pos_guid,
-                reason=SkipReason.NOT_REPRODUCIBLE,
-                detail=(f"WRITE_FAILED: InflectableFeatsRC link "
-                        f"pos={pos_guid} feature={feature_guid}: {detail}"),
-            ))
-            if dropped is not None:
-                _append_dropped_once(dropped, _infl_link_drop(
-                    pos_guid, feature_guid, "WRITE_FAILED: " + detail))
-            settled.add(_infl_pair_key(pos_guid, feature_guid))
-    # Accumulate (a second invocation links nothing new, so adds 0): the one
-    # count of confirmed links, evidence for the live gate and the report.
-    try:
-        object.__setattr__(context, "_infl_feature_link_writes",
-                           int(getattr(context, "_infl_feature_link_writes", 0)
-                               or 0) + writes)
-    except (AttributeError, TypeError):
-        pass
+    finally:
+        _flush_infl_link_pass_progress()
+        import sys as _sys
+        if _sys.exc_info()[0] is not None and skips:
+            try:
+                object.__setattr__(
+                    context, "_infl_feature_link_skips_stash", list(skips))
+            except (AttributeError, TypeError):
+                pass
     return skips
 
 

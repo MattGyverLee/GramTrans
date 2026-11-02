@@ -364,6 +364,14 @@ def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
                 "execute: InflectableFeatsRC link pass FAILED (swallowed)")
             cause = ("the InflectableFeatsRC link pass raised "
                      f"{type(exc).__name__}: {exc}")
+            # Issue #171: partial skips and the write count are flushed in a
+            # ``finally`` on the pass; recover the skips when the pass did not
+            # return normally.
+            late_skips = getattr(exec_ctx, "_infl_feature_link_skips_stash", None)
+            try:
+                object.__setattr__(exec_ctx, "_infl_feature_link_skips_stash", None)
+            except (AttributeError, TypeError):
+                pass
     # Issue #133: whatever happened above, every deferred pair is reconciled
     # against what the pass settled -- none may vanish without a record.
     try:
