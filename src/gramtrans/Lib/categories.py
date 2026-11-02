@@ -16731,6 +16731,49 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
         )
 
 
+def _try_add_nc_segments_rc_member(tgt_segs, tgt_phon, *, owner_guid, dropped):
+    """Issue #132: never-silent `SegmentsRC.Add` on key-matched PhNCSegments.
+
+    Returns True when the member is present after Add (including idempotent
+    membership), False when Add failed and a drop was recorded (or only logged
+    when ``dropped`` is None).
+    """
+    if tgt_segs is None or tgt_phon is None:
+        return False
+    tgt_guid = _guid_str_from(tgt_phon)
+    if _collection_already_has(tgt_segs, tgt_phon):
+        return True
+    try:
+        tgt_segs.Add(tgt_phon)
+    except (AttributeError, TypeError) as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_try_add_nc_segments_rc_member: SegmentsRC.Add failed for "
+            "PhNCSegments %s (phoneme=%s): %s",
+            owner_guid, tgt_guid, exc,
+            exc_info=True,
+        )
+        if dropped is not None:
+            _append_dropped_once(
+                dropped,
+                DroppedItemRecord(
+                    owner_kind="PhNCSegments",
+                    owner_guid=owner_guid,
+                    owner_label="guid=%s" % _short_guid(owner_guid),
+                    field_name="SegmentsRC",
+                    item_name="guid=%s" % _short_guid(tgt_guid),
+                    item_guid=tgt_guid,
+                    reason=(
+                        f"SegmentsRC.Add failed: {type(exc).__name__}: {exc}"
+                    ),
+                ),
+            )
+        return False
+    if not _collection_already_has(tgt_segs, tgt_phon):
+        return False
+    return True
+
+
 def _wire_matched_nc_segments(context, target, plan):
     """Union a key-matched starter `PhNCSegments`' members with its source
     class's members (issue #54). Add-only; never removes a member.
@@ -16818,9 +16861,12 @@ def _wire_matched_nc_segments(context, target, plan):
             tgt_guid = _guid_str_from(tgt_phon)
             if tgt_guid in present:
                 continue
-            tgt_segs.Add(tgt_phon)
-            present.add(tgt_guid)
-            added_total += 1
+            if _try_add_nc_segments_rc_member(
+                    tgt_segs, tgt_phon,
+                    owner_guid=ov.target_guid,
+                    dropped=dropped):
+                present.add(tgt_guid)
+                added_total += 1
     if added_total:
         import logging as _logging
         _logging.getLogger("gramtrans.Lib.categories").info(
