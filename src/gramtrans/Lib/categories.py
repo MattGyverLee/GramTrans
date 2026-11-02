@@ -7485,7 +7485,7 @@ def _target_lex_ref_types(target):
     return types, by_guid
 
 
-def _create_target_lex_ref_type(source_type, ctx, dropped):
+def _create_target_lex_ref_type(source_type, ctx, dropped, *, record_failure=True):
     """Create the destination counterpart of `source_type` -- the second half
     of T123's closing ruling, and the leg REACHED ONLY when the natural key
     found nothing.
@@ -7536,16 +7536,17 @@ def _create_target_lex_ref_type(source_type, ctx, dropped):
             "_create_target_lex_ref_type: create failed for %s: %s",
             type_guid, exc, exc_info=True,
         )
-        _append_dropped_once(dropped, DroppedItemRecord(
-            owner_kind="LexRefType",
-            owner_guid=type_guid,
-            owner_label=_lex_ref_type_label(source_type),
-            field_name="MembersOC",
-            item_name=_lex_ref_type_label(source_type),
-            item_guid=type_guid,
-            reason=(f"lexical relation type absent from target and could not "
-                    f"be created: {type(exc).__name__}"),
-        ))
+        if record_failure:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexRefType",
+                owner_guid=type_guid,
+                owner_label=_lex_ref_type_label(source_type),
+                field_name="MembersOC",
+                item_name=_lex_ref_type_label(source_type),
+                item_guid=type_guid,
+                reason=(f"lexical relation type absent from target and could not "
+                        f"be created: {type(exc).__name__}"),
+            ))
         return None
 
     typed = _as_lex_ref_type(new_type) or new_type
@@ -7960,18 +7961,11 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False,
                     type_guid, _lex_ref_type_label(source_type))
         else:
             target_type = _create_target_lex_ref_type(
-                source_type, ctx, dropped)
+                source_type, ctx, dropped, record_failure=False)
             if target_type is None:
-                # KNOWN P2 (issue #163 QC cycle 1; comment only, behaviour
-                # deliberately unchanged): when the type create ITSELF fails
-                # here, Move emits TWO records for one loss --
-                # `_create_target_lex_ref_type`'s LexRefType "could not be
-                # created" record (keyed by type_guid) AND
-                # `_append_type_not_found`'s per-relation record (keyed by
-                # rel_guid) -- while Preview, which only records
-                # `pending_types` and never attempts the create, emits NONE
-                # for the same relation. The two modes' drop lists therefore
-                # differ on this (unpredictable, factory-failure) path.
+                # Issue #186: lazy create failure is reported once via
+                # `_append_type_not_found` (per-relation key). The create
+                # helper must not also append its type-keyed record.
                 _append_type_not_found(dropped, source_type, type_guid,
                                        rel_guid)
                 return None
