@@ -175,8 +175,36 @@ def _strip_ref_fields(src_props: dict, fields) -> None:
 # Public API
 # ============================================================================
 
+# Issue #132 (never-silent audit): post-loop `_ensure_*` safety nets used to
+# log swallowed exceptions only. Each pass gets a stable synthetic
+# `source_guid` so `LeafExecutionFailure` validation passes.
 
-def _ensure_171_subpass(exec_ctx, target, tag, exec_skips):
+
+def _record_post_pass_failure(
+    failures: list | None,
+    *,
+    pass_name: str,
+    category: GrammarCategory,
+    exc: BaseException | None = None,
+    message: str | None = None,
+) -> None:
+    if failures is None:
+        return
+    if exc is not None:
+        exc_type = type(exc).__name__
+        detail = message or str(exc)
+    else:
+        exc_type = "PostPassFailed"
+        detail = message or pass_name
+    failures.append(LeafExecutionFailure(
+        category=category,
+        source_guid=f"post-pass:{pass_name}",
+        exception_type=exc_type,
+        message=detail,
+    ))
+
+
+def _ensure_171_subpass(exec_ctx, target, tag, exec_skips, post_pass_failures=None):
     """Run the 17.1 sub-pass if the AFFIX_TEMPLATES tail did not (FR-333).
 
     `categories._run_171_subpass` wires `MoInflAffMsa.SlotsRC` (the affix's
@@ -207,8 +235,14 @@ def _ensure_171_subpass(exec_ctx, target, tag, exec_skips):
         pass
     try:
         late_skips = _run_171_subpass(exec_ctx, target, tag)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 -- must not lose the run's writes
         _log.exception("execute: 17.1 sub-pass safety net FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="171-subpass",
+            category=GrammarCategory.AFFIX_TEMPLATES,
+            exc=exc,
+        )
         return
     if late_skips and exec_skips is not None:
         try:
@@ -231,7 +265,7 @@ _UPDATE_UNWRITABLE_KEYS: dict = {
 }
 
 
-def _ensure_matched_nc_segments(exec_ctx, target, exec_skips):
+def _ensure_matched_nc_segments(exec_ctx, target, exec_skips, post_pass_failures=None):
     """Issue #54: run `categories._wire_matched_nc_segments` once, AFTER the
     leaf-dispatch loop.
 
@@ -256,9 +290,15 @@ def _ensure_matched_nc_segments(exec_ctx, target, exec_skips):
         pass
     try:
         late_skips = _wire_matched_nc_segments(exec_ctx, target, plan)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         _log.exception(
             "execute: key-matched natural-class member pass FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="matched-nc-segments",
+            category=GrammarCategory.NATURAL_CLASSES,
+            exc=exc,
+        )
         return
     if late_skips and exec_skips is not None:
         try:
@@ -267,7 +307,7 @@ def _ensure_matched_nc_segments(exec_ctx, target, exec_skips):
             pass
 
 
-def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips):
+def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips, post_pass_failures=None):
     """Run T119's feature-structure owner pass AFTER every category (038,
     2026-08-28).
 
@@ -316,9 +356,15 @@ def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips):
         pass
     try:
         late_skips = _wire_owner_feat_strucs(exec_ctx, target, plan)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         _log.exception(
             "execute: feature-structure owner pass FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="owner-feat-strucs",
+            category=GrammarCategory.STEMS,
+            exc=exc,
+        )
         return
     if late_skips and exec_skips is not None:
         try:
@@ -327,7 +373,7 @@ def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips):
             pass
 
 
-def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
+def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips, post_pass_failures=None):
     """Issue #133: run `categories._run_infl_feature_link_pass` -- the SINGLE
     writer of a POS's `InflectableFeatsRC` -- once, AFTER the leaf-dispatch
     loop.
@@ -352,6 +398,12 @@ def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
     if getattr(exec_ctx, "_run_plan", None) is None:
         cause = ("the InflectableFeatsRC link pass did not run: the run has "
                  "no RunPlan, so there is no link map to write from")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="infl-feature-links",
+            category=GrammarCategory.INFLECTION_FEATURES,
+            message=cause,
+        )
     else:
         try:
             if __package__:
@@ -364,6 +416,12 @@ def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
                 "execute: InflectableFeatsRC link pass FAILED (swallowed)")
             cause = ("the InflectableFeatsRC link pass raised "
                      f"{type(exc).__name__}: {exc}")
+            _record_post_pass_failure(
+                post_pass_failures,
+                pass_name="infl-feature-links",
+                category=GrammarCategory.INFLECTION_FEATURES,
+                exc=exc,
+            )
     # Issue #133: whatever happened above, every deferred pair is reconciled
     # against what the pass settled -- none may vanish without a record.
     try:
@@ -372,10 +430,16 @@ def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
         else:
             from categories import _reconcile_deferred_infl_pairs  # type: ignore
         _reconcile_deferred_infl_pairs(exec_ctx, cause)
-    except Exception:  # noqa: BLE001 -- reconciliation must not raise out
+    except Exception as exc:  # noqa: BLE001 -- reconciliation must not raise out
         _log.exception(
             "execute: deferred InflectableFeatsRC reconciliation FAILED "
             "(swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="infl-feature-links-reconcile",
+            category=GrammarCategory.INFLECTION_FEATURES,
+            exc=exc,
+        )
     if late_skips and exec_skips is not None:
         try:
             exec_skips.extend(late_skips)
@@ -383,7 +447,7 @@ def _ensure_infl_feature_links(exec_ctx, target, tag, exec_skips):
             pass
 
 
-def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips):
+def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips, post_pass_failures=None):
     """Issue #128: run the LexEntryRef C1 (create + value merge) and C2
     (component/primary wiring) tail passes AFTER the leaf-dispatch loop, on
     any run whose scope includes the lexicon -- including one that planned
@@ -413,6 +477,14 @@ def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips):
     except Exception as exc:  # noqa: BLE001 -- must not raise out of execute()
         _log.exception(
             "execute: entry-ref safety-net import FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="entryref-import",
+            category=GrammarCategory.STEMS,
+            exc=exc,
+            message=("entry-ref safety-net passes did not run: import "
+                     f"failed ({type(exc).__name__}: {exc})"),
+        )
         _dropped_sink = getattr(exec_ctx, "_dropped", None)
         if _dropped_sink is not None:
             _dropped_sink.append(DroppedItemRecord(
@@ -436,8 +508,14 @@ def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips):
             pass
         try:
             late_skips = runner(exec_ctx, target, tag)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             _log.exception("execute: %s safety net FAILED (swallowed)", flag)
+            _record_post_pass_failure(
+                post_pass_failures,
+                pass_name=flag.lstrip("_"),
+                category=GrammarCategory.STEMS,
+                exc=exc,
+            )
             continue
         if late_skips and exec_skips is not None:
             try:
@@ -446,7 +524,7 @@ def _ensure_entryref_passes(exec_ctx, target, tag, exec_skips):
                 pass
 
 
-def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips):
+def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips, post_pass_failures=None):
     """Issue #37: wire `IFsComplexFeature.TypeRA` AFTER the leaf-dispatch
     loop, via `categories._run_complex_feature_type_ra_pass`.
 
@@ -474,9 +552,15 @@ def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips):
         pass
     try:
         late_skips = _run_complex_feature_type_ra_pass(exec_ctx, target)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         _log.exception(
             "execute: complex-feature TypeRA pass FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="complex-feature-type-ra",
+            category=GrammarCategory.INFLECTION_FEATURES,
+            exc=exc,
+        )
         return
     if late_skips and exec_skips is not None:
         try:
@@ -485,7 +569,7 @@ def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips):
             pass
 
 
-def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips):
+def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips, post_pass_failures=None):
     """Issue #108: repair `IFsFeatStrucType.FeaturesRS` (both feature
     systems) AFTER the leaf-dispatch loop, via
     `categories._run_struct_type_features_rs_pass`.
@@ -514,9 +598,15 @@ def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips):
         pass
     try:
         late_skips = _run_struct_type_features_rs_pass(exec_ctx, target)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         _log.exception(
             "execute: struct-type FeaturesRS repair pass FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="struct-type-features-rs",
+            category=GrammarCategory.FEATURE_STRUCT_TYPES,
+            exc=exc,
+        )
         return
     if late_skips and exec_skips is not None:
         try:
@@ -1055,9 +1145,15 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # template tail already ran it.
     # Issue #133: the single InflectableFeatsRC writer, after every POS and
     # feature of the run exists -- and on a run that planned no action at all.
-    _ensure_infl_feature_links(exec_ctx, target, tag, _exec_skips)
+    def _run_post_pass_ensure(fn, *args, **kwargs):
+        nonlocal leaf_failed
+        _before = len(_leaf_execution_failures)
+        fn(*args, post_pass_failures=_leaf_execution_failures, **kwargs)
+        leaf_failed += len(_leaf_execution_failures) - _before
 
-    _ensure_171_subpass(exec_ctx, target, tag, _exec_skips)
+    _run_post_pass_ensure(_ensure_infl_feature_links, exec_ctx, target, tag, _exec_skips)
+
+    _run_post_pass_ensure(_ensure_171_subpass, exec_ctx, target, tag, _exec_skips)
 
     # T119's feature-structure owner pass, AFTER the 17.1 sub-pass and after
     # every category. It used to run INSIDE that sub-pass, i.e. anchored to
@@ -1065,23 +1161,23 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # objects that own 1,003 of the feature structures it is meant to fill.
     # Every one of them resolved to a non-existent owner and was discarded
     # silently. See `_ensure_owner_feat_strucs` for the measurement.
-    _ensure_owner_feat_strucs(exec_ctx, target, tag, _exec_skips)
+    _run_post_pass_ensure(_ensure_owner_feat_strucs, exec_ctx, target, tag, _exec_skips)
 
     # Issue #54: a starter `PhNCSegments` the plan matched by natural key gets
     # its source class's members, after every create (see the helper).
-    _ensure_matched_nc_segments(exec_ctx, target, _exec_skips)
+    _run_post_pass_ensure(_ensure_matched_nc_segments, exec_ctx, target, _exec_skips)
 
     # Issue #128: LexEntryRef value merge + C2 wiring, also on a 0-action
     # re-run (see helper). After every category so all lexemes exist.
-    _ensure_entryref_passes(exec_ctx, target, tag, _exec_skips)
+    _run_post_pass_ensure(_ensure_entryref_passes, exec_ctx, target, tag, _exec_skips)
 
     # Issue #37: complex-feature TypeRA, after every feature and struct-type
     # of the run exists -- and on a re-run that planned neither.
-    _ensure_complex_feature_type_ra(exec_ctx, target, _exec_skips)
+    _run_post_pass_ensure(_ensure_complex_feature_type_ra, exec_ctx, target, _exec_skips)
 
     # Issue #108: struct-type FeaturesRS, after every feature defn and
     # struct-type of the run exists -- and on a re-run that planned neither.
-    _ensure_struct_type_features_rs(exec_ctx, target, _exec_skips)
+    _run_post_pass_ensure(_ensure_struct_type_features_rs, exec_ctx, target, _exec_skips)
 
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check
