@@ -18405,6 +18405,26 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
     return new_rule
 
 
+# LCM PITFALL (issues #47, #163, #189): DELETE THEN SAME-GUID RE-CREATE IN ONE
+# UNIT OF WORK LOSES THE OBJECT.
+#
+# Deleting an LCM object and then creating another object with the SAME GUID
+# inside one unit of work is not safe. Measured live twice:
+#   * #47: a re-created PhSequenceContext / PhSegRuleRHS was persisted with its
+#     PRE-DELETE XML (dangling `objsur` members), see
+#     `_detach_phon_rule_owned_tree`.
+#   * #163: an inline `LexReferences.DeleteType` followed by a lazy re-create of
+#     the type under the source GUID left the target with neither the type nor
+#     its surviving relation. Unit tests and static review both passed that
+#     design; only the live gate caught it.
+# RULES: (1) identity is the GUID, so REUSE or reparent an existing object
+# rather than delete-and-mint; (2) if a discard is unavoidable, it must run
+# where no same-GUID create can follow in the run (e.g. the end-of-run
+# `_sweep_empty_lazy_lex_ref_types`, not inline mid-walk); (3) deleting an
+# object whose GUID will never be created again (a source-absent context, a
+# one-shot rule shell) is fine. Audit of current mid-walk discards: #189.
+
+
 def _delete_pooled_context(pool, ctx):
     """Delete a context that now sits in the `ContextsOS` pool.
 
