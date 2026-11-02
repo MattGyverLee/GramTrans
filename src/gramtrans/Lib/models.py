@@ -3560,16 +3560,20 @@ class RunPlan:
     # additive sibling keyed the same way costs them nothing.
     # Ephemeral per run; not serialised into the run snapshot.
     msa_owner_entry: dict = field(default_factory=dict)  # Guid -> Guid
-    # Phase 3c (FR-340): LexEntryRef component-lexeme bindings deferred
-    # to post-pass A. Shape: {src_entry_guid: {"ComponentLexemesRS": [...],
-    # "PrimaryLexemesRS": [...]}}.
+    # Phase 3c (FR-340): LexEntryRef component-lexeme bindings, one UNION
+    # dict per entry. Shape: {src_entry_guid: {"ComponentLexemesRS": [...],
+    # "PrimaryLexemesRS": [...]}}. Since issue #32 post-pass A (C2,
+    # `_run_post_pass_a`) wires each target ref from its own per-ref record
+    # in `entryref_create_bindings` (matched by ref GUID); this union dict
+    # is only the FALLBACK for a plan without per-ref records.
     lexentry_ref_bindings: dict = field(default_factory=dict)
     # Feature 027 (Complex Forms & Variants, US1/US2/US3, contract C1):
     # per-ref LexEntryRef CREATION bindings -- a parallel, richer sibling of
     # `lexentry_ref_bindings` above (data-model.md's binding extension). One
     # source entry may own multiple refs, so the value is a LIST of per-ref
-    # records (`lexentry_ref_bindings` above stays a single dict per entry
-    # and is kept unchanged so `_run_post_pass_a` (C2) needs no migration).
+    # records (`lexentry_ref_bindings` above stays a single dict per entry;
+    # `_run_post_pass_a` (C2) now prefers these per-ref records and falls
+    # back to that dict only when none exist, see issue #32).
     # Gathered read-only at plan time (`Lib/categories.py._stash_entry_
     # bindings`, extended) and consumed by the Move wiring post-pass
     # `Lib/categories.py._run_entryref_create_pass` (C1, registered via
