@@ -26,7 +26,7 @@ pytest.importorskip("PyQt6")
 
 from gramtrans.Lib import models  # noqa: E402
 from gramtrans.Lib.models import GrammarCategory  # noqa: E402
-from gramtrans.Lib.ui import main_window, selection_wizard, wizard_pages_deferred  # noqa: E402
+from gramtrans.Lib.ui import selection_wizard, wizard_pages_deferred  # noqa: E402
 
 _PART_B = {
     GrammarCategory.INFLECTION_FEATURES,
@@ -88,11 +88,6 @@ def test_schema_categories_have_a_kind_and_default_mode():
         assert cat.value.replace("_", " ").strip()
 
 
-def test_main_window_copy_matches_wizard():
-    # main_window keeps a literal copy (importing the Qt page module from it
-    # would break test_ui_gating's PyQt6 stub); equality is the guard.
-    assert list(main_window._SCHEMA_CATEGORIES) == list(
-        wizard_pages_deferred._SCHEMA_CATEGORIES
-    )
+def test_wizard_reexports_deferred_constants():
     assert selection_wizard._SCHEMA_CATEGORIES is wizard_pages_deferred._SCHEMA_CATEGORIES
     assert selection_wizard._GOLD_RESERVED is wizard_pages_deferred._GOLD_RESERVED

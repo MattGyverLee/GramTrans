@@ -261,6 +261,21 @@ def live():
             selection_transform=sel, preview_only=preview_only)
 
     _restore(SOURCE_NAME)
+    try:
+        res = _run_live(run)
+        yield res
+    finally:
+        # #194: leave both throwaway projects clean, not dirty until next run.
+        for name in (SOURCE_NAME, TARGET_NAME):
+            try:
+                _restore(name)
+            except Exception as exc:  # noqa: BLE001
+                print("[WARN] end-of-run restore of %s failed: %s" % (name, exc))
+
+
+def _run_live(run):
+    import gramtrans
+    import flexicon
     fx = _author_shared()
     _fork_target()
     fx = _author_source_only(fx)

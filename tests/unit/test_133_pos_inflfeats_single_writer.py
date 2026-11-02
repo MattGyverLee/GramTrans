@@ -116,6 +116,46 @@ def test_second_run_writes_zero():
     assert _writes(ctx2) == 0
 
 
+# ---- Add raises AFTER partially applying (issue #178 item 3) ---------------
+
+class _PartialRC(_RC):
+    def Add(self, item):
+        super().Add(item)            # the write lands ...
+        raise RuntimeError("late failure")   # ... then the call raises
+
+
+def test_add_that_raises_after_partial_apply_is_reported_not_counted():
+    fa = _Feat("f-a")
+    pos = _POS("pos-1")
+    pos.InflectableFeatsRC = _PartialRC()
+    target = _Target([pos, fa])
+    ctx = _ctx(target, {"pos-1": ["f-a"]})
+    skips = categories._run_infl_feature_link_pass(ctx, target)
+    assert _writes(ctx) == 0
+    assert [f.guid for f in pos.InflectableFeatsRC] == ["f-a"]
+    assert len(ctx._dropped) == 1
+    assert "partially applying" in ctx._dropped[0].reason
+    assert any("partially applying" in s.detail for s in skips)
+
+
+# ---- wrong-type GUID hit (issue #178 item 1) ---------------------------------
+
+def test_wrong_class_guid_is_unresolved_not_a_write_failure():
+    class _Wrong(_Feat):
+        ClassName = "LexEntry"
+    wrong = _Wrong("f-a")
+    pos = _POS("pos-1")
+    target = _Target([pos, wrong])
+    assert categories._resolve_target_by_guid(
+        target, "f-a", expected_class=("FsClosedFeature",)) is None
+    assert categories._resolve_target_by_guid(target, "f-a") is wrong
+    ctx = _ctx(target, {"pos-1": ["f-a"]})
+    categories._run_infl_feature_link_pass(ctx, target)
+    assert _writes(ctx) == 0
+    assert "not in the target" in ctx._dropped[0].reason
+    assert pos.InflectableFeatsRC.add_calls == 0
+
+
 # ---- no-op Add -> drop record, not counted --------------------------------
 
 @pytest.mark.parametrize("kw", [{"swallow": True}, {"raise_on_add": True}])
@@ -162,15 +202,16 @@ def test_execute_action_records_intent_and_does_not_add():
 
 
 def test_enrichment_has_no_inflectable_feats_writer():
-    src = inspect.getsource(xfer_mod._enrich_one_collection)
+    # Behavioural, not a source scan (issue #178 item 2): the writer helper is
+    # gone, and `test_execute_action_records_intent_and_does_not_add` plus the
+    # deferred-pair tests prove enrichment/execute write nothing.
     assert not hasattr(xfer_mod, "_add_reference_collection_member")
-    assert "_add_reference_collection_member" not in src
-    assert "deferred += 1" in src
 
 
-def test_link_pass_is_not_anchored_to_the_feature_action():
-    src = inspect.getsource(categories.inflection_features_execute_action)
-    assert "_run_tail_once(" not in src
+# Issue #178 item 2: `test_link_pass_is_not_anchored_to_the_feature_action` was
+# an `inspect.getsource` scan for "_run_tail_once(". Its behaviour is covered by
+# `test_zero_action_run_still_links_via_ensure` (links with no feature action)
+# and the count==confirmed-writes tests (a second writer would double-count).
 
 
 # ---- 0-action run still links ---------------------------------------------

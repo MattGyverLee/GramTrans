@@ -64,8 +64,7 @@ _CONFLICT_LABELS = {
 }
 
 # Schema categories for the per-category scope selectors on page 3.
-# `main_window._SCHEMA_CATEGORIES` must stay equal to this list (issue #39 --
-# both copies drifted when coverage Part B added FEATURE_STRUCT_TYPES /
+# (issue #39 -- the UI copy and the engine tables drifted when coverage Part B added FEATURE_STRUCT_TYPES /
 # POS_INFLECTABLE_FEATS / PHON_FEAT_TYPES to the engine, registry and
 # conflict-mode sets but not to the UI).
 # `tests/unit/test_wizard_category_sync.py` pins both against models.py.
@@ -148,7 +147,7 @@ class _PageScopeConflict(QtWidgets.QWizardPage):
     per-run skipping now use the same mechanism -- absence from `flow()` --
     so an unreachable page cannot acquire a number it never shows.
 
-    Re-hosts the existing scope-combo controls from main_window and adds
+    Hosts the scope-combo controls and adds
     per-category ConflictMode selectors gated by the Layer-1 kind table.
 
     The LINK control carries an explicit label ("link existing by ID, else

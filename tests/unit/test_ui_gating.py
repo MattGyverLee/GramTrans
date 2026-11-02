@@ -5,15 +5,14 @@ without rendering any widgets.  Strategy: install MagicMock stubs for
 PyQt6 in sys.modules *before* importing the UI modules, then bypass
 __init__ via __new__() and wire internal state manually.
 
-Four tests land:
+Four groups of tests land:
   1. target_picker  — selected_candidate() returns None with no selection
   2. target_picker  — selected_candidate() returns the right candidate after
                       simulated selection
   3. ws_mapping_dialog — selected_mapping() skips unmapped rows
   4. affix_tree_picker — picker_state() collapses tree checks to PickerState
-  5. main_window       — _collect_selection() translates toggle dict to Selection
 
-Tests for ws_mapping_dialog and main_window are straightforward because their
+Tests for ws_mapping_dialog are straightforward because its
 logic never touches Qt check-state integer comparisons.  The affix_tree_picker
 test requires careful sentinel setup so that the == comparisons inside
 picker_state() resolve correctly.
@@ -101,12 +100,10 @@ from gramtrans.Lib.api import TargetCandidate
 from gramtrans.Lib.ui import target_picker as _tp_mod
 from gramtrans.Lib.ui import ws_mapping_dialog as _wsd_mod
 from gramtrans.Lib.ui import affix_tree_picker as _atp_mod
-from gramtrans.Lib.ui import main_window as _mw_mod
 
 TargetPickerDialog = _tp_mod.TargetPickerDialog
 WSMappingDialog = _wsd_mod.WSMappingDialog
 AffixTreePicker = _atp_mod.AffixTreePicker
-MainWindow = _mw_mod.MainWindow
 
 # The GUID/KIND role constants baked into affix_tree_picker at import time.
 # Use _installed_user_role so they match the module's baked-in values regardless
@@ -346,73 +343,3 @@ class TestAffixTreePickerState:
         state = dlg.picker_state()
 
         assert state == PickerState()
-
-
-# ---------------------------------------------------------------------------
-# 5. main_window — _collect_selection() translates toggles to Selection
-# ---------------------------------------------------------------------------
-
-class TestMainWindowCollectSelection:
-    def _make_toggle(self, checked: bool) -> MagicMock:
-        cb = MagicMock()
-        cb.isChecked.return_value = checked
-        return cb
-
-    def test_checked_categories_appear_in_selection(self):
-        """Only categories whose toggle isChecked()==True appear in
-        Selection.categories with value True."""
-        dlg = _bypass(MainWindow)
-
-        on_cats = {GrammarCategory.POS, GrammarCategory.AFFIXES}
-        off_cats = {GrammarCategory.SLOTS, GrammarCategory.AFFIX_TEMPLATES}
-
-        dlg._toggles = {
-            **{cat: self._make_toggle(True) for cat in on_cats},
-            **{cat: self._make_toggle(False) for cat in off_cats},
-        }
-        closure_cb = MagicMock()
-        closure_cb.isChecked.return_value = True
-        dlg._closure_cb = closure_cb
-        # Pre-set _scope_combos so that getattr() in _collect_selection finds it
-        # without triggering Qt's C++ uninitialized-object guard (raised when a
-        # QObject subclass instance has never had __init__ called and a missing
-        # attribute is accessed via Qt's __getattribute__ override).
-        dlg._scope_combos = {}
-
-        sel = dlg._collect_selection()
-
-        assert sel.categories == {GrammarCategory.POS: True, GrammarCategory.AFFIXES: True}
-        assert sel.include_closure is True
-
-    def test_no_checked_categories_gives_empty_dict(self):
-        """All toggles off → Selection.categories is empty."""
-        dlg = _bypass(MainWindow)
-
-        dlg._toggles = {
-            GrammarCategory.POS: self._make_toggle(False),
-            GrammarCategory.SLOTS: self._make_toggle(False),
-        }
-        closure_cb = MagicMock()
-        closure_cb.isChecked.return_value = False
-        dlg._closure_cb = closure_cb
-        dlg._scope_combos = {}
-
-        sel = dlg._collect_selection()
-
-        assert sel.categories == {}
-        assert sel.include_closure is False
-
-    def test_closure_off_propagates(self):
-        """include_closure mirrors the closure checkbox state."""
-        dlg = _bypass(MainWindow)
-
-        dlg._toggles = {GrammarCategory.POS: self._make_toggle(True)}
-        closure_cb = MagicMock()
-        closure_cb.isChecked.return_value = False
-        dlg._closure_cb = closure_cb
-        dlg._scope_combos = {}
-
-        sel = dlg._collect_selection()
-
-        assert sel.include_closure is False
-        assert sel.categories == {GrammarCategory.POS: True}

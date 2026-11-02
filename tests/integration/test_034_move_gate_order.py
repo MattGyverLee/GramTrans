@@ -1,4 +1,6 @@
-"""T032 / FR-024, SC-003 — the gate sits on the Move path and only there.
+"""(Renamed from test_034_move_gate_live.py, #194: it never opened a project.)
+
+T032 / FR-024, SC-003 — the gate sits on the Move path and only there.
 
 Two claims, and the second matters as much as the first:
 

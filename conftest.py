@@ -120,6 +120,11 @@ _FW_ONLY_TESTS = frozenset({
 
 
 def pytest_collection_modifyitems(config, items):
+    # #194: one live test file per process (native crash otherwise).
+    from _live_guard import multi_live_error
+    _msg = multi_live_error([i.nodeid for i in items])
+    if _msg:
+        raise _pytest.UsageError(_msg)
     if not _NO_FIELDWORKS:
         return
     for item in items:

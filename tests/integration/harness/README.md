@@ -57,6 +57,26 @@ never a hard error.
   snapshot is written to `_snapshots/full_e2e_post.json` on first run and diffed
   on subsequent runs (fails on drift; delete the file to re-baseline).
 
+## Live-run hygiene (#194)
+
+- **One live file per pytest process.** Several live modules in one process
+  crash natively (pythonnet with multiple projects). With
+  `FLEXLIBS_REQUIRE_LIVE=1` the root `conftest.py` aborts collection if more
+  than one `tests/integration/*_live.py` file is selected
+  (`GRAMTRANS_ALLOW_MULTI_LIVE=1` overrides). Run files in separate processes.
+- **`*_live.py` means live.** Tests that never open a project must not carry
+  that suffix (`test_034_move_gate_order.py` was renamed for this reason).
+- **Exit traceback.** `Windows fatal exception: access violation` at interpreter
+  exit with rc=0 is already recorded as benign faulthandler noise in
+  `specs/034-standalone-windows-app/probe-results.md` (reproducible with a bare
+  `import flexicon; FLExInitialize()`); it is not new.
+- **No `live_status.json`.** Decision: GramTrans keeps no run_mode record.
+  Proof a run was live is the `FLEXLIBS_REQUIRE_LIVE=1` gate (a missing project
+  fails instead of skipping), the restore logs, and the GUIDs each test reads
+  back from the project; a static file would be stale evidence.
+- Throwaway-project tests restore their projects at the end of the run
+  (`test_issue168_...` now does, in a `finally`).
+
 ## Selection under test
 
 `build_full_selection()` enables **every** `GrammarCategory` except

@@ -76,8 +76,8 @@ class StatsPanel(QtWidgets.QWidget):
         # reversal Add/Link plan (`Lib/preview.py.render_reversal_
         # decisions`) and the config-view Add/Overwrite/Skip list
         # (`.render_config_view_records`), composed by `Lib/preview.py.
-        # render_preview_extra_lines` and passed in by `main_window.
-        # _on_preview` -- Principle III requires these be shown BEFORE
+        # render_preview_extra_lines` and passed in by `selection_wizard.
+        # _PageFinish._on_dry_run` -- Principle III requires these be shown BEFORE
         # Move ever writes. Hidden (no row reserved) when there is nothing
         # to show, matching the identity-remap section's own posture below.
         self._extra_label = QtWidgets.QLabel(

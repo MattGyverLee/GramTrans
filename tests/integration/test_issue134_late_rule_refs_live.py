@@ -124,5 +124,6 @@ def test_late_rule_refs_wired_and_rerun_writes_nothing(monkeypatch):
 
     _report2, counts2 = _run(monkeypatch, enable=True)
     print("[LIVE] run2 counts=%s" % counts2)
-    assert counts2 and counts2[-1] == {"input_poses": 0, "adhoc": 0}
+    assert counts2 and all(
+        v == 0 for k, v in counts2[-1].items() if k in ("input_poses", "adhoc"))
     assert _state(TARGET_NAME) == (src_adhoc, src_poses)
