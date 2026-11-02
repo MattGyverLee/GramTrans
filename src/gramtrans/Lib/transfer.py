@@ -264,6 +264,11 @@ def _ensure_171_subpass(exec_ctx, target, tag, exec_skips, post_pass_failures=No
 #: `_ensure_matched_nc_segments`, which resolves each member properly.
 _UPDATE_UNWRITABLE_KEYS: dict = {
     GrammarCategory.NATURAL_CLASSES: ("PhonemeGuids",),
+    # Issue #22: `Questions` is an aggregate read of QuestionsOS (owned
+    # ICmDomainQ objects). The base `ApplySyncableProperties` has no
+    # `item.Questions` to write, so leaving it in would force an UPDATE on
+    # every re-run and then be reported as a partial apply.
+    GrammarCategory.SEMANTIC_DOMAINS: ("Questions",),
 }
 
 
@@ -4359,6 +4364,9 @@ _OPS_ACCESSOR_FOR_CATEGORY: dict = {
     GrammarCategory.EXCEPTION_FEATURES:     "ExceptionFeatures",
     GrammarCategory.NATURAL_CLASSES:        "NaturalClasses",
     GrammarCategory.PHONOLOGICAL_FEATURES:  "PhonologicalFeatures",
+    # Issue #22: the Preview plans a Merge for every diverged semantic domain
+    # (measured live: 1730), but with no accessor here each one was a no-op.
+    GrammarCategory.SEMANTIC_DOMAINS:       "SemanticDomains",
     # NOTE: flexicon's FLExProject exposes this Operations class as
     # `.PhonRules`, never `.PhonologicalRules` (see FLExProject.py's
     # `PhonRules` property) -- this entry previously pointed at a
