@@ -1806,6 +1806,10 @@ CENSUS_OWNING_LIST_RULINGS: dict = {
 #     `census_cli.accounted_for_owning_fields` with no run evidence needed.
 #     Only mbugwe holds any (0/39, -39); ejagham and ngoreme are NO_DATA.
 #
+#   * [Issue #137: `PartOfSpeech.ReferenceForms` structures are now copied with
+#     type + specs (`transfer._complete_reference_form_structs`); the -44 /
+#     -26 figures below predate that fix and are to be re-measured by the next
+#     census run, not re-derived here.]
 #   * `PartOfSpeech.ReferenceForms` and `FsComplexValue.Value` -- BOTH LEFT
 #     UNROSTERED, and NOT because the ruling is wrong. T119 correctly rules
 #     both to T045's (CHECKED) create-path, which produces an empty shell

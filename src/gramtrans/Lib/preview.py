@@ -3522,12 +3522,11 @@ def _populate_msa_feat_struc_bindings(source, bindings: dict) -> None:
         on all three pairs (feature 037); `PhPhoneme` transfers for CREATED
         phonemes and not for those matched to the starter inventory, which is
         an enrichment gap owned by T121, not a missing create path.
-      * `PartOfSpeech.ReferenceForms` (5049010) and `CmAnnotation.Features`
-        (34008) -- `ReferenceFormsOC` already has a create path in
-        `transfer.py` that is documented to produce an empty shell (T045's
-        acknowledged depth limit), and annotations are outside this feature's
-        Assumptions. Both are left to be ruled on explicitly rather than
-        half-transferred here.
+      * `PartOfSpeech.ReferenceForms` (5049010) -- issue #137: its structure
+        is filled by `transfer._complete_reference_form_structs` (post-pass,
+        reusing `_read_feat_struc_live` / the shared resolver), not by this
+        producer. `CmAnnotation.Features` (34008) -- annotations are outside
+        this feature's Assumptions; left to be ruled on explicitly.
 
     Keyed by `feat_struc_binding_key(owner_guid, attr)`; see that function for
     why the owner GUID alone would have been a silent bug.
