@@ -11867,6 +11867,29 @@ def _wire_stratum(src_msa, new_msa, target):
 # contracts/msa-slot-wiring.md. Runs as a tail block on AFFIX_TEMPLATES
 # execute_action; also directly unit-tested host-free over duck-typed fakes.
 
+
+def _extend_171_subpass_skips(skips, *, phase, category, run):
+    """Run one 17.1 tail phase without aborting the rest of the sub-pass (#132).
+
+    `_wire_msa_infl_feats` and `_wire_prod_restrictions` used to run bare at
+    the end of `_run_171_subpass`. A raise from either aborted the whole pass
+    (and on the safety-net path only a post-pass log line remained).
+    """
+    try:
+        skips.extend(run())
+    except Exception as exc:  # noqa: BLE001 -- reported, sub-pass continues
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").exception(
+            "17.1 sub-pass: %s failed", phase)
+        skips.append(Skip(
+            category=category,
+            source_guid=f"171-subpass:{phase}",
+            reason=SkipReason.DEPENDENCY_UNRESOLVED,
+            detail=(f"17.1 sub-pass phase {phase} raised "
+                    f"{type(exc).__name__}: {exc}"),
+        ))
+
+
 def _run_171_subpass(context, target, tag=None):
     """Wire IMoInflAffMsa.SlotsRC from plan.msa_slot_bindings after affix MSAs
     and slots are stable in target.
@@ -12031,6 +12054,12 @@ def _run_171_subpass(context, target, tag=None):
             outcome = AffixSlotLinkOutcome.SLOT_MISSING
         else:
             outcome = AffixSlotLinkOutcome.LINKED
+            if write_errors:
+                import logging as _logging
+                _logging.getLogger("gramtrans.Lib.categories").warning(
+                    "17.1 sub-pass: msa_guid=%s: SlotsRC Add raised but "
+                    "read-back shows every resolved slot present (%s)",
+                    src_msa_guid, "; ".join(write_errors))
         _record_affix_slot_link(context, AffixSlotLinkRecord(
             msa_guid=src_msa_guid,
             outcome=outcome,
@@ -12038,10 +12067,12 @@ def _run_171_subpass(context, target, tag=None):
             source_slot_guids=src_slots,
             unresolved_slot_guids=tuple(unresolved_slots),
             unwritten_slot_guids=tuple(unwritten),
-            detail="; ".join(write_errors) if unwritten else "",
+            detail="; ".join(write_errors),
         ))
 
-    skips.extend(_wire_msa_infl_feats(context, target, plan))
+    _extend_171_subpass_skips(
+        skips, phase="infl-feats", category=GrammarCategory.AFFIXES,
+        run=lambda: _wire_msa_infl_feats(context, target, plan))
     # -----------------------------------------------------------------------
     # T119's `_wire_owner_feat_strucs` USED TO BE CALLED HERE AND MUST NOT BE.
     # Moved to `transfer._ensure_owner_feat_strucs` 2026-08-28.
@@ -12076,7 +12107,10 @@ def _run_171_subpass(context, target, tag=None):
     # This sub-pass is the one place guaranteed to run exactly once per
     # transfer regardless of the user's selection, because
     # `transfer._ensure_171_subpass` is its safety net.
-    skips.extend(_wire_prod_restrictions(context, target))
+    _extend_171_subpass_skips(
+        skips, phase="prod-restrict",
+        category=GrammarCategory.INFLECTION_FEATURES,
+        run=lambda: _wire_prod_restrictions(context, target))
     return skips
 
 
