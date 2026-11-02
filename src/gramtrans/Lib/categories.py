@@ -3348,6 +3348,8 @@ STRUCT_TYPE_FEATURE_SYSTEMS = {
 FEATURES_RS_COMPLETE = "complete"
 FEATURES_RS_REPAIR = "repair"          # insert missing members (insert-only)
 FEATURES_RS_REORDERED = "reordered"    # complete, shared order differs: Skip
+# Shared Preview/Move wording (issue #138 cycle-3).
+FEATURES_RS_REORDERED_NOTE = "reordered in target, left as-is"
 FEATURES_RS_CREATE_WIRED = "create_wired"  # planned create; the create path wires it
 FEATURES_RS_TYPE_ABSENT = "type_absent"    # not in the target, not planned: out of scope
 
@@ -3598,7 +3600,7 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                     reason=SkipReason.NEEDS_MANUAL,
                     detail=(f"struct-type {type_guid} FeaturesRS holds every "
                             "source member but in a different order than "
-                            "the source; reordered in target, left as-is"),
+                            f"the source; {FEATURES_RS_REORDERED_NOTE}"),
                 ))
             elif outcome == FEATURES_RS_REPAIR:
                 fs = _target_feature_system(target, attr)
@@ -3621,6 +3623,11 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                                 f"{inserted if inserted else 'nothing'}; no "
                                 "existing member was moved or removed"),
                     ))
+                    # Issue #138: a partial repair still mutated the target;
+                    # the live gate counts writes from this tally, not from
+                    # the Skip alone.
+                    if inserted:
+                        writes += 1
                 else:
                     writes += 1
                     log.info("struct-type %s: FeaturesRS repaired, inserted "
