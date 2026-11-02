@@ -476,7 +476,7 @@ class TestInsertOnly:
         assert len(fail) == 1
         assert "inserted before the failure: ['a-guid']" in fail[0].detail
         assert "left as it was" not in fail[0].detail
-        assert ctx._struct_type_features_rs_writes == 0
+        assert ctx._struct_type_features_rs_writes == 1
 
     def test_insert_failure_on_first_insert_says_nothing_inserted(self) -> None:
         a, b = _Defn(A), _Defn(B)
@@ -486,6 +486,7 @@ class TestInsertOnly:
         ctx, skips = self._run(tgt, {T1: _ref([A, B])})
         assert _guids(t1.FeaturesRS) == []
         assert "inserted before the failure: nothing" in skips[0].detail
+        assert ctx._struct_type_features_rs_writes == 0
 
     def test_one_bad_type_does_not_abort_others_or_lose_drops(self) -> None:
         a, b = _Defn(A), _Defn(B)

@@ -2264,7 +2264,7 @@ def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
         getattr(plan, "actions", ()) or ())
     labels = {
         _cats.FEATURES_RS_REPAIR: "Repair",
-        _cats.FEATURES_RS_REORDERED: "SKIP (reordered in target, left as-is)",
+        _cats.FEATURES_RS_REORDERED: f"SKIP ({_cats.FEATURES_RS_REORDERED_NOTE})",
         _cats.FEATURES_RS_COMPLETE: "SKIP (already complete)",
         _cats.FEATURES_RS_CREATE_WIRED: "Wire at create",
     }
