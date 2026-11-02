@@ -1510,7 +1510,10 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
 # swallowed TypeError before the 1-arg path ran anyway.
 
 def inflection_features_enumerate_source(context: RunContext, selection: Selection):
-    """Walk source.InflectionFeatures.FeatureGetAll()."""
+    """Walk source.InflectionFeatures.FeatureGetAll().
+
+    Deliberately NOT filtered by `leaf_picks_for(INFLECTION_FEATURES)`; see the
+    "PICKS ASYMMETRY" note in `_stash_complex_feature_type_ref` (issue #139)."""
     source = context.source_handle
     if not hasattr(source, "InflectionFeatures"):
         return ()
@@ -2075,6 +2078,14 @@ def _stash_complex_feature_type_ref(piece, context):
     feat_guid = _guid_str_from(piece)
     if not feat_guid:
         return
+    # PICKS ASYMMETRY (issue #139, latent): this stash honours an
+    # INFLECTION_FEATURES leaf-pick subset, but `inflection_features_enumerate_source`
+    # does NOT filter by picks. Nothing produces such picks today (selection.py
+    # / ui/ never write INFLECTION_FEATURES into `leaf_item_picks`), so the two
+    # agree. If picks are ever produced, a feature created outside them (e.g.
+    # pulled in by closure) would get no TypeRA edge from the tail. Change the
+    # stash and the enumerator TOGETHER; `test_picks_asymmetry_is_pinned`
+    # fails when either side moves alone.
     selection = getattr(context, "_selection", None)
     if selection is not None:
         try:
@@ -2148,6 +2159,35 @@ def _classify_complex_type_ra(target, feat_guid, type_guid, *,
     return (TYPE_RA_WIRE, tgt_feat, tgt_type, "")
 
 
+def _derive_complex_feature_type_refs(context):
+    """Fallback for plans not built by `build_run_plan` (issue #139):
+    `{complex_feature_guid: struct_type_guid}` read straight from the source for
+    every INFLECTION_FEATURES action in `context._run_plan`. Never raises;
+    returns `{}` when the source or plan cannot be read."""
+    plan = getattr(context, "_run_plan", None)
+    source = getattr(context, "source_handle", None)
+    if plan is None or not hasattr(source, "InflectionFeatures"):
+        return {}
+    wanted = {str(a.source_guid).lower()
+              for a in (getattr(plan, "actions", ()) or ())
+              if a.category == GrammarCategory.INFLECTION_FEATURES}
+    if not wanted:
+        return {}
+    out = {}
+    try:
+        for piece in source.InflectionFeatures.FeatureGetAll():
+            guid = _guid_str_from(piece)
+            if not guid or str(guid).lower() not in wanted:
+                continue
+            scratch = {}
+            holder = type("_Scratch", (), {"_complex_feature_type_refs": scratch})()
+            _stash_complex_feature_type_ref(piece, holder)
+            out.update(scratch)
+    except Exception:  # noqa: BLE001 -- fallback must never break Move
+        return {}
+    return out
+
+
 def _run_complex_feature_type_ra_pass(context, target, tag=None):
     """Wire `IFsComplexFeature.TypeRA` from `plan.complex_feature_type_refs`
     once every feature and struct-type of the run exists (issue #37).
@@ -2160,6 +2200,13 @@ def _run_complex_feature_type_ra_pass(context, target, tag=None):
     import logging as _logging
     log = _logging.getLogger("gramtrans.Lib.categories")
     refs = _binding_map(context, "complex_feature_type_refs") or {}
+    if not refs:
+        # A plan assembled by hand rather than by `build_run_plan` carries no
+        # gathered edges (issue #139). Derive them from the source for the
+        # INFLECTION_FEATURES actions the plan does carry, so TypeRA is not
+        # left null. A `build_run_plan` plan with no complex features derives
+        # nothing, so this is inert for production plans.
+        refs = _derive_complex_feature_type_refs(context)
     skips = []
     writes = 0
     for feat_guid in sorted(refs):
@@ -2187,6 +2234,16 @@ def _run_complex_feature_type_ra_pass(context, target, tag=None):
         object.__setattr__(context, "_complex_type_ra_writes", writes)
     except (AttributeError, TypeError):
         pass
+    # Runtime Preview-vs-Move check (issue #139). Preview recorded how many
+    # "Wire" rows it showed; a different number of writes means the two
+    # diverged (a second writer, or the target changed between Preview and
+    # Move). Warn rather than raise: the data is not at risk, the report is.
+    expected = getattr(getattr(context, "_run_plan", None),
+                       "expected_type_ra_writes", None)
+    if expected is not None and expected != writes:
+        log.warning(
+            "complex-feature TypeRA: Preview promised %d Wire row(s) but Move "
+            "wrote %d", expected, writes)
     return skips
 
 

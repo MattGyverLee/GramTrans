@@ -3677,6 +3677,10 @@ class RunPlan:
     # post-loop Move tail `categories._run_complex_feature_type_ra_pass` and
     # rendered by `preview.render_complex_feature_type_refs`. Ephemeral per run.
     complex_feature_type_refs: dict = field(default_factory=dict)  # str -> str
+    # Issue #139: how many TYPE_RA "Wire" rows Preview classified at plan time;
+    # the Move tail logs a warning if its write count differs. None = unknown
+    # (hand-built plan), no check.
+    expected_type_ra_writes: Optional[int] = None
     # Issue #84: how build_run_plan reinterpreted the caller's selection
     # before dispatch (ENTRY/SENSE/MSA/ALLOMORPH -> AFFIXES/STEMS, see
     # `preview.expand_lexicon_categories`). One plain sentence per note;
