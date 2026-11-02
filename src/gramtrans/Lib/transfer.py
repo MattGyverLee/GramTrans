@@ -1145,15 +1145,16 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # template tail already ran it.
     # Issue #133: the single InflectableFeatsRC writer, after every POS and
     # feature of the run exists -- and on a run that planned no action at all.
-    def _run_post_pass_ensure(fn, *args, **kwargs):
-        nonlocal leaf_failed
-        _before = len(_leaf_execution_failures)
-        fn(*args, post_pass_failures=_leaf_execution_failures, **kwargs)
-        leaf_failed += len(_leaf_execution_failures) - _before
+    _post_pass_failure_start = len(_leaf_execution_failures)
+    _ensure_infl_feature_links(
+        exec_ctx, target, tag, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
 
-    _run_post_pass_ensure(_ensure_infl_feature_links, exec_ctx, target, tag, _exec_skips)
-
-    _run_post_pass_ensure(_ensure_171_subpass, exec_ctx, target, tag, _exec_skips)
+    _ensure_171_subpass(
+        exec_ctx, target, tag, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
 
     # T119's feature-structure owner pass, AFTER the 17.1 sub-pass and after
     # every category. It used to run INSIDE that sub-pass, i.e. anchored to
@@ -1161,23 +1162,33 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # objects that own 1,003 of the feature structures it is meant to fill.
     # Every one of them resolved to a non-existent owner and was discarded
     # silently. See `_ensure_owner_feat_strucs` for the measurement.
-    _run_post_pass_ensure(_ensure_owner_feat_strucs, exec_ctx, target, tag, _exec_skips)
+    _ensure_owner_feat_strucs(exec_ctx, target, tag, _exec_skips, _leaf_execution_failures)
 
     # Issue #54: a starter `PhNCSegments` the plan matched by natural key gets
     # its source class's members, after every create (see the helper).
-    _run_post_pass_ensure(_ensure_matched_nc_segments, exec_ctx, target, _exec_skips)
+    _ensure_matched_nc_segments(exec_ctx, target, _exec_skips, _leaf_execution_failures)
 
     # Issue #128: LexEntryRef value merge + C2 wiring, also on a 0-action
     # re-run (see helper). After every category so all lexemes exist.
-    _run_post_pass_ensure(_ensure_entryref_passes, exec_ctx, target, tag, _exec_skips)
+    _ensure_entryref_passes(
+        exec_ctx, target, tag, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
 
     # Issue #37: complex-feature TypeRA, after every feature and struct-type
     # of the run exists -- and on a re-run that planned neither.
-    _run_post_pass_ensure(_ensure_complex_feature_type_ra, exec_ctx, target, _exec_skips)
+    _ensure_complex_feature_type_ra(
+        exec_ctx, target, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
 
     # Issue #108: struct-type FeaturesRS, after every feature defn and
     # struct-type of the run exists -- and on a re-run that planned neither.
-    _run_post_pass_ensure(_ensure_struct_type_features_rs, exec_ctx, target, _exec_skips)
+    _ensure_struct_type_features_rs(
+        exec_ctx, target, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
+    leaf_failed += len(_leaf_execution_failures) - _post_pass_failure_start
 
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check
