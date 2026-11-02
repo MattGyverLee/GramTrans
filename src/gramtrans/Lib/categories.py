@@ -3647,6 +3647,20 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                     writes += 1
                     log.info("struct-type %s: FeaturesRS repaired, inserted "
                              "%s", type_guid, inserted)
+                    # Issue #138 cycle-3: insert-only repair does not move
+                    # existing members, so a sequence that was both missing
+                    # members and reordered can still be reordered afterward.
+                    post_outcome, _, _, _, _ = _classify_struct_type_features_rs(
+                        target, system, type_guid, ref["members"])
+                    if post_outcome == FEATURES_RS_REORDERED:
+                        skips.append(Skip(
+                            category=types_cat, source_guid=type_guid,
+                            reason=SkipReason.NEEDS_MANUAL,
+                            detail=(f"struct-type {type_guid} FeaturesRS "
+                                    "missing members were inserted but shared "
+                                    "members remain in a different order than "
+                                    f"the source; {FEATURES_RS_REORDERED_NOTE}"),
+                        ))
             if unresolved:
                 for g, _label in unresolved:
                     log.warning("struct-type %s: FeaturesRS member %s has no "
