@@ -13402,6 +13402,57 @@ def _run_entryref_create_pass(context, target, tag=None):
 # ----- post-pass A: LexEntryRef wiring (FR-340) ----------------------------
 # contracts/post-pass-a.md. Runs as a tail block on STEMS execute_action.
 
+
+def _post_pass_a_seq_has_member(seq, target_lex) -> bool:
+    """Membership test shared by the idempotency guard and Add read-back (#132)."""
+    lex_g = _guid_str_from(target_lex)
+    return any(
+        (existing is target_lex) or (_guid_str_from(existing) == lex_g)
+        for existing in seq
+    )
+
+
+def _add_post_pass_a_ref_member(seq, target_lex, *, field_name, src_entry_guid,
+                                skips):
+    """Wire one lexeme onto a ref collection; never abort the whole pass (#132).
+
+    An unguarded ``seq.Add`` used to abort ``_run_post_pass_a`` mid-entry, so
+    later refs on the same entry (and every later entry) never wired. Failures
+    are reported as Skips; when Add raises but read-back shows the member, we
+    log and continue (read-back is the source of truth, issue #111 parity).
+    """
+    if _post_pass_a_seq_has_member(seq, target_lex):
+        return
+    lex_g = _guid_str_from(target_lex)
+    write_error = None
+    try:
+        seq.Add(target_lex)
+    except Exception as exc:  # noqa: BLE001 -- reported per item
+        import logging as _logging
+        write_error = f"{type(exc).__name__}: {exc}"
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "post-pass A: entry_guid=%s %s Add(%s) raised: %s",
+            src_entry_guid, field_name, lex_g, write_error,
+            exc_info=True,
+        )
+    if write_error and _post_pass_a_seq_has_member(seq, target_lex):
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "post-pass A: entry_guid=%s %s Add raised but read-back shows "
+            "lexeme %s present (%s)",
+            src_entry_guid, field_name, lex_g, write_error,
+        )
+        return
+    if write_error:
+        skips.append(Skip(
+            category=GrammarCategory.STEMS,
+            source_guid=src_entry_guid,
+            reason=SkipReason.DEPENDENCY_UNRESOLVED,
+            detail=(f"{field_name} Add failed for lexeme {lex_g}: "
+                    f"{write_error}"),
+        ))
+
+
 def _run_post_pass_a(context, target, tag=None):
     """Wire ILexEntryRef.ComponentLexemesRS / PrimaryLexemesRS from
     plan.lexentry_ref_bindings after both affix and stem entries are stable.
@@ -13496,14 +13547,10 @@ def _run_post_pass_a(context, target, tag=None):
                                     "unresolved"),
                         ))
                         continue
-                    lex_g = _guid_str_from(target_lex)
-                    already = any(
-                        (existing is target_lex) or (_guid_str_from(existing) == lex_g)
-                        for existing in seq
+                    _add_post_pass_a_ref_member(
+                        seq, target_lex, field_name=field_name,
+                        src_entry_guid=src_entry_guid, skips=skips,
                     )
-                    if already:
-                        continue
-                    seq.Add(target_lex)
     return skips
 
 
