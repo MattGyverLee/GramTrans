@@ -447,7 +447,10 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         reference_decisions=tuple(
             d for item in (tuple(getattr(plan, "actions", ()) or ())
                            + tuple(getattr(plan, "overwrites", ()) or ()))
-            for d in (getattr(item, "reference_decisions", ()) or ())),
+            for d in (getattr(item, "reference_decisions", ()) or ()))
+        # Issue #165 item 2: the lexical-relation decisions live on the plan
+        # itself (not on an action), so fold them into the same list.
+        + tuple(getattr(plan, "lexical_relation_decisions", ()) or ()),
         # Feature 038: the four plan-side buckets flow straight through, so
         # the report surfaces below have something to render. All four are
         # empty on a plan built before 038's producers exist, which is why
@@ -1069,7 +1072,7 @@ def _reference_decision_json(d) -> dict:
     """Tolerant serializer for a `ReferenceDecisionRecord` carried on a
     process-rule record's `reference_decisions`."""
     action = getattr(d, "action", None)
-    return {
+    out = {
         "owner_kind": getattr(d, "owner_kind", ""),
         "owner_guid": getattr(d, "owner_guid", ""),
         "field_name": getattr(d, "field_name", ""),
@@ -1080,6 +1083,12 @@ def _reference_decision_json(d) -> dict:
         "new_ancestors": [
             list(x) for x in (getattr(d, "new_ancestors", ()) or ())],
     }
+    # Issue #165: LexReference records carry the relation type's GUID; additive
+    # and omit-when-empty so every other record serialises as before.
+    type_guid = getattr(d, "type_guid", "")
+    if type_guid:
+        out["type_guid"] = type_guid
+    return out
 
 
 
