@@ -3309,6 +3309,22 @@ class PlannedAction:
     # Add/Link/Update/Report *before* Move ever writes. Empty for categories
     # that don't (yet) route through the resolver.
     reference_decisions: tuple = ()  # tuple[ReferenceDecisionRecord, ...]
+    # Issue #126 (Principle III): for a POS/GRAM_CATEGORIES ADD, the owned
+    # children (slots, templates, ReferenceForms FsFeatStruc, ...) Move will
+    # create under it in the same run, projected read-only at plan time as one
+    # `EnrichedCollection` per non-empty source collection (target side empty:
+    # the POS does not exist yet). Empty for every other action.
+    owned_children: tuple = ()  # tuple[EnrichedCollection, ...]
+
+
+@dataclass(frozen=True)
+class CreatedPosChildren:
+    """Issue #126: the owned children of ONE created POS, projected (Preview)
+    or measured (Move). Not an `EnrichmentRecord` -- FR-022 reserves that for an
+    object that already existed; these children are part of the create."""
+    owner_guid: str
+    owner_label: str
+    collections: tuple = ()  # tuple[EnrichedCollection, ...]
 
 
 @dataclass(frozen=True)
@@ -4762,6 +4778,10 @@ class RunReport:
     # Issue #84: `RunPlan.category_notes`, carried through so Preview and
     # Move reports both say how the selection was dispatched.
     category_notes: tuple = ()  # tuple[str, ...]
+    # Issue #126: owned children of each created POS. Preview projects it from
+    # `PlannedAction.owned_children`; Move overwrites it with the counts the
+    # writes measured. Additive, empty default.
+    created_pos_children: tuple = ()  # tuple[CreatedPosChildren, ...]
 
     def __post_init__(self) -> None:
         # ---- T080 (SC-010 audit): the ADD bucket's first invariant.
