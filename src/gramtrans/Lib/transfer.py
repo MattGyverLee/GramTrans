@@ -1128,9 +1128,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # SAME kind of fully-settled copy_set, so the two converge on
     # identical relations-in/decisions-out.
     if __package__:
-        from .categories import reproduce_all_lexical_relations
+        from .categories import (
+            reproduce_all_lexical_relations_once as reproduce_all_lexical_relations,
+        )
     else:
-        from categories import reproduce_all_lexical_relations  # type: ignore
+        from categories import (  # type: ignore
+            reproduce_all_lexical_relations_once as reproduce_all_lexical_relations,
+        )
     reproduce_all_lexical_relations(exec_ctx, tag, _resolver_cache, _dropped)
 
     # Feature 026 (texts-wordforms, T010): apply the text + wordform walk.

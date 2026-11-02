@@ -7303,6 +7303,12 @@ _LEXREF_TYPE_PENDING_KEY = "__categories_lexreftype_pending__"
 # `_LEXREF_TYPE_PENDING_KEY`, so it never collides with the relation caches.
 _LEXREF_TYPE_CREATED_KEY = "__categories_lexreftype_created__"
 
+# Issue #185: set the first time `reproduce_all_lexical_relations` runs against
+# a given `resolver_cache`; a second call raises. The end-of-run sweep deletes
+# an empty lazily-created type, and a later call that re-created that type
+# with the same GUID in the same unit of work loses the object (live, #163).
+_LEXREL_ALL_RAN_KEY = "__categories_lexrel_all_ran__"
+
 
 def _lex_ref_type_label(lex_ref_type) -> str:
     """A human-readable name for a `LexRefType` (`Specific`, `Synonyms`,
@@ -8027,7 +8033,8 @@ def _rebuild_targets_rs_in_source_order(existing, copied_members) -> None:
         pass
 
 
-def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
+def _discard_empty_lazy_lex_ref_type(target, target_type, created_types,
+                                     dropped=None):
     """Issue #163 (QC cycle 1): undo a lazy type create whose relation then
     failed to be created, so the failure leaves no EMPTY relation type behind.
 
@@ -8047,6 +8054,11 @@ def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
     Fail-soft like `_discard_partial_process_rule`: a delete that raised must
     not replace the relation's reported loss with a crash; it is logged and
     the type is left as it was. Returns True only when the type was deleted.
+
+    Issue #185 (never silent): when `dropped` is given, a successful delete
+    appends an info `DroppedItemRecord` (Preview announced this type as a
+    create; Move did not create it), and a delete that raised appends a
+    warning record (an empty type was left in the target).
     """
     type_guid = _guid_str_from(target_type)
     if not type_guid or created_types.get(type_guid) is None:
@@ -8065,17 +8077,45 @@ def _discard_empty_lazy_lex_ref_type(target, target_type, created_types):
             "lexical relation type %s created this run: %s",
             type_guid, exc, exc_info=True,
         )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexRefType",
+                owner_guid=type_guid,
+                owner_label=_lex_ref_type_label(target_type),
+                field_name="MembersOC",
+                item_name=_lex_ref_type_label(target_type),
+                item_guid=type_guid,
+                reason=("lexical relation type created this run has no "
+                        "relations (all failed to create) and could not be "
+                        f"removed; an empty type remains: {type(exc).__name__}"),
+                severity="warning",
+            ))
         return False
     created_types.pop(type_guid, None)
+    if dropped is not None:
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexRefType",
+            owner_guid=type_guid,
+            owner_label=_lex_ref_type_label(target_type),
+            field_name="MembersOC",
+            item_name=_lex_ref_type_label(target_type),
+            item_guid=type_guid,
+            reason=("lexical relation type was not created: none of its "
+                    "relations could be created, so the empty type was "
+                    "removed (Preview announced it as a create)"),
+        ))
     return True
 
 
-def _sweep_empty_lazy_lex_ref_types(target, created_types) -> None:
+def _sweep_empty_lazy_lex_ref_types(target, created_types, dropped=None) -> None:
     """Issue #163: after the relation walk, delete every relation type
     lazily created this run that STILL has no relations (all its relation
-    creates failed). Pre-existing types are never in `created_types`."""
+    creates failed). Pre-existing types are never in `created_types`.
+    Issue #185: each deleted type is reported to `dropped`. Run ONCE per run
+    (`reproduce_all_lexical_relations` enforces it)."""
     for type_guid, target_type in list(created_types.items()):
-        _discard_empty_lazy_lex_ref_type(target, target_type, created_types)
+        _discard_empty_lazy_lex_ref_type(
+            target, target_type, created_types, dropped)
 
 
 def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
@@ -8380,15 +8420,43 @@ def reproduce_all_lexical_relations(context, tag, resolver_cache, dropped):
     there is no other call site left anywhere in the closure walk. Per-
     MappingType structural rulings (pair exactly-2-else-drop-whole, tree
     root=TargetsRS[0], collection/sequence/unidirectional copied-subset) are
-    UNCHANGED."""
+    UNCHANGED.
+
+    Issue #185: the sweep runs in a `finally` so a raising walk still
+    cleans up empty types. The once-per-run rule is enforced at the
+    production call site by `reproduce_all_lexical_relations_once` (this
+    function stays re-callable because unit tests drive it repeatedly over a
+    growing copy_set)."""
     source = context.source_handle
     copy_set = getattr(context, "_copy_set", None) or {}
-    for src_relation in _iter_relations_touching_copy_set(
-            source, copy_set, dropped):
-        reproduce_lexical_relation(src_relation, context, tag, resolver_cache, dropped)
-    _sweep_empty_lazy_lex_ref_types(
-        context.target_handle,
-        resolver_cache.setdefault(_LEXREF_TYPE_CREATED_KEY, {}))
+    try:
+        for src_relation in _iter_relations_touching_copy_set(
+                source, copy_set, dropped):
+            reproduce_lexical_relation(
+                src_relation, context, tag, resolver_cache, dropped)
+    finally:
+        _sweep_empty_lazy_lex_ref_types(
+            context.target_handle,
+            resolver_cache.setdefault(_LEXREF_TYPE_CREATED_KEY, {}),
+            dropped)
+
+
+def reproduce_all_lexical_relations_once(context, tag, resolver_cache, dropped):
+    """Issue #185: the production entry point (`transfer.execute`) for
+    `reproduce_all_lexical_relations`. Enforces that it runs ONCE per run
+    (per `resolver_cache`): the end-of-run sweep deletes empty lazily-created
+    relation types, and a second pass that re-created one with the same GUID
+    in the same unit of work loses the object in LCM (shown live, #163).
+    A second call raises RuntimeError before touching the project."""
+    if resolver_cache.get(_LEXREL_ALL_RAN_KEY):
+        raise RuntimeError(
+            "reproduce_all_lexical_relations ran twice in one run: the "
+            "end-of-run sweep deletes empty lazily-created relation types, "
+            "and re-creating one with the same GUID in the same unit of work "
+            "loses the object (issue #185)")
+    resolver_cache[_LEXREL_ALL_RAN_KEY] = True
+    return reproduce_all_lexical_relations(
+        context, tag, resolver_cache, dropped)
 
 
 def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
