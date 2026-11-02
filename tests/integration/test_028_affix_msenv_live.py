@@ -29,7 +29,7 @@ import os
 
 import pytest
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
 
 _FLEXICON_PRESENT = importlib.util.find_spec("flexicon") is not None
 _E2E_ENABLED = os.environ.get("GRAMTRANS_E2E") == "1"

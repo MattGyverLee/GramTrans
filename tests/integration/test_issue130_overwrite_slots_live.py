@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
 
 if os.environ.get("FLEXLIBS_REQUIRE_LIVE") != "1":
     pytest.skip("FLEXLIBS_REQUIRE_LIVE != 1; live write-path gate not requested.",
@@ -284,6 +284,33 @@ def test_mutated_add_is_write_failed_and_membership_restored(live, mode):
     assert [r.outcome.name for r in links] == ["WRITE_FAILED", "WRITE_FAILED"]
     assert all("restored" in r.detail for r in links)
     assert after == seeds            # PRE-OVERWRITE membership is intact
+
+
+def test_equal_membership_overwrite_is_noop(live):
+    """Live proof for #156 equal-set guard (issue #177 acceptance)."""
+    from gramtrans.Lib import transfer
+    from SIL.LCModel import IMoInflAffMsa
+
+    (cand,) = _candidates(live, want=1)
+    src_slot = cand[3]
+    target = live["target"]
+    ia = IMoInflAffMsa(cand[1])
+    tgt_pos = ia.PartOfSpeechRA
+    slot_obj = None
+    for s in target.POS.GetAffixSlots(tgt_pos):
+        if _guid_of(s) == src_slot:
+            slot_obj = transfer._lcm_slot(s)
+            break
+    assert slot_obj is not None, src_slot
+    before = _seed(cand[1], slot_obj)
+    assert before == [src_slot]
+    links = []
+    _run_overwrite(live, cand, links)
+    after = _members(cand[1])
+    print("[LIVE] equal-set OVERWRITE read-back=%s records=%s"
+          % ([g[:8] for g in after], links))
+    assert after == before
+    assert links == []
 
 
 def test_source_is_unchanged(live):

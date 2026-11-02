@@ -137,6 +137,17 @@ def pytest_collection_modifyitems(config, items):
                 reason="needs a live flexicon/FieldWorks; none on this machine (#72)"))
 
 
+def pytest_runtest_setup(item):
+    if item.get_closest_marker("requires_live_project") is None:
+        return
+    if os.environ.get("FLEXLIBS_REQUIRE_LIVE") == "1":
+        return
+    _pytest.skip(
+        "requires_live_project tests need FLEXLIBS_REQUIRE_LIVE=1 "
+        "(set it to opt into live FieldWorks write/read gates)"
+    )
+
+
 @_pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield

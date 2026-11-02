@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
 
 _LIVE = os.environ.get("FLEXLIBS_REQUIRE_LIVE") == "1"
 if not _LIVE:

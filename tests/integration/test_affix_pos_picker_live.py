@@ -63,6 +63,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
+
 from gramtrans.Lib.selection import (
     PosGroupedAffixInventory,
     build_pos_grouped_inventory,

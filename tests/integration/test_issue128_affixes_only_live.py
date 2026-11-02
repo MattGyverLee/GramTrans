@@ -29,7 +29,7 @@ from test_issue128_entryref_postpass_live import (  # noqa: E402
     _ref_body, _restore, _values,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
 
 
 def _selection(picks):
@@ -166,6 +166,7 @@ def test_affixes_only_run_honours_the_domain_ruling(monkeypatch):
                   and s.reason == SkipReason.DEPENDENCY_UNRESOLVED]
     print("[LIVE] STEMS DEPENDENCY_UNRESOLVED skips: %d of %d total skips"
           % (len(stem_skips), len(report.skips)))
+    assert len(stem_skips) == 2, stem_skips
     for s in stem_skips:
         print("[LIVE]   skip:", s.source_guid, s.detail)
     print("[LIVE] failed counters:",

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
+
 # ---------------------------------------------------------------------------
 # T013: Ejagham skeleton preselection + slot counts
 # ---------------------------------------------------------------------------

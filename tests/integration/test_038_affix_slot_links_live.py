@@ -33,6 +33,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = [pytest.mark.integration, pytest.mark.requires_live_project]
+
 _SNAP = (Path(__file__).resolve().parent / "_snapshots"
          / "msa-slot-link-038-t074.json")
 
