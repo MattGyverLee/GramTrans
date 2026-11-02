@@ -1877,7 +1877,7 @@ def build_run_plan(
         len(actions), len(skips), len(overwrites), len(excluded_lossy), len(_dropped),
         len(_closure_edges), len(_incompleteness), len(_enrichments),
     )
-    return RunPlan(
+    _plan = RunPlan(
         context=context,
         selection=selection,
         ws_mapping=ws_mapping,
@@ -1939,6 +1939,13 @@ def build_run_plan(
         # Issues #141/#142: lexical-relation + new relation-type CREATEs.
         lexical_relation_decisions=tuple(_lexical_relation_records or ()),
     )
+    # Issue #139: remember Preview's Wire count so the Move tail can check it.
+    try:
+        object.__setattr__(_plan, "expected_type_ra_writes",
+                           count_complex_feature_type_ra_wires(_plan))
+    except Exception:  # noqa: BLE001 -- bookkeeping must never break planning
+        pass
+    return _plan
 
 
 # ============================================================================
@@ -2196,6 +2203,13 @@ def render_complex_feature_type_refs(plan: RunPlan) -> Tuple[str, ...]:
         lines.append(f"    {label}  feature {feat_guid}"
                      f" -> type {type_guid}")
     return tuple(lines)
+
+
+def count_complex_feature_type_ra_wires(plan: RunPlan) -> int:
+    """Number of "Wire" rows `render_complex_feature_type_refs` shows (issue
+    #139): the TypeRA write count Preview promises Move."""
+    return sum(1 for r in render_complex_feature_type_refs(plan)
+               if r.strip().startswith("Wire"))
 
 
 def render_struct_type_features_rs(plan: RunPlan) -> Tuple[str, ...]:
