@@ -961,6 +961,37 @@ def _default_analysis_ws_id(ops, target_ws_by_id: dict):
     return None
 
 
+# Issue #175: script of a writing-system tag. Only the script is compared
+# (never language family). An explicit ISO 15924 subtag wins; otherwise the
+# language subtag's customary default script. Anything unlisted is UNKNOWN.
+_LANG_DEFAULT_SCRIPT = {
+    **dict.fromkeys((
+        "en", "fr", "es", "pt", "de", "it", "nl", "sv", "da", "no", "nb", "nn",
+        "fi", "pl", "cs", "sk", "ro", "hu", "tr", "id", "ms", "sw", "tl", "vi",
+        "ca", "eo", "la", "af", "zu", "xh", "ha", "yo", "ig", "lg", "rw", "mg",
+        "hr", "sl", "lt", "lv", "et", "sq", "is", "cy", "ga", "eu", "gl"), "Latn"),
+    **dict.fromkeys(("ru", "uk", "bg", "sr", "mk", "be", "kk", "ky", "mn"), "Cyrl"),
+    **dict.fromkeys(("ar", "fa", "ur", "ps", "ku"), "Arab"),
+    "he": "Hebr", "el": "Grek", "hi": "Deva", "ne": "Deva", "mr": "Deva",
+    "bn": "Beng", "ta": "Taml", "te": "Telu", "th": "Thai", "ko": "Hang",
+    "ja": "Jpan", "zh": "Hans", "am": "Ethi", "ka": "Geor", "hy": "Armn",
+    "km": "Khmr", "lo": "Laoo", "my": "Mymr", "si": "Sinh",
+}
+
+
+def _ws_script(ws_id):
+    """ISO 15924 script of writing-system tag `ws_id`, or ``None`` (unknown)."""
+    if not isinstance(ws_id, str) or not ws_id:
+        return None
+    parts = ws_id.replace("_", "-").split("-")
+    for sub in parts[1:]:
+        if sub.lower() == "x":
+            break
+        if len(sub) == 4 and sub.isalpha():
+            return sub.title()
+    return _LANG_DEFAULT_SCRIPT.get(parts[0].lower())
+
+
 def _source_vernacular_ids(source):
     """``set`` of the SOURCE project's vernacular WS Ids, or ``None`` when
     it cannot be determined (never raises)."""
@@ -1433,7 +1464,12 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                             if (best_text and dest_id is not None
                                     and best_src_id is not None
                                     and source_vern_ids is not None
-                                    and best_src_id not in source_vern_ids):
+                                    and best_src_id not in source_vern_ids
+                                    # Issue #175: only relocate within one
+                                    # script; unknown script -> skip.
+                                    and _ws_script(best_src_id) is not None
+                                    and _ws_script(best_src_id)
+                                    == _ws_script(dest_id)):
                                 field_props = {dest_id: best_text}
                                 item_relocations.append(DroppedItemRecord(
                                     owner_kind=spec.owner_class,
