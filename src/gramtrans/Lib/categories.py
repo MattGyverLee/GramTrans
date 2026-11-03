@@ -4234,6 +4234,55 @@ def exception_features_plan_action(piece, context: RunContext, ws_mapping: WSMap
     )
 
 
+def _try_add_exception_features_oc_member(exc_oc, target_val, *, pos_guid, val_guid,
+                                          dropped):
+    """Issue #132: never-silent `ExceptionFeaturesOC.Add` on POS wiring.
+
+    Read-back confirms membership (#111/#133 model). Returns True only when
+    the value is present after a clean Add; False when the link failed or
+    Add raised (even if read-back shows a partial apply -- reported, not
+    counted as added by the caller)."""
+    import logging as _logging
+
+    log = _logging.getLogger("gramtrans.Lib.categories")
+    confirmed, readback_error = _infl_feat_in_collection(exc_oc, target_val, val_guid)
+    if confirmed:
+        return True
+    error = None
+    try:
+        exc_oc.Add(target_val)
+    except Exception as exc:  # noqa: BLE001 -- reported, not swallowed
+        error = f"{type(exc).__name__}: {exc}"
+    confirmed, readback_error2 = _infl_feat_in_collection(exc_oc, target_val, val_guid)
+    readback_error = readback_error2 or readback_error
+    if confirmed and error is None:
+        return True
+    if confirmed:
+        error = (
+            "Add raised after partially applying (the value is present on "
+            "read-back, not counted as a clean link): " + error
+        )
+    detail = error or readback_error or (
+        "Add returned normally but the value is absent from "
+        "ExceptionFeaturesOC on read-back"
+    )
+    log.warning(
+        "ExceptionFeaturesOC link POS %s value %s failed: %s",
+        pos_guid, val_guid, detail,
+    )
+    if dropped is not None:
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="PartOfSpeech",
+            owner_guid=pos_guid,
+            owner_label="",
+            field_name="ExceptionFeaturesOC",
+            item_name="",
+            item_guid=val_guid,
+            reason=f"WRITE_FAILED: {detail}",
+        ))
+    return False
+
+
 def exception_features_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
     """Wire the IFsSymFeatVal reference into the target POS.ExceptionFeaturesOC.
 
@@ -4285,8 +4334,21 @@ def exception_features_execute_action(action: PlannedAction, context: RunContext
     if target_val is None:
         return ActionOutcome.skipped("feature value %s not present in the destination (inflection_features must run first)" % val_guid)
 
-    target_pos.ExceptionFeaturesOC.Add(target_val)
-    return target_val
+    exc_oc = getattr(target_pos, "ExceptionFeaturesOC", None)
+    if exc_oc is None:
+        return ActionOutcome.skipped(
+            "ExceptionFeaturesOC unavailable on target POS %s" % pos_guid,
+        )
+    dropped = getattr(context, "_dropped", None)
+    if _try_add_exception_features_oc_member(
+            exc_oc, target_val, pos_guid=pos_guid, val_guid=val_guid,
+            dropped=dropped):
+        return target_val
+    return ActionOutcome.skipped(
+        "ExceptionFeaturesOC link pos=%s val=%s not confirmed on read-back"
+        % (pos_guid, val_guid),
+        recorded=dropped is not None,
+    )
 
 
 # ----- shared possibility-list walker (Phase 3b) ---------------------------
