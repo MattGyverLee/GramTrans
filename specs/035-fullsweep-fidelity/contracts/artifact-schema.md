@@ -246,10 +246,57 @@ in one phase is never reported as an undifferentiated whole-project failure.
   "allowlist_hits": [                    // FR-123
     { "id": "AL-007", "matched_count": 3, "cap": 10, "headroom": 7 }
   ],
+
+  // FR-019 / SC-003 (T074), issue #111 WRITE_FAILED extension (PR #120):
+  // emitted on `RunReport.to_dict()` when `affix_slot_links` is non-empty.
+  // Same tally as `report._affix_slot_link_block` / the console FR-019 panel.
+  "affix_slot_links": {
+    "source_msas_with_a_column": 125,
+    "by_outcome": { "LINKED": 125, "NOT_IN_RUN": 0 },
+    "attempted": 125,
+    "linked_of_attempted": 125,
+    "not_in_run": 0,
+    "failures": [
+      {
+        "outcome": "WRITE_FAILED",
+        "entry_guid": "...",
+        "msa_guid": "...",
+        "source_slot_guids": ["..."],
+        "unresolved_slot_guids": [],
+        "unwritten_slot_guids": ["..."],
+        "detail": "RuntimeError: ..."
+      }
+    ]
+  },
+
   "restore_evidence": { "...": "..." },  // FR-169, FR-172, FR-173
   "console_truncation": { "omitted_items": 0 }   // FR-144: console only, and stated
 }
 ```
+
+### `affix_slot_links` (FR-019 / SC-003, issue #111 / #132)
+
+Machine-readable block for affix-template column wiring (T074). Present when
+the run recorded one or more `AffixSlotLinkRecord`s on `RunReport`.
+
+- **`attempted`**: affix MSAs this run tried to link (every outcome except
+  `NOT_IN_RUN`). **`linked_of_attempted`**: those that occupy every source
+  column on read-back (`LINKED` only). **`not_in_run`**: source affixes with a
+  column that this run never transferred — stated beside the ratio, not counted
+  as failures.
+- **`failures`**: individual rows for `SLOT_MISSING`, `MSA_MISSING`, and
+  **`WRITE_FAILED`** only. Successes are not listed (count fields carry them).
+- **`WRITE_FAILED`** (issue #111): the template column(s) resolved in the
+  destination but are absent from the affix MSA's `SlotsRC` after the write
+  (including when `Add` raised yet read-back still verified nothing, or when
+  read-back itself raised). Each failure row MUST carry:
+  - **`unwritten_slot_guids`**: slot GUID(s) missing on read-back (non-empty).
+  - **`detail`**: free text — the first write error and/or read-back error
+    (may be non-empty even when the outcome is `LINKED` in the in-memory record,
+    but failure rows always include the diagnostic text the console panel uses).
+
+Validators MUST reject a `WRITE_FAILED` failure row with empty
+`unwritten_slot_guids`. They MUST NOT treat `NOT_IN_RUN` as a failure outcome.
 
 ## Invariants a validator MUST enforce
 
@@ -278,6 +325,10 @@ in one phase is never reported as an undifferentiated whole-project failure.
 10. Project and corpus status are derived SOLELY from these documents; no status
     is hand-set in the ledger independently of the artifact justifying it
     (FR-151).
+11. When `affix_slot_links` is present, every `failures[]` row with
+    `"outcome": "WRITE_FAILED"` carries non-empty `unwritten_slot_guids` and
+    documents the same keys as `report._affix_slot_link_block` (issue #132 /
+    impl-111 acceptance).
 
 ## T045b additions: the distortion detectors and the instrument
 
