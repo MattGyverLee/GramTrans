@@ -7259,6 +7259,7 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
     # never a re-clear on a later item of the SAME field within this same
     # pass.
     cleared_fields: set = set()
+    clear_failed_fields: set = set()
     for spec in _references.field_specs_for(owner_class):
         if spec.field_name in skip_fields:
             continue
@@ -7283,6 +7284,8 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
             if not atomic and resolved is not None:
                 owner_coll = getattr(new_obj, spec.field_name, None)
                 if owner_coll is not None:
+                    if spec.field_name in clear_failed_fields:
+                        continue
                     if clear_before_add and spec.field_name not in cleared_fields:
                         # FIX 3 (replace semantic, OVERWRITE-only): clear the
                         # target collection exactly once before the first
@@ -7295,8 +7298,39 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
                         if callable(clear):
                             try:
                                 clear()
-                            except (AttributeError, TypeError):
-                                pass
+                            except (AttributeError, TypeError) as exc:
+                                import logging as _logging
+                                _logging.getLogger(
+                                    "gramtrans.Lib.categories",
+                                ).warning(
+                                    "_apply_reference_fields: %s clearing "
+                                    "%s.%s for OVERWRITE: %s",
+                                    type(exc).__name__, owner_class,
+                                    spec.field_name, exc, exc_info=True,
+                                )
+                                _append_dropped_once(
+                                    dropped,
+                                    _enrich_dropped(
+                                        owner_class,
+                                        owner_guid,
+                                        src_obj,
+                                        DroppedItemRecord(
+                                            owner_kind=owner_class,
+                                            owner_guid="",
+                                            owner_label="",
+                                            field_name=spec.field_name,
+                                            item_name=spec.field_name,
+                                            item_guid="",
+                                            reason=(
+                                                "reference collection Clear "
+                                                "failed during OVERWRITE: "
+                                                f"{type(exc).__name__}: {exc}"
+                                            ),
+                                        ),
+                                    ),
+                                )
+                                clear_failed_fields.add(spec.field_name)
+                                continue
                         cleared_fields.add(spec.field_name)
                     _add_resolved_to_reference_collection(
                         owner_coll, resolved, dropped=dropped,
