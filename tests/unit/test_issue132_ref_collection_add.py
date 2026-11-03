@@ -48,6 +48,16 @@ class _RaiseOnAddCollection(_FakeCollection):
         raise TypeError("collection Add binding failed")
 
 
+class _RaiseOnClearCollection(_FakeCollection):
+    """Simulates OVERWRITE replace: pre-populated collection, Clear raises."""
+
+    def __init__(self, *items):
+        super().__init__(list(items))
+
+    def Clear(self):
+        raise TypeError("collection Clear binding failed")
+
+
 def test_add_resolved_records_drop_on_add_failure():
     item = _FakePossibility("eeeeeeee-0000-0000-0000-eeeeeeeeeeee", name="Vernacular")
     coll = _RaiseOnAddCollection()
@@ -93,6 +103,41 @@ def test_apply_reference_fields_records_drop_when_collection_add_raises(monkeypa
     )
     assert len(dropped) == 1
     assert dropped[0].field_name == "DoNotPublishInRC"
+
+
+def test_apply_reference_fields_records_drop_when_overwrite_clear_raises(monkeypatch):
+    from gramtrans.Lib.models import ReferenceAction, ReferenceDecision
+
+    stale = _FakePossibility("aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa", name="stale")
+    pub = _FakePossibility("eeeeeeee-0000-0000-0000-eeeeeeeeeeee", name="Vernacular")
+    src_obj = types.SimpleNamespace(DoNotPublishInRC=[pub])
+    new_obj = types.SimpleNamespace(
+        DoNotPublishInRC=_RaiseOnClearCollection(stale),
+    )
+    dropped: list = []
+
+    def _fake_decide(*_args, **_kwargs):
+        return ReferenceDecision(
+            action=ReferenceAction.LINK, target_item=pub, source_item=pub,
+        )
+
+    def _fake_call(*_args, **_kwargs):
+        return pub, True
+
+    monkeypatch.setattr(categories, "_call_apply_reference", _fake_call)
+    from gramtrans.Lib import references as _references
+
+    monkeypatch.setattr(_references, "decide_reference", _fake_decide)
+    categories._apply_reference_fields(
+        "LexSense", src_obj, new_obj, object(), None, {}, dropped,
+        skip_fields=frozenset({"SenseTypeRA"}),
+        owner_guid="sense-1",
+        clear_before_add=True,
+    )
+    assert list(new_obj.DoNotPublishInRC) == [stale]
+    assert len(dropped) == 1
+    assert dropped[0].field_name == "DoNotPublishInRC"
+    assert "Clear failed during OVERWRITE" in dropped[0].reason
 
 
 def test_owned_apply_child_refs_records_drop_when_collection_add_raises(monkeypatch):
