@@ -2167,6 +2167,59 @@ def _classify_complex_type_ra(target, feat_guid, type_guid, *,
     return (TYPE_RA_WIRE, tgt_feat, tgt_type, "")
 
 
+def _complex_type_ra_readback_matches(tgt_feat, type_guid):
+    """True when `tgt_feat.TypeRA` names `type_guid` (read-back for #132)."""
+    try:
+        ra = getattr(tgt_feat, "TypeRA", None)
+    except (AttributeError, TypeError):
+        return False
+    if ra is None:
+        return False
+    return _guid_str_from(ra) == type_guid
+
+
+def _try_wire_complex_feature_type_ra(tgt_feat, tgt_type, *, feat_guid, type_guid,
+                                      dropped, log):
+    """Issue #132: wire `IFsComplexFeature.TypeRA` with read-back and reporting.
+
+    Returns `(True, "")` when the target feature's `TypeRA` read-back confirms
+    `type_guid`. On failure, logs, optionally appends a `DroppedItemRecord`,
+    and returns `(False, detail)` (caller emits the matching Skip)."""
+    wire_error = None
+    try:
+        _cast_lcm(tgt_feat, "IFsComplexFeature").TypeRA = _cast_lcm(
+            tgt_type, "IFsFeatStrucType")
+    except (AttributeError, TypeError) as exc:
+        wire_error = f"{type(exc).__name__}: {exc}"
+        log.warning(
+            "complex feature %s: TypeRA assignment raised: %s",
+            feat_guid, wire_error, exc_info=True,
+        )
+    if wire_error is None and _complex_type_ra_readback_matches(tgt_feat, type_guid):
+        return True, ""
+    if wire_error is None:
+        wire_error = (
+            "TypeRA assignment returned normally but read-back does not "
+            f"confirm type_guid={type_guid}"
+        )
+        log.warning("complex feature %s: %s", feat_guid, wire_error)
+    detail = f"WRITE_FAILED: TypeRA -> {type_guid}: {wire_error}"
+    if dropped is not None:
+        _append_dropped_once(
+            dropped,
+            DroppedItemRecord(
+                owner_kind="FsComplexFeature",
+                owner_guid=feat_guid,
+                owner_label="",
+                field_name="TypeRA",
+                item_name="",
+                item_guid=type_guid,
+                reason=detail,
+            ),
+        )
+    return False, detail
+
+
 def _derive_complex_feature_type_refs(context):
     """Fallback for plans not built by `build_run_plan` (issue #139):
     `{complex_feature_guid: struct_type_guid}` read straight from the source for
@@ -2217,6 +2270,7 @@ def _run_complex_feature_type_ra_pass(context, target, tag=None):
         refs = _derive_complex_feature_type_refs(context)
     skips = []
     writes = 0
+    dropped = getattr(context, "_dropped", None)
     for feat_guid in sorted(refs):
         type_guid = refs[feat_guid]
         outcome, tgt_feat, tgt_type, detail = _classify_complex_type_ra(
@@ -2224,11 +2278,20 @@ def _run_complex_feature_type_ra_pass(context, target, tag=None):
         if outcome == TYPE_RA_ALREADY_WIRED:
             continue
         if outcome == TYPE_RA_WIRE:
-            _cast_lcm(tgt_feat, "IFsComplexFeature").TypeRA = _cast_lcm(
-                tgt_type, "IFsFeatStrucType")
-            writes += 1
-            log.info("complex feature %s: TypeRA wired -> %s",
-                     feat_guid, type_guid)
+            wired, fail_detail = _try_wire_complex_feature_type_ra(
+                tgt_feat, tgt_type, feat_guid=feat_guid, type_guid=type_guid,
+                dropped=dropped, log=log)
+            if wired:
+                writes += 1
+                log.info("complex feature %s: TypeRA wired -> %s",
+                         feat_guid, type_guid)
+            else:
+                skips.append(Skip(
+                    category=GrammarCategory.INFLECTION_FEATURES,
+                    source_guid=feat_guid,
+                    reason=SkipReason.NOT_REPRODUCIBLE,
+                    detail=fail_detail,
+                ))
             continue
         log.warning("complex feature %s: %s", feat_guid, detail)
         skips.append(Skip(
