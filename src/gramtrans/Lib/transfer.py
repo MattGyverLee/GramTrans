@@ -4071,6 +4071,34 @@ def _enrich_owned_collections(overwrite, src_obj, tgt_obj, source, target,
     return measured
 
 
+def _record_enrichment_pass_failure(overwrite, dropped, exc):
+    """Issue #132: when the owned-collection enrichment pass raises, log+Warning
+    alone would hide the failure from `RunReport.dropped_items` (Preview can
+    still show per-child drops from planning). One owner-level record when the
+    collector is wired."""
+    if dropped is None:
+        return
+    planned = getattr(overwrite, "enrichment", None)
+    cats = _categories_mod()
+    if __package__:
+        from .models import DroppedItemRecord
+    else:
+        from models import DroppedItemRecord  # type: ignore
+    guid = overwrite.source_guid or ""
+    label = ((planned.label if planned else "") or guid).strip() or guid
+    obj_class = (planned.object_class if planned else _ENRICH_OWNER_KIND)
+    cats._append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind=obj_class,
+        owner_guid=guid,
+        owner_label=label,
+        field_name="(owned-collection enrichment)",
+        item_name="",
+        item_guid="",
+        reason=("owned-collection enrichment failed: "
+                f"{type(exc).__name__}: {exc}"),
+    ))
+
+
 def _record_unfilled_pos_collections(action, dropped, reason):
     """Record one `DroppedItemRecord` per POS owned collection that a created
     POS did NOT receive (#107 never-silent). The POS create itself stays
@@ -4433,6 +4461,7 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
                 f"  [{cat.value}] owned-collection enrichment raised"
                 f" {type(exc).__name__}: {exc}  guid={src_guid[:8]}"
             )
+            _record_enrichment_pass_failure(overwrite, dropped, exc)
         else:
             if measured is not None and enrichments is not None:
                 enrichments.append(measured)
