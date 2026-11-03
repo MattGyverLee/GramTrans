@@ -630,7 +630,7 @@ def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips, post_pass_fail
             pass
 
 
-def _ensure_ref_repoint(exec_ctx, target, exec_skips):
+def _ensure_ref_repoint(exec_ctx, target, exec_skips, post_pass_failures=None):
     """Issue #15 / spec 041: opt-in stale-reference re-point (no-op unless
     `selection.repoint_stale_refs`). Own latch; never raises."""
     if getattr(exec_ctx, "_did_ref_repoint", False):
@@ -648,8 +648,14 @@ def _ensure_ref_repoint(exec_ctx, target, exec_skips):
         pass
     try:
         skips = _run_ref_repoint_pass(exec_ctx, target)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 -- must not lose the run's writes
         _log.exception("execute: stale-reference re-point FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="ref-repoint",
+            category=GrammarCategory.AFFIXES,
+            exc=exc,
+        )
         return
     if skips and exec_skips is not None:
         try:
@@ -658,7 +664,7 @@ def _ensure_ref_repoint(exec_ctx, target, exec_skips):
             pass
 
 
-def _ensure_late_rule_refs(exec_ctx, target, exec_skips):
+def _ensure_late_rule_refs(exec_ctx, target, exec_skips, post_pass_failures=None):
     """Issue #134: repair phon-rule `InputPOSesRC` and adhoc-prohibition
     member chains AFTER the leaf-dispatch loop (their targets -- POS,
     allomorphs, MSAs -- are created by categories that dispatch later).
@@ -677,8 +683,14 @@ def _ensure_late_rule_refs(exec_ctx, target, exec_skips):
         pass
     try:
         late_skips = _run_late_rule_ref_repair_pass(exec_ctx, target)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 -- must not lose the run's writes
         _log.exception("execute: late rule-reference repair FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="late-rule-refs",
+            category=GrammarCategory.PHONOLOGICAL_RULES,
+            exc=exc,
+        )
         return
     if late_skips and exec_skips is not None:
         try:
@@ -1284,12 +1296,18 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         exec_ctx, target, _exec_skips,
         post_pass_failures=_leaf_execution_failures,
     )
-    leaf_failed += len(_leaf_execution_failures) - _post_pass_failure_start
 
     # Issue #134: phon-rule InputPOSesRC + adhoc member chains, after every
     # category (POS / STEMS dispatch after the rules that reference them).
-    _ensure_late_rule_refs(exec_ctx, target, _exec_skips)
-    _ensure_ref_repoint(exec_ctx, target, _exec_skips)
+    _ensure_late_rule_refs(
+        exec_ctx, target, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
+    _ensure_ref_repoint(
+        exec_ctx, target, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
+    leaf_failed += len(_leaf_execution_failures) - _post_pass_failure_start
 
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check
@@ -4100,6 +4118,34 @@ def _record_update_scalar_failure(overwrite, dropped, exc):
     ))
 
 
+def _record_enrichment_pass_failure(overwrite, dropped, exc):
+    """Issue #132: when the owned-collection enrichment pass raises, log+Warning
+    alone would hide the failure from `RunReport.dropped_items` (Preview can
+    still show per-child drops from planning). One owner-level record when the
+    collector is wired."""
+    if dropped is None:
+        return
+    planned = getattr(overwrite, "enrichment", None)
+    cats = _categories_mod()
+    if __package__:
+        from .models import DroppedItemRecord
+    else:
+        from models import DroppedItemRecord  # type: ignore
+    guid = overwrite.source_guid or ""
+    label = ((planned.label if planned else "") or guid).strip() or guid
+    obj_class = (planned.object_class if planned else _ENRICH_OWNER_KIND)
+    cats._append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind=obj_class,
+        owner_guid=guid,
+        owner_label=label,
+        field_name="(owned-collection enrichment)",
+        item_name="",
+        item_guid="",
+        reason=("owned-collection enrichment failed: "
+                f"{type(exc).__name__}: {exc}"),
+    ))
+
+
 def _record_unfilled_pos_collections(action, dropped, reason):
     """Record one `DroppedItemRecord` per POS owned collection that a created
     POS did NOT receive (#107 never-silent). The POS create itself stays
@@ -4463,6 +4509,7 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
                 f"  [{cat.value}] owned-collection enrichment raised"
                 f" {type(exc).__name__}: {exc}  guid={src_guid[:8]}"
             )
+            _record_enrichment_pass_failure(overwrite, dropped, exc)
         else:
             if measured is not None and enrichments is not None:
                 enrichments.append(measured)

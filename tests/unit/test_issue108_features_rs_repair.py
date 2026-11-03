@@ -454,9 +454,10 @@ class TestInsertOnly:
         refs = {T1: _ref([A, B])}
         plan = _NS(struct_type_feature_refs=refs, actions=(),
                    context=_NS(target_handle=tgt))
+        _, skips = self._run(tgt, refs)
+        move_detail = skips[0].detail
         rows = preview.render_struct_type_features_rs(plan)
-        assert any("SKIP (reordered in target, left as-is)" in r and T1 in r
-                   for r in rows)
+        assert any(f"SKIP ({move_detail})" in r and T1 in r for r in rows)
         assert not any(r.strip().startswith("Repair") for r in rows)
 
     def test_preview_repair_row_lists_inserts_not_a_sequence(self) -> None:
