@@ -494,7 +494,7 @@ def test_preview_create_link_decisions_match_move(live):
         (s1, AP, "report_dropped", absent, ()),
         (s1, TH, "create", C, (P,)),          # new child under a NEW parent P
         (s2, AP, "link", present, ()),
-        (s2, TH, "create", C, (P,)),          # shared C: see 3 below
+        (s2, TH, "link", C, ()),              # shared C: Preview links to the item it plans to create (#146 follow-up)
         (s2, TH, "create", C2, ()),           # new child under EXISTING E
         (s2, TH, "link", E, ()),
         (s2, TH, "create", D, ()),            # new semantic domain under SDP
@@ -505,17 +505,12 @@ def test_preview_create_link_decisions_match_move(live):
     assert _first_decision_per_item(_plan_ref_decisions(live["preview_plan"])) \
         == _first_decision_per_item(live["move1_decisions"])
 
-    # 3. Row level, Preview == Move, except the one documented cache
-    #    divergence: Move's resolver cache turns a SECOND reference to an item
-    #    Move created earlier in the run into a LINK; Preview never writes, so
-    #    it reports that reference as the same CREATE (one item either way).
-    assert [r[:2] + r[3:4] for r in preview] == [r[:2] + r[3:4] for r in move], \
-        "Preview and Move decided different (owner, field, item) sets"
-    created_by_move = {r[3] for r in move if r[2] == "create"}
-    diverged = [(p, m) for p, m in zip(preview, move) if p != m]
-    assert all(p[2] == "create" and m[2] == "link" and m[3] in created_by_move
-               for p, m in diverged), diverged
-    assert [(p[0], p[3]) for p, _m in diverged] == [(s2, C)], diverged
+    # 3. Row level, Preview == Move, exactly. Since the #146 follow-up
+    #    (24f85b2f) Preview labels a SECOND reference to an item the same run
+    #    creates as a LINK, as Move's resolver cache does, so the former
+    #    documented CREATE/LINK divergence on (s2, C) is gone.
+    assert [r[:2] + r[3:4] for r in preview] == [r[:2] + r[3:4] for r in move],         "Preview and Move decided different (owner, field, item) sets"
+    assert preview == move, [(p, m) for p, m in zip(preview, move) if p != m]
 
     # 4. Ground truth: Preview's CREATE items + their new ancestors are
     #    exactly the objects Move 1 brought into existence; its LINK items
@@ -565,11 +560,13 @@ def test_preview_pane_renders_create_and_link_rows(live):
     text = "\n".join(render_preview_extra_lines(live["preview_plan"]))
     print("[LIVE] preview pane 030 lines:\n" + text)
     assert "Sense appendix / thesaurus references:" in text
-    assert ("Create  ThesaurusItemsRC 'GT42 child' {%s}  (2 senses) -- also "
+    assert ("Create  ThesaurusItemsRC 'GT42 child' {%s}  (1 sense) -- also "
             "creates ancestor(s) 'GT42 parent' {%s}" % (fx["C"], fx["P"])) in text
     assert "Create  ThesaurusItemsRC 'GT42 child of existing' {%s}" % fx["C2"] in text
     assert "Create  ThesaurusItemsRC 'GT42 semdom child' {%s}" % fx["D"] in text
     assert "Link  ThesaurusItemsRC" in text and "{%s}" % fx["E"] in text
+    assert ("Link  ThesaurusItemsRC 'GT42 child' {%s}  (1 sense) -- links to the "
+            "item created above in this run" % fx["C"]) in text
     assert ("Link  AppendixesRC 'Appendix 42-PRESENT" in text
             and "{%s}  (2 senses)" % fx["appendix_present"] in text)
     assert "Not transferred  AppendixesRC 'Appendix 42-ABSENT" in text

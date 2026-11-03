@@ -2947,7 +2947,9 @@ def feature_struct_types_execute_action(
     4. Wire FeaturesRS: for each source member defn, resolve the target
        defn by GUID in MsFeatureSystemOA.FeaturesOC and call
        `FeaturesRS.Add()`. Any member whose GUID has no target
-       counterpart is logged and skipped (partial wiring tolerated).
+       counterpart is logged and skipped (partial wiring tolerated). A
+       resolved member whose ``Add`` raises becomes a ``DroppedItemRecord``
+       on ``context._dropped`` when a collector is present (issue #132).
 
     Returns the newly created IFsFeatStrucType on success, None on failure.
     """
@@ -3021,6 +3023,8 @@ def feature_struct_types_execute_action(
             src_guid, e,
         )
 
+    type_label = _references_item_label(_cast_lcm(src_type, "IFsFeatStrucType"))
+
     # Wire FeaturesRS: resolve each source member defn by GUID in target FeaturesOC.
     # Guarded per-member -- a member with no target counterpart is logged
     # and skipped, never crashing the whole type's transfer.
@@ -3050,6 +3054,12 @@ def feature_struct_types_execute_action(
                         "failed for defn %s in type %s: %r -- FeaturesRS left "
                         "partially wired.",
                         defn_guid, src_guid, add_err,
+                    )
+                    _record_features_rs_add_failure(
+                        context, type_guid=src_guid, type_label=type_label,
+                        member_guid=defn_guid,
+                        member_label=_references_item_label(src_defn),
+                        exc=add_err,
                     )
     except Exception as e:
         log.warning(
@@ -3270,6 +3280,8 @@ def phon_feat_types_execute_action(
             src_guid, e,
         )
 
+    type_label = _references_item_label(_cast_lcm(src_type, "IFsFeatStrucType"))
+
     # Wire FeaturesRS: resolve each source member defn by GUID in target FeaturesOC.
     # Guarded per-member -- a member with no target counterpart is logged
     # and skipped, never crashing the whole type's transfer.
@@ -3299,6 +3311,12 @@ def phon_feat_types_execute_action(
                         "failed for defn %s in type %s: %r -- FeaturesRS left "
                         "partially wired.",
                         defn_guid, src_guid, add_err,
+                    )
+                    _record_features_rs_add_failure(
+                        context, type_guid=src_guid, type_label=type_label,
+                        member_guid=defn_guid,
+                        member_label=_references_item_label(src_defn),
+                        exc=add_err,
                     )
     except Exception as e:
         log.warning(
@@ -3378,6 +3396,19 @@ FEATURES_RS_REORDERED = "reordered"    # complete, shared order differs: Skip
 FEATURES_RS_REORDERED_NOTE = "reordered in target, left as-is"
 FEATURES_RS_CREATE_WIRED = "create_wired"  # planned create; the create path wires it
 FEATURES_RS_TYPE_ABSENT = "type_absent"    # not in the target, not planned: out of scope
+
+
+def features_rs_reordered_skip_detail(type_guid: str) -> str:
+    """Shared Move Skip.detail and Preview REORDERED row body (issue #138)."""
+    return (f"struct-type {type_guid} FeaturesRS holds every source member but in a "
+            f"different order than the source; {FEATURES_RS_REORDERED_NOTE}")
+
+
+def features_rs_reordered_after_repair_skip_detail(type_guid: str) -> str:
+    """After insert-only repair, shared order may still differ (issue #138)."""
+    return (f"struct-type {type_guid} FeaturesRS missing members were inserted but "
+            f"shared members remain in a different order than the source; "
+            f"{FEATURES_RS_REORDERED_NOTE}")
 
 
 def _target_feature_system(target, attr):
@@ -3578,6 +3609,33 @@ def _features_rs_drop(type_guid, ref, member_guid, member_label):
     )
 
 
+def _features_rs_add_failed_drop(type_guid, type_label, member_guid,
+                                 member_label, exc):
+    """Issue #132: create-time ``FeaturesRS.Add`` raised -- never log-only."""
+    return DroppedItemRecord(
+        owner_kind="FsFeatStrucType",
+        owner_guid=type_guid,
+        owner_label=type_label or "",
+        field_name="FeaturesRS",
+        item_name=member_label or "",
+        item_guid=member_guid or "",
+        reason=(f"FeaturesRS.Add() failed ({type(exc).__name__}: {exc}); "
+                "member left unwired at create"),
+    )
+
+
+def _record_features_rs_add_failure(context, *, type_guid, type_label,
+                                    member_guid, member_label, exc):
+    dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        return
+    _append_dropped_once(
+        dropped,
+        _features_rs_add_failed_drop(
+            type_guid, type_label, member_guid, member_label, exc),
+    )
+
+
 def plan_struct_type_features_rs_drops(refs, target, actions, dropped) -> None:
     """Preview: append the `DroppedItemRecord`s the Move pass will emit, so
     the drop is visible BEFORE Move (Principle III)."""
@@ -3638,9 +3696,7 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                 skips.append(Skip(
                     category=types_cat, source_guid=type_guid,
                     reason=SkipReason.NEEDS_MANUAL,
-                    detail=(f"struct-type {type_guid} FeaturesRS holds every "
-                            "source member but in a different order than "
-                            f"the source; {FEATURES_RS_REORDERED_NOTE}"),
+                    detail=features_rs_reordered_skip_detail(type_guid),
                 ))
             elif outcome == FEATURES_RS_REPAIR:
                 fs = _target_feature_system(target, attr)
@@ -3687,10 +3743,8 @@ def _run_struct_type_features_rs_pass(context, target, tag=None):
                         skips.append(Skip(
                             category=types_cat, source_guid=type_guid,
                             reason=SkipReason.NEEDS_MANUAL,
-                            detail=(f"struct-type {type_guid} FeaturesRS "
-                                    "missing members were inserted but shared "
-                                    "members remain in a different order than "
-                                    f"the source; {FEATURES_RS_REORDERED_NOTE}"),
+                            detail=features_rs_reordered_after_repair_skip_detail(
+                                type_guid),
                         ))
             if unresolved:
                 for g, _label in unresolved:
@@ -4180,6 +4234,55 @@ def exception_features_plan_action(piece, context: RunContext, ws_mapping: WSMap
     )
 
 
+def _try_add_exception_features_oc_member(exc_oc, target_val, *, pos_guid, val_guid,
+                                          dropped):
+    """Issue #132: never-silent `ExceptionFeaturesOC.Add` on POS wiring.
+
+    Read-back confirms membership (#111/#133 model). Returns True only when
+    the value is present after a clean Add; False when the link failed or
+    Add raised (even if read-back shows a partial apply -- reported, not
+    counted as added by the caller)."""
+    import logging as _logging
+
+    log = _logging.getLogger("gramtrans.Lib.categories")
+    confirmed, readback_error = _infl_feat_in_collection(exc_oc, target_val, val_guid)
+    if confirmed:
+        return True
+    error = None
+    try:
+        exc_oc.Add(target_val)
+    except Exception as exc:  # noqa: BLE001 -- reported, not swallowed
+        error = f"{type(exc).__name__}: {exc}"
+    confirmed, readback_error2 = _infl_feat_in_collection(exc_oc, target_val, val_guid)
+    readback_error = readback_error2 or readback_error
+    if confirmed and error is None:
+        return True
+    if confirmed:
+        error = (
+            "Add raised after partially applying (the value is present on "
+            "read-back, not counted as a clean link): " + error
+        )
+    detail = error or readback_error or (
+        "Add returned normally but the value is absent from "
+        "ExceptionFeaturesOC on read-back"
+    )
+    log.warning(
+        "ExceptionFeaturesOC link POS %s value %s failed: %s",
+        pos_guid, val_guid, detail,
+    )
+    if dropped is not None:
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="PartOfSpeech",
+            owner_guid=pos_guid,
+            owner_label="",
+            field_name="ExceptionFeaturesOC",
+            item_name="",
+            item_guid=val_guid,
+            reason=f"WRITE_FAILED: {detail}",
+        ))
+    return False
+
+
 def exception_features_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
     """Wire the IFsSymFeatVal reference into the target POS.ExceptionFeaturesOC.
 
@@ -4231,8 +4334,21 @@ def exception_features_execute_action(action: PlannedAction, context: RunContext
     if target_val is None:
         return ActionOutcome.skipped("feature value %s not present in the destination (inflection_features must run first)" % val_guid)
 
-    target_pos.ExceptionFeaturesOC.Add(target_val)
-    return target_val
+    exc_oc = getattr(target_pos, "ExceptionFeaturesOC", None)
+    if exc_oc is None:
+        return ActionOutcome.skipped(
+            "ExceptionFeaturesOC unavailable on target POS %s" % pos_guid,
+        )
+    dropped = getattr(context, "_dropped", None)
+    if _try_add_exception_features_oc_member(
+            exc_oc, target_val, pos_guid=pos_guid, val_guid=val_guid,
+            dropped=dropped):
+        return target_val
+    return ActionOutcome.skipped(
+        "ExceptionFeaturesOC link pos=%s val=%s not confirmed on read-back"
+        % (pos_guid, val_guid),
+        recorded=dropped is not None,
+    )
 
 
 # ----- shared possibility-list walker (Phase 3b) ---------------------------
@@ -5449,6 +5565,56 @@ def _try_wire_adhoc_first_ra(new_rule, field_name, tgt_member, rule_guid, droppe
         return False
 
 
+def _try_add_adhoc_rest_rs_member(rule, field_name, member, rule_guid, dropped,
+                                  *, owner_kind: str):
+    """Issue #132: never-silent ``RestOfAllosRS`` / ``RestOfMorphsRS`` Add.
+
+    After GUID resolution succeeds, a pythonnet/LCM ``Add`` failure must not
+    leave the adhoc rule partially wired with no ``DroppedItemRecord``."""
+    m_guid = _guid_str_from(member)
+    coll = getattr(rule, field_name, None)
+    if coll is None:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "adhoc rule %s: %s missing on target rule; member %s not wired",
+            rule_guid, field_name, m_guid,
+        )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind=owner_kind,
+                owner_guid=rule_guid,
+                owner_label="",
+                field_name=field_name,
+                item_name=m_guid or field_name,
+                item_guid=m_guid or "",
+                reason=(
+                    f"{field_name} collection missing on target rule; "
+                    "reference resolved in target but link not written"
+                ),
+            ))
+        return False
+    try:
+        coll.Add(member)
+        return True
+    except (AttributeError, TypeError) as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "adhoc rule %s %s.Add failed for member %s: %s",
+            rule_guid, field_name, m_guid, exc, exc_info=True,
+        )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind=owner_kind,
+                owner_guid=rule_guid,
+                owner_label="",
+                field_name=field_name,
+                item_name=m_guid or field_name,
+                item_guid=m_guid or "",
+                reason=f"{field_name}.Add failed: {exc}",
+            ))
+        return False
+
+
 def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
     """Create rule + apply syncable properties + wire references.
 
@@ -5553,10 +5719,10 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                 tgt_allo = _find_target_obj_by_guid(
                     _iter_all_allomorphs(target), a_guid)
                 if tgt_allo is not None:
-                    try:
-                        new_rule.RestOfAllosRS.Add(tgt_allo)
-                    except (AttributeError, TypeError):
-                        pass
+                    _try_add_adhoc_rest_rs_member(
+                        new_rule, "RestOfAllosRS", tgt_allo, src_guid, dropped,
+                        owner_kind="MoAlloAdhocProhib",
+                    )
         except (AttributeError, TypeError):
             pass
 
@@ -5583,10 +5749,10 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                 tgt_msa = _find_target_obj_by_guid(
                     _iter_all_msas(target), m_guid)
                 if tgt_msa is not None:
-                    try:
-                        new_rule.RestOfMorphsRS.Add(tgt_msa)
-                    except (AttributeError, TypeError):
-                        pass
+                    _try_add_adhoc_rest_rs_member(
+                        new_rule, "RestOfMorphsRS", tgt_msa, src_guid, dropped,
+                        owner_kind="MoMorphAdhocProhib",
+                    )
         except (AttributeError, TypeError):
             pass
 
@@ -13017,14 +13183,24 @@ def _get_or_create_feat_struc(target, target_msa, struc_guid, type_guid,
                 struc = factory.Create()
             except Exception:  # noqa: BLE001
                 return None
-    setattr(target_msa, attr, struc)
+    try:
+        setattr(target_msa, attr, struc)
+    except Exception as exc:  # noqa: BLE001 -- issue #132: never orphan Create()
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "assigning %s on owner failed after IFsFeatStruc create: %r",
+            attr, exc)
+        return None
     if type_guid:
         tgt_type = _resolve_target_by_guid(target, type_guid)
         if tgt_type is not None:
             try:
                 struc.TypeRA = _cast_lcm(tgt_type, "IFsFeatStrucType")
-            except Exception:  # noqa: BLE001 -- type is optional
-                pass
+            except Exception as exc:  # noqa: BLE001
+                import logging as _logging
+                _logging.getLogger("gramtrans.Lib.categories").warning(
+                    "IFsFeatStruc TypeRA wiring failed for type %s: %r",
+                    type_guid, exc)
     return struc
 
 
@@ -14965,6 +15141,39 @@ def affix_templates_plan_action(piece, context, ws_mapping):
     )
 
 
+def _try_add_affix_template_slot_member(tgt_seq, tgt_slot, *, template_guid,
+                                       seq_name, src_slot, dropped):
+    """Issue #132: never-silent ``Add`` on affix-template slot ref sequences.
+
+    Create-time wiring used ``except (AttributeError, TypeError): pass``, so a
+    resolved slot whose collection rejected the write left an incomplete
+    template with no ``DroppedItemRecord`` (same swallow pattern #134's repair
+    pass already reports via ``_repair_template_slot_seqs``).
+    """
+    if tgt_seq is None:
+        return
+    sg = _guid_str_from(src_slot) or ""
+    try:
+        tgt_seq.Add(tgt_slot)
+    except Exception as exc:  # noqa: BLE001 -- LCM/COM failures are wide
+        import logging as _logging
+        reason = (f"template slot reference Add failed on {seq_name}: "
+                  f"{type(exc).__name__}: {exc}")
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "affix template %s: %s", template_guid, reason, exc_info=True)
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="MoInflAffixTemplate",
+                owner_guid=template_guid,
+                owner_label="",
+                field_name=seq_name,
+                item_name=_rule_ref_display_name(src_slot)
+                or f"guid={_short_guid(sg)}",
+                item_guid=sg,
+                reason=reason,
+            ))
+
+
 def affix_templates_execute_action(action, context, ws_mapping, tag):
     """Create IMoInflAffixTemplate(Guid) under the owning target POS, wire all
     5 slot ref sequences by GUID lookup, copy Final/Disabled, wire StratumRA,
@@ -15034,6 +15243,7 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
                 pass
             new_typed = IMoInflAffixTemplate(new_tpl)
             # Wire all 5 slot ref sequences in source order (T010).
+            dropped = getattr(context, "_dropped", None)
             all_target_slots = None
             for seq_name in _TEMPLATE_SLOT_SEQS:
                 src_seq = getattr(src_tpl, seq_name, None)
@@ -15051,10 +15261,10 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
                     sg = _guid_str_from(src_slot)
                     tgt_slot = _find_target_obj_by_guid(all_target_slots, sg)
                     if tgt_slot is not None:
-                        try:
-                            tgt_seq.Add(tgt_slot)
-                        except (AttributeError, TypeError):
-                            pass
+                        _try_add_affix_template_slot_member(
+                            tgt_seq, tgt_slot, template_guid=src_guid,
+                            seq_name=seq_name, src_slot=src_slot,
+                            dropped=dropped)
             # Final / Disabled scalars.
             for bool_prop in ("Final", "Disabled"):
                 try:
@@ -16769,6 +16979,49 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
         )
 
 
+def _try_add_nc_segments_rc_member(tgt_segs, tgt_phon, *, owner_guid, dropped):
+    """Issue #132: never-silent `SegmentsRC.Add` on key-matched PhNCSegments.
+
+    Returns True when the member is present after Add (including idempotent
+    membership), False when Add failed and a drop was recorded (or only logged
+    when ``dropped`` is None).
+    """
+    if tgt_segs is None or tgt_phon is None:
+        return False
+    tgt_guid = _guid_str_from(tgt_phon)
+    if _collection_already_has(tgt_segs, tgt_phon):
+        return True
+    try:
+        tgt_segs.Add(tgt_phon)
+    except (AttributeError, TypeError) as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_try_add_nc_segments_rc_member: SegmentsRC.Add failed for "
+            "PhNCSegments %s (phoneme=%s): %s",
+            owner_guid, tgt_guid, exc,
+            exc_info=True,
+        )
+        if dropped is not None:
+            _append_dropped_once(
+                dropped,
+                DroppedItemRecord(
+                    owner_kind="PhNCSegments",
+                    owner_guid=owner_guid,
+                    owner_label="guid=%s" % _short_guid(owner_guid),
+                    field_name="SegmentsRC",
+                    item_name="guid=%s" % _short_guid(tgt_guid),
+                    item_guid=tgt_guid,
+                    reason=(
+                        f"SegmentsRC.Add failed: {type(exc).__name__}: {exc}"
+                    ),
+                ),
+            )
+        return False
+    if not _collection_already_has(tgt_segs, tgt_phon):
+        return False
+    return True
+
+
 def _wire_matched_nc_segments(context, target, plan):
     """Union a key-matched starter `PhNCSegments`' members with its source
     class's members (issue #54). Add-only; never removes a member.
@@ -16856,9 +17109,12 @@ def _wire_matched_nc_segments(context, target, plan):
             tgt_guid = _guid_str_from(tgt_phon)
             if tgt_guid in present:
                 continue
-            tgt_segs.Add(tgt_phon)
-            present.add(tgt_guid)
-            added_total += 1
+            if _try_add_nc_segments_rc_member(
+                    tgt_segs, tgt_phon,
+                    owner_guid=ov.target_guid,
+                    dropped=dropped):
+                present.add(tgt_guid)
+                added_total += 1
     if added_total:
         import logging as _logging
         _logging.getLogger("gramtrans.Lib.categories").info(
@@ -18342,6 +18598,30 @@ def _report_dropped_rhs(dropped, rule_guid, rhs_guid, exc):
     ))
 
 
+def _report_dropped_nc_constraint_rs(
+    dropped, rule_guid, cell_guid, rs_attr, constr_guid, exc,
+):
+    """Issue #132: ``PhSimpleContextNC.PlusConstrRS`` / ``MinusConstrRS`` Add
+    failures must not vanish behind ``except (AttributeError, TypeError): pass``."""
+    if dropped is None:
+        return
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind="PhSimpleContextNC",
+        owner_guid=cell_guid or "",
+        owner_label=(
+            f"rule={_short_guid(rule_guid)} "
+            f"cell={_short_guid(cell_guid)}"
+        ),
+        field_name=rs_attr,
+        item_name=f"constraint={_short_guid(constr_guid)}",
+        item_guid=constr_guid or "",
+        reason=(
+            f"{rs_attr} constraint could not be wired "
+            f"({type(exc).__name__}: {exc})"
+        ),
+    ))
+
+
 def _report_dropped_struc_desc_cell(dropped, rule_guid, cell_guid, exc):
     """DroppedItemRecord for ONE `StrucDescOS` context cell of a
     `PhRegularRule` that could not be built (feature 038, T120 second entry).
@@ -18927,7 +19207,13 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                                 f"PhSimpleContextNC guid={cell_guid} references "
                                 f"constraint guid={cg} absent from target after pre-pass"
                             )
-                        new_rs.Add(tgt_c)
+                        try:
+                            new_rs.Add(tgt_c)
+                        except (AttributeError, TypeError) as add_exc:
+                            _report_dropped_nc_constraint_rs(
+                                _dropped_list, src_guid, cell_guid,
+                                rs_attr, cg, add_exc,
+                            )
                 except RuntimeError:
                     raise
                 except (AttributeError, TypeError):
@@ -20928,6 +21214,48 @@ def _repair_allomorph_refs(context, target, picks, dropped, skips):
     return writes
 
 
+def _try_wire_allomorph_stem_name_ra(tgt_allo, target_sn, sn_guid, *,
+                                     owner_guid, src_allo, dropped):
+    """Issue #132: never-silent ``StemNameRA`` assignment on allomorph wiring.
+
+    Used by create-time hung-data reproduce and #134 late allomorph repair."""
+    import logging as _logging
+    log = _logging.getLogger("gramtrans.Lib.categories")
+    write_error = None
+    try:
+        tgt_allo.StemNameRA = target_sn
+    except Exception as exc:  # noqa: BLE001 -- reported, not swallowed
+        write_error = f"{type(exc).__name__}: {exc}"
+        log.warning(
+            "allomorph %s StemNameRA assignment failed for stem %s: %s",
+            owner_guid, sn_guid, write_error, exc_info=True,
+        )
+    wired = getattr(tgt_allo, "StemNameRA", None)
+    if wired is not None and _guid_str_from(wired) == sn_guid:
+        if write_error:
+            log.warning(
+                "allomorph %s StemNameRA assignment raised but read-back "
+                "shows stem %s present (%s)",
+                owner_guid, sn_guid, write_error,
+            )
+        return True
+    detail = write_error or (
+        "StemNameRA absent on read-back after assignment")
+    if dropped is not None:
+        src_sn = getattr(src_allo, "StemNameRA", None)
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="MoForm",
+            owner_guid=owner_guid,
+            owner_label=_owner_label_for("MoForm", src_allo),
+            field_name="StemNameRA",
+            item_name=_rule_ref_display_name(src_sn)
+            or f"guid={_short_guid(sn_guid)}",
+            item_guid=sn_guid or "",
+            reason=f"WRITE_FAILED: {detail}",
+        ))
+    return False
+
+
 def _repair_one_allomorph(src_form, tgt_form, g, envs, target, dropped, skips):
     src_c = _cast_to_concrete(src_form)
     tgt_c = _cast_to_concrete(tgt_form)
@@ -20956,9 +21284,29 @@ def _repair_one_allomorph(src_form, tgt_form, g, envs, target, dropped, skips):
                 _drop("PhoneEnvRC", e, eg,
                       f"environment {eg} not present in target")
                 continue
-            tgt_envs.Add(found)
-            have.add(eg)
-            writes += 1
+            add_error = None
+            try:
+                tgt_envs.Add(found)
+            except Exception as exc:  # noqa: BLE001 -- never silent (#132)
+                add_error = f"{type(exc).__name__}: {exc}"
+            confirmed, readback_error = _infl_feat_in_collection(
+                tgt_envs, found, eg)
+            if confirmed and add_error is None:
+                have.add(eg)
+                writes += 1
+                continue
+            if confirmed and add_error:
+                import logging as _logging
+                _logging.getLogger("gramtrans.Lib.categories").warning(
+                    "late allomorph repair: allomorph %s PhoneEnvRC Add(%s) "
+                    "raised but read-back shows member present (%s)",
+                    g, eg, add_error)
+                have.add(eg)
+                continue
+            reason = add_error or readback_error or (
+                "Add returned normally but environment is absent from "
+                "PhoneEnvRC on read-back")
+            _drop("PhoneEnvRC", e, eg, f"WRITE_FAILED: {reason}")
 
     src_pos = list(getattr(src_c, "PositionRS", None) or [])
     tgt_pos = getattr(tgt_c, "PositionRS", None)
@@ -20992,8 +21340,10 @@ def _repair_one_allomorph(src_form, tgt_form, g, envs, target, dropped, skips):
         except (AttributeError, TypeError, ImportError):
             pass
         if found is not None:
-            tgt_c.StemNameRA = found
-            writes += 1
+            if _try_wire_allomorph_stem_name_ra(
+                    tgt_c, found, sg, owner_guid=g, src_allo=src_form,
+                    dropped=dropped):
+                writes += 1
         else:
             _drop("StemNameRA", src_sn, sg,
                   "stem name not found in target POS's StemNamesOC")

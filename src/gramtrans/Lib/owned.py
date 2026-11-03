@@ -1287,10 +1287,14 @@ def _reproduce_stem_name_ra(src_allo, new_allo, ctx, dropped) -> None:
                 target_sn = sn
                 break
     if target_sn is not None:
-        try:
-            new_allo.StemNameRA = target_sn
-        except (AttributeError, TypeError):
-            pass
+        if __package__:
+            from . import categories as _categories
+        else:
+            import categories as _categories  # type: ignore
+        if _categories._try_wire_allomorph_stem_name_ra(
+                new_allo, target_sn, sn_guid,
+                owner_guid=owner_guid, src_allo=src_allo, dropped=dropped):
+            return
         return
     reason = (
         "stem name not found in target POS's StemNamesOC" if target_pos is not None

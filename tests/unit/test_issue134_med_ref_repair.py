@@ -25,6 +25,13 @@ class _Seq(list):
         self.insert(i, x)
 
 
+class _NoOpAddSeq(_Seq):
+    """Add does nothing — simulates a silent LCM no-op (#132)."""
+
+    def Add(self, x):
+        pass
+
+
 def test_insert_missing_in_order():
     a, b, c = _Obj("a"), _Obj("b"), _Obj("c")
     tgt = _Seq([c])
@@ -80,6 +87,23 @@ def test_repair_one_allomorph_env_and_position(monkeypatch):
     assert list(tgt.PositionRS) == [e1, e2] and not skips and not dropped
     assert categories._repair_one_allomorph(
         src, tgt, "al", envs, None, dropped, skips) == 0
+
+
+def test_repair_one_allomorph_phone_env_add_failure_recorded(monkeypatch):
+    monkeypatch.setattr(categories, "_cast_to_concrete", lambda o: o)
+    e1, e2 = _Obj("e1"), _Obj("e2")
+    src = SimpleNamespace(guid="al", PhoneEnvRC=[e1, e2], PositionRS=[],
+                          StemNameRA=None)
+    tgt = SimpleNamespace(guid="al", PhoneEnvRC=_NoOpAddSeq(), PositionRS=_Seq(),
+                          StemNameRA=None)
+    dropped, skips = [], []
+    n = categories._repair_one_allomorph(
+        src, tgt, "al", {"e1": e1, "e2": e2}, None, dropped, skips)
+    assert n == 0
+    assert len(dropped) == 2
+    assert all(d.field_name == "PhoneEnvRC" for d in dropped)
+    assert all("WRITE_FAILED" in d.reason for d in dropped)
+    assert not skips
 
 
 def test_repair_one_allomorph_absent_env_dropped(monkeypatch):
