@@ -5419,6 +5419,36 @@ def adhoc_compound_rules_plan_action(piece, context, ws_mapping):
 
 # --- T008-T011 --------------------------------------------------------------
 
+
+def _try_wire_adhoc_first_ra(new_rule, field_name, tgt_member, rule_guid, dropped,
+                             *, owner_kind: str) -> bool:
+    """Issue #132: never-silent ``FirstAllomorphRA`` / ``FirstMorphemeRA`` assign.
+
+    After GUID resolution succeeds, a rejected owning-atomic write must not
+    leave the adhoc rule with a null head reference and no report line."""
+    m_guid = _guid_str_from(tgt_member)
+    try:
+        setattr(new_rule, field_name, tgt_member)
+        return True
+    except Exception as exc:  # noqa: BLE001 -- LCM/COM failures are wide
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "adhoc rule %s: %s assignment failed for member %s: %s",
+            rule_guid, field_name, m_guid, exc, exc_info=True,
+        )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind=owner_kind,
+                owner_guid=rule_guid,
+                owner_label="",
+                field_name=field_name,
+                item_name=m_guid or field_name,
+                item_guid=m_guid or "",
+                reason=f"{field_name} assignment failed: {exc}",
+            ))
+        return False
+
+
 def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
     """Create rule + apply syncable properties + wire references.
 
@@ -5495,6 +5525,8 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
         source_guid=src_guid,
     )
 
+    dropped = getattr(context, "_dropped", None)
+
     # --- T009: adhoc reference wiring ----------------------------------------
     if class_name == "MoAlloAdhocProhib":
         # Wire FirstAllomorphRA (RA -> IMoForm)
@@ -5505,7 +5537,10 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                 tgt_allo = _find_target_obj_by_guid(
                     _iter_all_allomorphs(target), fa_guid)
                 if tgt_allo is not None:
-                    new_rule.FirstAllomorphRA = tgt_allo
+                    _try_wire_adhoc_first_ra(
+                        new_rule, "FirstAllomorphRA", tgt_allo, src_guid, dropped,
+                        owner_kind="MoAlloAdhocProhib",
+                    )
         except (AttributeError, TypeError):
             pass
         # Wire AllomorphsRS (read-only seq; use RestOfAllosRS add pattern)
@@ -5534,7 +5569,10 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                 tgt_msa = _find_target_obj_by_guid(
                     _iter_all_msas(target), fm_guid)
                 if tgt_msa is not None:
-                    new_rule.FirstMorphemeRA = tgt_msa
+                    _try_wire_adhoc_first_ra(
+                        new_rule, "FirstMorphemeRA", tgt_msa, src_guid, dropped,
+                        owner_kind="MoMorphAdhocProhib",
+                    )
         except (AttributeError, TypeError):
             pass
         # Wire RestOfMorphsRS
