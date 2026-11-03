@@ -12988,14 +12988,24 @@ def _get_or_create_feat_struc(target, target_msa, struc_guid, type_guid,
                 struc = factory.Create()
             except Exception:  # noqa: BLE001
                 return None
-    setattr(target_msa, attr, struc)
+    try:
+        setattr(target_msa, attr, struc)
+    except Exception as exc:  # noqa: BLE001 -- issue #132: never orphan Create()
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "assigning %s on owner failed after IFsFeatStruc create: %r",
+            attr, exc)
+        return None
     if type_guid:
         tgt_type = _resolve_target_by_guid(target, type_guid)
         if tgt_type is not None:
             try:
                 struc.TypeRA = _cast_lcm(tgt_type, "IFsFeatStrucType")
-            except Exception:  # noqa: BLE001 -- type is optional
-                pass
+            except Exception as exc:  # noqa: BLE001
+                import logging as _logging
+                _logging.getLogger("gramtrans.Lib.categories").warning(
+                    "IFsFeatStruc TypeRA wiring failed for type %s: %r",
+                    type_guid, exc)
     return struc
 
 
