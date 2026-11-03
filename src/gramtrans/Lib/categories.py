@@ -2947,7 +2947,9 @@ def feature_struct_types_execute_action(
     4. Wire FeaturesRS: for each source member defn, resolve the target
        defn by GUID in MsFeatureSystemOA.FeaturesOC and call
        `FeaturesRS.Add()`. Any member whose GUID has no target
-       counterpart is logged and skipped (partial wiring tolerated).
+       counterpart is logged and skipped (partial wiring tolerated). A
+       resolved member whose ``Add`` raises becomes a ``DroppedItemRecord``
+       on ``context._dropped`` when a collector is present (issue #132).
 
     Returns the newly created IFsFeatStrucType on success, None on failure.
     """
@@ -3021,6 +3023,8 @@ def feature_struct_types_execute_action(
             src_guid, e,
         )
 
+    type_label = _references_item_label(_cast_lcm(src_type, "IFsFeatStrucType"))
+
     # Wire FeaturesRS: resolve each source member defn by GUID in target FeaturesOC.
     # Guarded per-member -- a member with no target counterpart is logged
     # and skipped, never crashing the whole type's transfer.
@@ -3050,6 +3054,12 @@ def feature_struct_types_execute_action(
                         "failed for defn %s in type %s: %r -- FeaturesRS left "
                         "partially wired.",
                         defn_guid, src_guid, add_err,
+                    )
+                    _record_features_rs_add_failure(
+                        context, type_guid=src_guid, type_label=type_label,
+                        member_guid=defn_guid,
+                        member_label=_references_item_label(src_defn),
+                        exc=add_err,
                     )
     except Exception as e:
         log.warning(
@@ -3270,6 +3280,8 @@ def phon_feat_types_execute_action(
             src_guid, e,
         )
 
+    type_label = _references_item_label(_cast_lcm(src_type, "IFsFeatStrucType"))
+
     # Wire FeaturesRS: resolve each source member defn by GUID in target FeaturesOC.
     # Guarded per-member -- a member with no target counterpart is logged
     # and skipped, never crashing the whole type's transfer.
@@ -3299,6 +3311,12 @@ def phon_feat_types_execute_action(
                         "failed for defn %s in type %s: %r -- FeaturesRS left "
                         "partially wired.",
                         defn_guid, src_guid, add_err,
+                    )
+                    _record_features_rs_add_failure(
+                        context, type_guid=src_guid, type_label=type_label,
+                        member_guid=defn_guid,
+                        member_label=_references_item_label(src_defn),
+                        exc=add_err,
                     )
     except Exception as e:
         log.warning(
@@ -3588,6 +3606,33 @@ def _features_rs_drop(type_guid, ref, member_guid, member_label):
         reason=(f"member feature definition is not in the target "
                 f"{attr}.FeaturesOC; FeaturesRS left incomplete (select "
                 f"{feats_cat.value} -- a later run repairs the sequence)"),
+    )
+
+
+def _features_rs_add_failed_drop(type_guid, type_label, member_guid,
+                                 member_label, exc):
+    """Issue #132: create-time ``FeaturesRS.Add`` raised -- never log-only."""
+    return DroppedItemRecord(
+        owner_kind="FsFeatStrucType",
+        owner_guid=type_guid,
+        owner_label=type_label or "",
+        field_name="FeaturesRS",
+        item_name=member_label or "",
+        item_guid=member_guid or "",
+        reason=(f"FeaturesRS.Add() failed ({type(exc).__name__}: {exc}); "
+                "member left unwired at create"),
+    )
+
+
+def _record_features_rs_add_failure(context, *, type_guid, type_label,
+                                    member_guid, member_label, exc):
+    dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        return
+    _append_dropped_once(
+        dropped,
+        _features_rs_add_failed_drop(
+            type_guid, type_label, member_guid, member_label, exc),
     )
 
 
