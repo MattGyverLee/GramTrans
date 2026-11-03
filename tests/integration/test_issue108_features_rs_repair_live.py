@@ -334,8 +334,9 @@ def test_features_rs_repaired_to_source_order_and_rerun_writes_nothing(monkeypat
     print("[LIVE] run4 repaired=%d %s" % (len(rep4), after4[("MsFeatureSystemOA", SUBJ_AGR)]))
     assert rep4 == [] and _rows(rows4, "Repair") == []
     print("\n".join(["[LIVE] run4 preview:"] + rows4))
-    assert len(_rows(rows4, "SKIP (reordered")) == 1
-    assert SUBJ_AGR in _rows(rows4, "SKIP (reordered")[0]
+    skip_rows = _rows(rows4, "SKIP (struct-type")
+    assert len(skip_rows) == 1
+    assert SUBJ_AGR in skip_rows[0]
     reordered = [s for s in report4.skips
                  if "reordered in target, left as-is" in (s.detail or "")]
     assert [s.source_guid for s in reordered] == [SUBJ_AGR]

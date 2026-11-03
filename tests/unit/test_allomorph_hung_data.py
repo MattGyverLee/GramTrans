@@ -147,6 +147,22 @@ class _FakeNewAllomorph(_FakeGuidObj):
         self.StemNameRA = None
 
 
+class _RejectingNewAllomorph(_FakeGuidObj):
+    def __init__(self, guid):
+        super(_FakeGuidObj, self).__init__()
+        self.guid = guid
+        self.PhoneEnvRC = _FakeOwningCollection()
+        self._stem_name_ra = None
+
+    @property
+    def StemNameRA(self):
+        return self._stem_name_ra
+
+    @StemNameRA.setter
+    def StemNameRA(self, _value):
+        raise TypeError("StemNameRA binding rejected")
+
+
 # ============================================================================
 # APR fakes -- IMoAlloAdhocProhib (source) / freshly-created target + its
 # UNOWNED factory.
@@ -494,6 +510,36 @@ def test_stem_name_ra_absent_in_target_pos_reports_dropped():
     rec = dropped[0]
     assert rec.field_name == "StemNameRA"
     assert rec.item_guid == sn_guid
+
+
+def test_stem_name_ra_setattr_failure_reports_write_failed_drop():
+    pos_guid = "pos-guid-3"
+    sn_guid = "sn-guid-3"
+
+    src_pos = _FakePOS(pos_guid)
+    src_stem_name = _FakeStemName(sn_guid)
+    src_stem_name.Owner = src_pos
+
+    src_allo = _FakeSourceAllomorph("allo-guid-5", stem_name_ra=src_stem_name)
+    new_allo = _RejectingNewAllomorph("allo-guid-5")
+
+    target_stem_name = _FakeStemName(sn_guid)
+    target_pos = _FakePOS(pos_guid, stem_names=[target_stem_name])
+
+    source = _FakeProject()
+    target = _FakeProject(pos_list=[target_pos],
+                           factories={"IMoAlloAdhocProhibFactory": _FakeAPRFactory()})
+    ctx = _FakeContext(source, target)
+    dropped: list = []
+    resolver_cache: dict = {}
+
+    owned.reproduce_allomorph_hung_data(
+        src_allo, new_allo, ctx, _TAG, resolver_cache, dropped)
+
+    assert new_allo.StemNameRA is None
+    assert len(dropped) == 1
+    assert dropped[0].field_name == "StemNameRA"
+    assert "WRITE_FAILED" in dropped[0].reason
 
 
 # ============================================================================
