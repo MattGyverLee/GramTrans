@@ -5419,6 +5419,57 @@ def adhoc_compound_rules_plan_action(piece, context, ws_mapping):
 
 # --- T008-T011 --------------------------------------------------------------
 
+
+def _try_add_adhoc_rest_rs_member(rule, field_name, member, rule_guid, dropped,
+                                  *, owner_kind: str):
+    """Issue #132: never-silent ``RestOfAllosRS`` / ``RestOfMorphsRS`` Add.
+
+    After GUID resolution succeeds, a pythonnet/LCM ``Add`` failure must not
+    leave the adhoc rule partially wired with no ``DroppedItemRecord``."""
+    m_guid = _guid_str_from(member)
+    coll = getattr(rule, field_name, None)
+    if coll is None:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "adhoc rule %s: %s missing on target rule; member %s not wired",
+            rule_guid, field_name, m_guid,
+        )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind=owner_kind,
+                owner_guid=rule_guid,
+                owner_label="",
+                field_name=field_name,
+                item_name=m_guid or field_name,
+                item_guid=m_guid or "",
+                reason=(
+                    f"{field_name} collection missing on target rule; "
+                    "reference resolved in target but link not written"
+                ),
+            ))
+        return False
+    try:
+        coll.Add(member)
+        return True
+    except (AttributeError, TypeError) as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "adhoc rule %s %s.Add failed for member %s: %s",
+            rule_guid, field_name, m_guid, exc, exc_info=True,
+        )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind=owner_kind,
+                owner_guid=rule_guid,
+                owner_label="",
+                field_name=field_name,
+                item_name=m_guid or field_name,
+                item_guid=m_guid or "",
+                reason=f"{field_name}.Add failed: {exc}",
+            ))
+        return False
+
+
 def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
     """Create rule + apply syncable properties + wire references.
 
@@ -5495,6 +5546,8 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
         source_guid=src_guid,
     )
 
+    dropped = getattr(context, "_dropped", None)
+
     # --- T009: adhoc reference wiring ----------------------------------------
     if class_name == "MoAlloAdhocProhib":
         # Wire FirstAllomorphRA (RA -> IMoForm)
@@ -5518,10 +5571,10 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                 tgt_allo = _find_target_obj_by_guid(
                     _iter_all_allomorphs(target), a_guid)
                 if tgt_allo is not None:
-                    try:
-                        new_rule.RestOfAllosRS.Add(tgt_allo)
-                    except (AttributeError, TypeError):
-                        pass
+                    _try_add_adhoc_rest_rs_member(
+                        new_rule, "RestOfAllosRS", tgt_allo, src_guid, dropped,
+                        owner_kind="MoAlloAdhocProhib",
+                    )
         except (AttributeError, TypeError):
             pass
 
@@ -5545,10 +5598,10 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                 tgt_msa = _find_target_obj_by_guid(
                     _iter_all_msas(target), m_guid)
                 if tgt_msa is not None:
-                    try:
-                        new_rule.RestOfMorphsRS.Add(tgt_msa)
-                    except (AttributeError, TypeError):
-                        pass
+                    _try_add_adhoc_rest_rs_member(
+                        new_rule, "RestOfMorphsRS", tgt_msa, src_guid, dropped,
+                        owner_kind="MoMorphAdhocProhib",
+                    )
         except (AttributeError, TypeError):
             pass
 
