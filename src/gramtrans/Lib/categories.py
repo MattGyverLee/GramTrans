@@ -21000,6 +21000,48 @@ def _repair_allomorph_refs(context, target, picks, dropped, skips):
     return writes
 
 
+def _try_wire_allomorph_stem_name_ra(tgt_allo, target_sn, sn_guid, *,
+                                     owner_guid, src_allo, dropped):
+    """Issue #132: never-silent ``StemNameRA`` assignment on allomorph wiring.
+
+    Used by create-time hung-data reproduce and #134 late allomorph repair."""
+    import logging as _logging
+    log = _logging.getLogger("gramtrans.Lib.categories")
+    write_error = None
+    try:
+        tgt_allo.StemNameRA = target_sn
+    except Exception as exc:  # noqa: BLE001 -- reported, not swallowed
+        write_error = f"{type(exc).__name__}: {exc}"
+        log.warning(
+            "allomorph %s StemNameRA assignment failed for stem %s: %s",
+            owner_guid, sn_guid, write_error, exc_info=True,
+        )
+    wired = getattr(tgt_allo, "StemNameRA", None)
+    if wired is not None and _guid_str_from(wired) == sn_guid:
+        if write_error:
+            log.warning(
+                "allomorph %s StemNameRA assignment raised but read-back "
+                "shows stem %s present (%s)",
+                owner_guid, sn_guid, write_error,
+            )
+        return True
+    detail = write_error or (
+        "StemNameRA absent on read-back after assignment")
+    if dropped is not None:
+        src_sn = getattr(src_allo, "StemNameRA", None)
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="MoForm",
+            owner_guid=owner_guid,
+            owner_label=_owner_label_for("MoForm", src_allo),
+            field_name="StemNameRA",
+            item_name=_rule_ref_display_name(src_sn)
+            or f"guid={_short_guid(sn_guid)}",
+            item_guid=sn_guid or "",
+            reason=f"WRITE_FAILED: {detail}",
+        ))
+    return False
+
+
 def _repair_one_allomorph(src_form, tgt_form, g, envs, target, dropped, skips):
     src_c = _cast_to_concrete(src_form)
     tgt_c = _cast_to_concrete(tgt_form)
@@ -21084,8 +21126,10 @@ def _repair_one_allomorph(src_form, tgt_form, g, envs, target, dropped, skips):
         except (AttributeError, TypeError, ImportError):
             pass
         if found is not None:
-            tgt_c.StemNameRA = found
-            writes += 1
+            if _try_wire_allomorph_stem_name_ra(
+                    tgt_c, found, sg, owner_guid=g, src_allo=src_form,
+                    dropped=dropped):
+                writes += 1
         else:
             _drop("StemNameRA", src_sn, sg,
                   "stem name not found in target POS's StemNamesOC")
