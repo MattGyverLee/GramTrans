@@ -4089,6 +4089,35 @@ def _enrich_owned_collections(overwrite, src_obj, tgt_obj, source, target,
     return measured
 
 
+def _record_update_scalar_failure(overwrite, dropped, exc):
+    """Issue #132: when the scalar UPDATE half of `_execute_update_semantic`
+    raises, log+Warning alone hides the failure from `RunReport.dropped_items`.
+    One owner-level record when the collector is wired (enrichment half is
+    separate)."""
+    if dropped is None:
+        return
+    cats = _categories_mod()
+    if __package__:
+        from .models import DroppedItemRecord
+    else:
+        from models import DroppedItemRecord  # type: ignore
+    guid = overwrite.source_guid or ""
+    label = (getattr(overwrite, "summary", "") or "").strip() or guid
+    owner_kind = (_ENRICH_OWNER_KIND
+                  if overwrite.category in (GrammarCategory.GRAM_CATEGORIES,
+                                            GrammarCategory.POS)
+                  else overwrite.category.value)
+    cats._append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind=owner_kind,
+        owner_guid=guid,
+        owner_label=label,
+        field_name="(scalar UPDATE)",
+        item_name="",
+        item_guid="",
+        reason=(f"scalar UPDATE failed: {type(exc).__name__}: {exc}"),
+    ))
+
+
 def _record_enrichment_pass_failure(overwrite, dropped, exc):
     """Issue #132: when the owned-collection enrichment pass raises, log+Warning
     alone would hide the failure from `RunReport.dropped_items` (Preview can
@@ -4457,6 +4486,7 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             f"  [{cat.value}] _execute_update_semantic raised"
             f" {type(exc).__name__}: {exc}  guid={src_guid[:8]}"
         )
+        _record_update_scalar_failure(overwrite, dropped, exc)
 
     # ---- Feature 038 T045 (FR-020..FR-022): the add-only collection half ----
     # In its OWN try, deliberately: a collection-level failure must not be able
