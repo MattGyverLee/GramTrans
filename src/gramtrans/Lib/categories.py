@@ -5419,6 +5419,28 @@ def adhoc_compound_rules_plan_action(piece, context, ws_mapping):
 
 # --- T008-T011 --------------------------------------------------------------
 
+
+def _report_adhoc_unresolved_member(dropped, *, owner_kind, rule_guid, field_name,
+                                    member_guid):
+    """Issue #132: source named a member GUID with no target object — report it.
+
+    Preview may already surface the same gap via ``_rules_missing_ref_warnings``;
+    Move must not finish quietly when ``context._dropped`` is wired."""
+    if dropped is None or not member_guid:
+        return
+    g = str(member_guid).lower()
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind=owner_kind,
+        owner_guid=rule_guid,
+        owner_label="",
+        field_name=field_name,
+        item_name=g,
+        item_guid=g,
+        reason=(f"{field_name} member {g} not in target after transfer "
+                "(dependency unresolved)"),
+    ))
+
+
 def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
     """Create rule + apply syncable properties + wire references.
 
@@ -5495,6 +5517,8 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
         source_guid=src_guid,
     )
 
+    dropped = getattr(context, "_dropped", None)
+
     # --- T009: adhoc reference wiring ----------------------------------------
     if class_name == "MoAlloAdhocProhib":
         # Wire FirstAllomorphRA (RA -> IMoForm)
@@ -5506,6 +5530,12 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                     _iter_all_allomorphs(target), fa_guid)
                 if tgt_allo is not None:
                     new_rule.FirstAllomorphRA = tgt_allo
+                else:
+                    _report_adhoc_unresolved_member(
+                        dropped, owner_kind="MoAlloAdhocProhib",
+                        rule_guid=src_guid, field_name="FirstAllomorphRA",
+                        member_guid=fa_guid,
+                    )
         except (AttributeError, TypeError):
             pass
         # Wire AllomorphsRS (read-only seq; use RestOfAllosRS add pattern)
@@ -5522,6 +5552,12 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                         new_rule.RestOfAllosRS.Add(tgt_allo)
                     except (AttributeError, TypeError):
                         pass
+                else:
+                    _report_adhoc_unresolved_member(
+                        dropped, owner_kind="MoAlloAdhocProhib",
+                        rule_guid=src_guid, field_name="RestOfAllosRS",
+                        member_guid=a_guid,
+                    )
         except (AttributeError, TypeError):
             pass
 
@@ -5535,6 +5571,12 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                     _iter_all_msas(target), fm_guid)
                 if tgt_msa is not None:
                     new_rule.FirstMorphemeRA = tgt_msa
+                else:
+                    _report_adhoc_unresolved_member(
+                        dropped, owner_kind="MoMorphAdhocProhib",
+                        rule_guid=src_guid, field_name="FirstMorphemeRA",
+                        member_guid=fm_guid,
+                    )
         except (AttributeError, TypeError):
             pass
         # Wire RestOfMorphsRS
@@ -5549,6 +5591,12 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                         new_rule.RestOfMorphsRS.Add(tgt_msa)
                     except (AttributeError, TypeError):
                         pass
+                else:
+                    _report_adhoc_unresolved_member(
+                        dropped, owner_kind="MoMorphAdhocProhib",
+                        rule_guid=src_guid, field_name="RestOfMorphsRS",
+                        member_guid=m_guid,
+                    )
         except (AttributeError, TypeError):
             pass
 
