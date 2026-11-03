@@ -18304,6 +18304,30 @@ def _report_dropped_rhs(dropped, rule_guid, rhs_guid, exc):
     ))
 
 
+def _report_dropped_nc_constraint_rs(
+    dropped, rule_guid, cell_guid, rs_attr, constr_guid, exc,
+):
+    """Issue #132: ``PhSimpleContextNC.PlusConstrRS`` / ``MinusConstrRS`` Add
+    failures must not vanish behind ``except (AttributeError, TypeError): pass``."""
+    if dropped is None:
+        return
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind="PhSimpleContextNC",
+        owner_guid=cell_guid or "",
+        owner_label=(
+            f"rule={_short_guid(rule_guid)} "
+            f"cell={_short_guid(cell_guid)}"
+        ),
+        field_name=rs_attr,
+        item_name=f"constraint={_short_guid(constr_guid)}",
+        item_guid=constr_guid or "",
+        reason=(
+            f"{rs_attr} constraint could not be wired "
+            f"({type(exc).__name__}: {exc})"
+        ),
+    ))
+
+
 def _report_dropped_struc_desc_cell(dropped, rule_guid, cell_guid, exc):
     """DroppedItemRecord for ONE `StrucDescOS` context cell of a
     `PhRegularRule` that could not be built (feature 038, T120 second entry).
@@ -18889,7 +18913,13 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                                 f"PhSimpleContextNC guid={cell_guid} references "
                                 f"constraint guid={cg} absent from target after pre-pass"
                             )
-                        new_rs.Add(tgt_c)
+                        try:
+                            new_rs.Add(tgt_c)
+                        except (AttributeError, TypeError) as add_exc:
+                            _report_dropped_nc_constraint_rs(
+                                _dropped_list, src_guid, cell_guid,
+                                rs_attr, cg, add_exc,
+                            )
                 except RuntimeError:
                     raise
                 except (AttributeError, TypeError):
