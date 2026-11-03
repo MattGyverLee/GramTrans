@@ -20918,9 +20918,29 @@ def _repair_one_allomorph(src_form, tgt_form, g, envs, target, dropped, skips):
                 _drop("PhoneEnvRC", e, eg,
                       f"environment {eg} not present in target")
                 continue
-            tgt_envs.Add(found)
-            have.add(eg)
-            writes += 1
+            add_error = None
+            try:
+                tgt_envs.Add(found)
+            except Exception as exc:  # noqa: BLE001 -- never silent (#132)
+                add_error = f"{type(exc).__name__}: {exc}"
+            confirmed, readback_error = _infl_feat_in_collection(
+                tgt_envs, found, eg)
+            if confirmed and add_error is None:
+                have.add(eg)
+                writes += 1
+                continue
+            if confirmed and add_error:
+                import logging as _logging
+                _logging.getLogger("gramtrans.Lib.categories").warning(
+                    "late allomorph repair: allomorph %s PhoneEnvRC Add(%s) "
+                    "raised but read-back shows member present (%s)",
+                    g, eg, add_error)
+                have.add(eg)
+                continue
+            reason = add_error or readback_error or (
+                "Add returned normally but environment is absent from "
+                "PhoneEnvRC on read-back")
+            _drop("PhoneEnvRC", e, eg, f"WRITE_FAILED: {reason}")
 
     src_pos = list(getattr(src_c, "PositionRS", None) or [])
     tgt_pos = getattr(tgt_c, "PositionRS", None)
