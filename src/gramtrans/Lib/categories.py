@@ -14927,6 +14927,39 @@ def affix_templates_plan_action(piece, context, ws_mapping):
     )
 
 
+def _try_add_affix_template_slot_member(tgt_seq, tgt_slot, *, template_guid,
+                                       seq_name, src_slot, dropped):
+    """Issue #132: never-silent ``Add`` on affix-template slot ref sequences.
+
+    Create-time wiring used ``except (AttributeError, TypeError): pass``, so a
+    resolved slot whose collection rejected the write left an incomplete
+    template with no ``DroppedItemRecord`` (same swallow pattern #134's repair
+    pass already reports via ``_repair_template_slot_seqs``).
+    """
+    if tgt_seq is None:
+        return
+    sg = _guid_str_from(src_slot) or ""
+    try:
+        tgt_seq.Add(tgt_slot)
+    except Exception as exc:  # noqa: BLE001 -- LCM/COM failures are wide
+        import logging as _logging
+        reason = (f"template slot reference Add failed on {seq_name}: "
+                  f"{type(exc).__name__}: {exc}")
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "affix template %s: %s", template_guid, reason, exc_info=True)
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="MoInflAffixTemplate",
+                owner_guid=template_guid,
+                owner_label="",
+                field_name=seq_name,
+                item_name=_rule_ref_display_name(src_slot)
+                or f"guid={_short_guid(sg)}",
+                item_guid=sg,
+                reason=reason,
+            ))
+
+
 def affix_templates_execute_action(action, context, ws_mapping, tag):
     """Create IMoInflAffixTemplate(Guid) under the owning target POS, wire all
     5 slot ref sequences by GUID lookup, copy Final/Disabled, wire StratumRA,
@@ -14996,6 +15029,7 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
                 pass
             new_typed = IMoInflAffixTemplate(new_tpl)
             # Wire all 5 slot ref sequences in source order (T010).
+            dropped = getattr(context, "_dropped", None)
             all_target_slots = None
             for seq_name in _TEMPLATE_SLOT_SEQS:
                 src_seq = getattr(src_tpl, seq_name, None)
@@ -15013,10 +15047,10 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
                     sg = _guid_str_from(src_slot)
                     tgt_slot = _find_target_obj_by_guid(all_target_slots, sg)
                     if tgt_slot is not None:
-                        try:
-                            tgt_seq.Add(tgt_slot)
-                        except (AttributeError, TypeError):
-                            pass
+                        _try_add_affix_template_slot_member(
+                            tgt_seq, tgt_slot, template_guid=src_guid,
+                            seq_name=seq_name, src_slot=src_slot,
+                            dropped=dropped)
             # Final / Disabled scalars.
             for bool_prop in ("Final", "Disabled"):
                 try:
