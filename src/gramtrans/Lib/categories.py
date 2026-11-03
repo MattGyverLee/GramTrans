@@ -17220,6 +17220,58 @@ def strata_execute_action(action, context, ws_mapping, tag):
     return new_stratum
 
 
+def _try_wire_phon_rule_stratum_ra(tgt_rr, strat_attr, tgt_strat, *, rule_guid,
+                                   dropped):
+    """Issue #132: never-silent ``InitialStratumRA`` / ``FinalStratumRA`` wire.
+
+    When the target stratum is already resolved but pythonnet/LCM rejects the
+    RA assignment, Move must not finish with a null stratum reference and no
+    run-report line."""
+    if tgt_strat is None:
+        return True
+    strat_guid = _guid_str_from(tgt_strat)
+    try:
+        setattr(tgt_rr, strat_attr, tgt_strat)
+    except (AttributeError, TypeError) as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "phon rule %s: %s assignment failed (stratum=%s): %s",
+            rule_guid, strat_attr, strat_guid, exc, exc_info=True,
+        )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="PhRegularRule",
+                owner_guid=rule_guid or "",
+                owner_label="",
+                field_name=strat_attr,
+                item_name=f"stratum={strat_guid[:8]}...",
+                item_guid=strat_guid or "",
+                reason=f"{strat_attr} assignment failed: {exc}",
+            ))
+        return False
+    wired = getattr(tgt_rr, strat_attr, None)
+    if wired is None or _guid_str_from(wired) != strat_guid:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "phon rule %s: %s read-back did not confirm stratum %s",
+            rule_guid, strat_attr, strat_guid,
+        )
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="PhRegularRule",
+                owner_guid=rule_guid or "",
+                owner_label="",
+                field_name=strat_attr,
+                item_name=f"stratum={strat_guid[:8]}...",
+                item_guid=strat_guid or "",
+                reason=(
+                    f"{strat_attr} assignment did not stick on read-back "
+                    f"(expected stratum {strat_guid})"),
+            ))
+        return False
+    return True
+
+
 def _drain_phon_rule_stratum_wiring(context, target, tag):
     """Tail-block: wire InitialStratumRA / FinalStratumRA on target rules.
 
@@ -17233,6 +17285,7 @@ def _drain_phon_rule_stratum_wiring(context, target, tag):
     pending = getattr(context, "_phon_rule_stratum_wiring", None)
     if not pending:
         return []
+    dropped = getattr(context, "_dropped", None)
 
     # Build GUID -> target stratum map
     tgt_strat_by_guid = {}
@@ -17275,13 +17328,10 @@ def _drain_phon_rule_stratum_wiring(context, target, tag):
                     f"STRATA step; left unset"
                 )
             else:
-                try:
-                    setattr(tgt_rr, strat_attr, tgt_strat)
-                except (AttributeError, TypeError) as _e:
-                    print(
-                        f"[WARN] stratum wiring drain: rule guid={rule_guid}: "
-                        f"could not set {strat_attr}: {_e!r}"
-                    )
+                _try_wire_phon_rule_stratum_ra(
+                    tgt_rr, strat_attr, tgt_strat, rule_guid=rule_guid,
+                    dropped=dropped,
+                )
     return []
 
 
@@ -19495,15 +19545,15 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
             # Target stratum/strata already present -- wire immediately, no
             # need to defer through the tail-block machinery at all.
             if resolved_initial is not None:
-                try:
-                    new_rr.InitialStratumRA = resolved_initial
-                except (AttributeError, TypeError):
-                    pass
+                _try_wire_phon_rule_stratum_ra(
+                    new_rr, "InitialStratumRA", resolved_initial,
+                    rule_guid=src_guid, dropped=_dropped_list,
+                )
             if resolved_final is not None:
-                try:
-                    new_rr.FinalStratumRA = resolved_final
-                except (AttributeError, TypeError):
-                    pass
+                _try_wire_phon_rule_stratum_ra(
+                    new_rr, "FinalStratumRA", resolved_final,
+                    rule_guid=src_guid, dropped=_dropped_list,
+                )
         elif context is not None:
             pending = getattr(context, "_phon_rule_stratum_wiring", None)
             if pending is None:
