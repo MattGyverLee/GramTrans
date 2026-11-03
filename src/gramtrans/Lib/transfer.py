@@ -630,7 +630,7 @@ def _ensure_struct_type_features_rs(exec_ctx, target, exec_skips, post_pass_fail
             pass
 
 
-def _ensure_ref_repoint(exec_ctx, target, exec_skips):
+def _ensure_ref_repoint(exec_ctx, target, exec_skips, post_pass_failures=None):
     """Issue #15 / spec 041: opt-in stale-reference re-point (no-op unless
     `selection.repoint_stale_refs`). Own latch; never raises."""
     if getattr(exec_ctx, "_did_ref_repoint", False):
@@ -648,8 +648,14 @@ def _ensure_ref_repoint(exec_ctx, target, exec_skips):
         pass
     try:
         skips = _run_ref_repoint_pass(exec_ctx, target)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 -- must not lose the run's writes
         _log.exception("execute: stale-reference re-point FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="ref-repoint",
+            category=GrammarCategory.AFFIXES,
+            exc=exc,
+        )
         return
     if skips and exec_skips is not None:
         try:
@@ -658,7 +664,7 @@ def _ensure_ref_repoint(exec_ctx, target, exec_skips):
             pass
 
 
-def _ensure_late_rule_refs(exec_ctx, target, exec_skips):
+def _ensure_late_rule_refs(exec_ctx, target, exec_skips, post_pass_failures=None):
     """Issue #134: repair phon-rule `InputPOSesRC` and adhoc-prohibition
     member chains AFTER the leaf-dispatch loop (their targets -- POS,
     allomorphs, MSAs -- are created by categories that dispatch later).
@@ -677,8 +683,14 @@ def _ensure_late_rule_refs(exec_ctx, target, exec_skips):
         pass
     try:
         late_skips = _run_late_rule_ref_repair_pass(exec_ctx, target)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 -- must not lose the run's writes
         _log.exception("execute: late rule-reference repair FAILED (swallowed)")
+        _record_post_pass_failure(
+            post_pass_failures,
+            pass_name="late-rule-refs",
+            category=GrammarCategory.PHONOLOGICAL_RULES,
+            exc=exc,
+        )
         return
     if late_skips and exec_skips is not None:
         try:
@@ -1284,12 +1296,18 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         exec_ctx, target, _exec_skips,
         post_pass_failures=_leaf_execution_failures,
     )
-    leaf_failed += len(_leaf_execution_failures) - _post_pass_failure_start
 
     # Issue #134: phon-rule InputPOSesRC + adhoc member chains, after every
     # category (POS / STEMS dispatch after the rules that reference them).
-    _ensure_late_rule_refs(exec_ctx, target, _exec_skips)
-    _ensure_ref_repoint(exec_ctx, target, _exec_skips)
+    _ensure_late_rule_refs(
+        exec_ctx, target, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
+    _ensure_ref_repoint(
+        exec_ctx, target, _exec_skips,
+        post_pass_failures=_leaf_execution_failures,
+    )
+    leaf_failed += len(_leaf_execution_failures) - _post_pass_failure_start
 
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check

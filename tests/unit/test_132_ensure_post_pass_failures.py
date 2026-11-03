@@ -87,13 +87,31 @@ def _bare_exec_ctx(**attrs):
             "struct-type-features-rs",
             lambda ctx, tgt: (ctx, tgt, []),
         ),
+        (
+            transfer_mod._ensure_late_rule_refs,
+            "gramtrans.Lib.categories._run_late_rule_ref_repair_pass",
+            GrammarCategory.PHONOLOGICAL_RULES,
+            "late-rule-refs",
+            lambda ctx, tgt: (ctx, tgt, []),
+        ),
+        (
+            transfer_mod._ensure_ref_repoint,
+            "gramtrans.Lib.categories._run_ref_repoint_pass",
+            GrammarCategory.AFFIXES,
+            "ref-repoint",
+            lambda ctx, tgt: (ctx, tgt, []),
+        ),
     ],
 )
 def test_ensure_passes_record_leaf_failure_on_raise(
     helper, inner_path, category, pass_suffix, call_args,
 ):
     failures: list = []
-    exec_ctx = _bare_exec_ctx(_run_plan=object())
+    plan = mock.Mock()
+    plan.selection = mock.Mock(repoint_stale_refs=False)
+    exec_ctx = _bare_exec_ctx(_run_plan=plan)
+    if helper is transfer_mod._ensure_ref_repoint:
+        plan.selection.repoint_stale_refs = True
     target = object()
     with mock.patch(inner_path, side_effect=RuntimeError("post-pass broke")):
         args = call_args(exec_ctx, target)
