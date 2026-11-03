@@ -109,6 +109,47 @@ def test_repair_one_allomorph_diverged_position_needs_manual(monkeypatch):
     assert skips[0].reason == SkipReason.NEEDS_MANUAL
 
 
+def test_insert_missing_insert_failure_reported():
+    a, b = _Obj("a"), _Obj("b")
+    failures = []
+
+    class _RaisingSeq(_Seq):
+        def Insert(self, i, x):
+            if getattr(x, "guid", None) == "b":
+                raise TypeError("Insert rejected")
+            return super().Insert(i, x)
+
+    tgt = _RaisingSeq()
+    n = categories._insert_missing_in_order(
+        tgt, [a, b], {"a": a, "b": b},
+        lambda o, g: None,
+        lambda o, g, detail: failures.append((g, detail)),
+    )
+    assert n == 1 and list(tgt) == [a]
+    assert failures and failures[0][0] == "b"
+
+
+def test_repair_one_allomorph_position_insert_failure_recorded(monkeypatch):
+    monkeypatch.setattr(categories, "_cast_to_concrete", lambda o: o)
+    e1, e2 = _Obj("e1"), _Obj("e2")
+
+    class _RaisingSeq(_Seq):
+        def Insert(self, i, x):
+            if getattr(x, "guid", None) == "e2":
+                raise TypeError("Insert rejected")
+            return super().Insert(i, x)
+
+    src = SimpleNamespace(guid="al", PhoneEnvRC=[], PositionRS=[e1, e2],
+                          StemNameRA=None)
+    tgt = SimpleNamespace(guid="al", PhoneEnvRC=_Seq(), PositionRS=_RaisingSeq(),
+                          StemNameRA=None)
+    dropped, skips = [], []
+    n = categories._repair_one_allomorph(
+        src, tgt, "al", {"e1": e1, "e2": e2}, None, dropped, skips)
+    assert n == 1 and [d.field_name for d in dropped] == ["PositionRS"]
+    assert list(tgt.PositionRS) == [e1]
+
+
 def test_phoneme_features_late_latches(monkeypatch):
     calls = []
     monkeypatch.setattr(categories, "_wire_phoneme_features",
