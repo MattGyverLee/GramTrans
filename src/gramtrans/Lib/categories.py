@@ -21105,14 +21105,17 @@ def _repair_rule_input_poses(context, target, picks, dropped, skips):
     return writes
 
 
-def _insert_missing_in_order(tgt_seq, src_items, by_guid, on_absent):
+def _insert_missing_in_order(tgt_seq, src_items, by_guid, on_absent,
+                             on_insert_failed=None):
     """Insert-only sequence repair shared by the #134 late passes.
 
     The target's members must be an in-order subsequence of the source's,
     else nothing is touched and None is returned (caller reports). Each
     missing member found in `by_guid` is inserted at its source position;
-    `on_absent(src_obj, guid)` is called for the unresolvable ones. Returns
-    writes made."""
+    `on_absent(src_obj, guid)` is called for the unresolvable ones. When
+    `on_insert_failed` is provided, a raising ``Insert`` or a failed read-back
+    invokes ``on_insert_failed(src_obj, guid, detail)`` instead of aborting the
+    pass (issue #132 never-silent). Returns writes made."""
     src_g = _late_ref_guid_chain(src_items)
     tgt_g = _late_ref_guid_chain(tgt_seq)
     it = iter(src_g)
@@ -21129,7 +21132,30 @@ def _insert_missing_in_order(tgt_seq, src_items, by_guid, on_absent):
         if found is None:
             on_absent(src_obj, g)
             continue
-        tgt_seq.Insert(idx, found)
+        write_error = None
+        try:
+            tgt_seq.Insert(idx, found)
+        except Exception as exc:  # noqa: BLE001 -- reported when wired
+            write_error = f"{type(exc).__name__}: {exc}"
+            if on_insert_failed is None:
+                raise
+        chain = _late_ref_guid_chain(tgt_seq)
+        confirmed = idx < len(chain) and chain[idx] == g
+        if write_error and confirmed:
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "insert_missing_in_order: Insert(%s) raised but read-back "
+                "shows member at index %s (%s)",
+                g, idx, write_error,
+            )
+            idx += 1
+            continue
+        if write_error or not confirmed:
+            detail = write_error or (
+                "Insert returned but member absent on read-back")
+            if on_insert_failed is not None:
+                on_insert_failed(src_obj, g, detail)
+            continue
         idx += 1
         writes += 1
     return writes
@@ -21168,7 +21194,19 @@ def _repair_template_slot_seqs(src_tpl, tgt_tpl, all_slots, dropped, skips):
                     item_guid=g or "",
                     reason="slot absent from target -- template left "
                            "incomplete"))
-        n = _insert_missing_in_order(tgt_seq, src_seq, all_slots, _absent)
+        def _insert_fail(o, og, detail, _f=seq_name):
+            if dropped is not None:
+                _append_dropped_once(dropped, DroppedItemRecord(
+                    owner_kind="MoInflAffixTemplate", owner_guid=tg,
+                    owner_label="", field_name=_f,
+                    item_name=_rule_ref_display_name(o)
+                    or f"guid={_short_guid(og)}",
+                    item_guid=og or "",
+                    reason=("slot resolved in target but Insert failed during "
+                            f"late repair ({detail})")))
+
+        n = _insert_missing_in_order(
+            tgt_seq, src_seq, all_slots, _absent, _insert_fail)
         if n is None:
             skips.append(Skip(
                 category=GrammarCategory.AFFIX_TEMPLATES, source_guid=tg,
@@ -21426,7 +21464,11 @@ def _repair_one_allomorph(src_form, tgt_form, g, envs, target, dropped, skips):
         n = _insert_missing_in_order(
             tgt_pos, src_pos, envs,
             lambda o, og: _drop("PositionRS", o, og,
-                                f"environment {og} not present in target"))
+                                f"environment {og} not present in target"),
+            lambda o, og, detail: _drop(
+                "PositionRS", o, og,
+                f"PositionRS Insert failed during late repair ({detail})"),
+        )
         if n is None:
             skips.append(Skip(
                 category=GrammarCategory.STEMS, source_guid=g,
